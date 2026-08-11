@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Agent, ExecutionLog
+from app.db.models import Agent, ExecutionLog, Skill
 from app.schemas.agent import AgentCreate
 
 
@@ -42,3 +42,19 @@ async def list_execution_logs(session: AsyncSession, agent_id: str) -> list[Exec
         .order_by(ExecutionLog.started_at.desc())
     )
     return list(result)
+
+
+async def bind_skill(session: AsyncSession, agent: Agent, skill: Skill) -> Agent:
+    if all(item.id != skill.id for item in agent.skills):
+        agent.skills.append(skill)
+        await session.commit()
+    return agent
+
+
+async def unbind_skill(session: AsyncSession, agent: Agent, skill_id: str) -> bool:
+    skill = next((item for item in agent.skills if item.id == skill_id), None)
+    if skill is None:
+        return False
+    agent.skills.remove(skill)
+    await session.commit()
+    return True

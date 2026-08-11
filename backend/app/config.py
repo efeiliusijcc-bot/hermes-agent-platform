@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     hermes_timeout_seconds: int = Field(default=180, ge=10, le=1800)
     hermes_poll_interval_seconds: float = Field(default=1.0, ge=0.1, le=30.0)
 
+    skills_root: str = "/app/skills"
+    skill_max_document_bytes: int = Field(default=262_144, ge=1024, le=1_048_576)
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)

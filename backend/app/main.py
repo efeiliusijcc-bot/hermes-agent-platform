@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.api.agents import router as agents_router
+from app.api.skills import router as skills_router
 from app.config import get_settings
 from app.db.session import SessionFactory, engine
 
@@ -27,6 +28,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 app.include_router(agents_router)
+app.include_router(skills_router)
 
 
 @app.get("/health", tags=["system"])

@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
-    image: hermes-agent-platform/agent-api:phase3
+    image: hermes-agent-platform/agent-api:phase4
     restart: unless-stopped
     depends_on:
       postgres:
@@ -24,6 +24,10 @@ services:
       HERMES_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
       HERMES_MODEL: hermes-agent
       HERMES_TIMEOUT_SECONDS: ${HERMES_TIMEOUT_SECONDS:-180}
+      SKILLS_ROOT: /app/skills
+      SKILL_MAX_DOCUMENT_BYTES: ${SKILL_MAX_DOCUMENT_BYTES:-262144}
+    volumes:
+      - ./skills:/app/skills:ro
     ports:
       - "${AGENT_API_BIND_HOST:-127.0.0.1}:${AGENT_API_PORT:-18088}:8000"
     healthcheck:
@@ -41,7 +45,7 @@ services:
       - platform-edge
 
   model-gateway:
-    image: hermes-agent-platform/agent-api:phase3
+    image: hermes-agent-platform/agent-api:phase4
     restart: unless-stopped
     entrypoint: ["uvicorn", "app.model_gateway:app", "--host", "0.0.0.0", "--port", "8080"]
     environment:
@@ -68,7 +72,7 @@ services:
 
   model-stub:
     profiles: ["test"]
-    image: hermes-agent-platform/agent-api:phase3
+    image: hermes-agent-platform/agent-api:phase4
     restart: "no"
     entrypoint: ["uvicorn", "app.model_stub:app", "--host", "0.0.0.0", "--port", "8090"]
     expose:

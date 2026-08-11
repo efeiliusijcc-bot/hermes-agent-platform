@@ -4,9 +4,11 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 ## 当前阶段
 
-当前仓库处于 **Phase 3：Hermes Runtime**。Agent API 将角色、系统提示和用户输入交给独立 Hermes Runtime；Hermes 通过 Model Gateway 调用 `MODEL_ENDPOINT` 指定的外部 OpenAI Compatible 模型，执行结果和状态写入 `execution_logs`。
+当前仓库处于 **Phase 4：Skill 系统**。Agent API 从数据库读取 Agent 绑定的 Skill，在受控的 `SKILLS_ROOT` 目录加载 `SKILL.md` 与 `config.yaml`，将指令注入独立 Hermes Runtime，并在 `execution_logs.details.skills_loaded` 中记录实际加载结果。
 
 `model-stub` 只属于自动化测试 profile，用于验证 OpenAI 协议、Hermes 调度和日志闭环，不是模型实现，也不能作为真实模型验收证据。生产部署不得启用该 profile。
+
+Skill 路径必须是 `skills/` 下的相对目录名。注册接口会在写入数据库前验证目录边界、必需文件、UTF-8/YAML 内容及配置 ID，避免目录穿越和无效 Skill 延迟到执行阶段才暴露。
 
 ## 第一阶段核心闭环
 
