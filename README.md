@@ -4,13 +4,17 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 ## 当前阶段
 
-当前仓库处于 **Phase 5：MCP 系统**。Agent API 动态加载数据库中的 MCP 绑定，为每次执行签发短期、不可伪造的能力令牌；独立 MCP Gateway 向 Hermes 提供只读 `filesystem_read` 和 `database_query` 工具，并把调用摘要追加到 `execution_logs.details.mcp_calls`。
+当前仓库处于 **Phase 6：Agent 隔离**。Skill 与 MCP 能力只从当前 Agent 的数据库绑定加载；MCP Gateway 使用逐次执行的短期能力令牌硬性拒绝未绑定工具，并把成功、失败和拒绝摘要写入 `execution_logs.details.mcp_calls`。会话记忆存入 Redis，命名空间同时包含 `agent_id` 与 `session_id`，相同会话名也不会跨 Agent 共享上下文。
+
+Hermes API Server 的原生 terminal、文件、浏览器、内置 Skill、委派等工具集已关闭，仅启用 `mcp-gateway`。这保证 Agent 不能绕过平台绑定直接使用 Hermes 本地工具。
 
 `model-stub` 只属于自动化测试 profile，用于验证 OpenAI 协议、Hermes 调度和日志闭环，不是模型实现，也不能作为真实模型验收证据。生产部署不得启用该 profile。
 
 Skill 路径必须是 `skills/` 下的相对目录名。注册接口会在写入数据库前验证目录边界、必需文件、UTF-8/YAML 内容及配置 ID，避免目录穿越和无效 Skill 延迟到执行阶段才暴露。
 
 第一阶段 MCP 统一经 `MCP_GATEWAY_ENDPOINT` 接入，只允许只读 filesystem/database 类型。文件路径限制在 `data/mcp-files/`，数据库查询同时使用语句类型检查、PostgreSQL 只读事务、超时和返回行数限制。
+
+`POST /api/agents/{id}/run` 接受可选 `session_id`，默认值为 `default`。会话上下文只加载同一 `agent_id + session_id` 最近的消息；删除 Agent 时会先清理该 Agent 的 Redis 记忆，避免 ID 重建后读到旧上下文。
 
 ## 第一阶段核心闭环
 
@@ -49,6 +53,8 @@ scripts/    开发、校验和部署脚本
 ## 设计依据
 
 项目唯一架构依据是 [docs/hermes_agent_offline_platform_detailed_design.md](docs/hermes_agent_offline_platform_detailed_design.md)。如实现与文档发生架构冲突，应停止开发并先确认设计变更。
+
+Phase 6 的权限边界、Memory 命名空间和 116 验收步骤见 [docs/phase6-agent-isolation.md](docs/phase6-agent-isolation.md)。
 
 ## 校验
 

@@ -29,6 +29,7 @@ config = {
         "reasoning_effort": "low",
         "verify_on_stop": False,
     },
+    "platform_toolsets": {"api_server": ["mcp-gateway"]},
     "updates": {"pre_update_backup": False},
     "plugins": {"enabled": []},
     "mcp_servers": {

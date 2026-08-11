@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
-import json
-import time
+import uuid
 from dataclasses import dataclass
-from typing import Any
 
 
 class MCPAccessDenied(ValueError):
@@ -26,45 +25,35 @@ class MCPAccessClaims:
         return mcp_id
 
 
-def verify_mcp_access_token(token: str, signing_key: str) -> MCPAccessClaims:
+def verify_mcp_access_token(token: str, signing_key: str) -> str:
     try:
         prefix, encoded, encoded_signature = token.split(".", 2)
     except ValueError as exc:
         raise MCPAccessDenied("access denied: malformed MCP access token") from exc
-    if prefix != "mcp1":
+    if prefix != "mcp2":
         raise MCPAccessDenied("access denied: unsupported MCP access token")
 
     expected_signature = hmac.new(
         signing_key.encode("utf-8"),
-        encoded.encode("ascii"),
+        f"{prefix}.{encoded}".encode("ascii"),
         hashlib.sha256,
-    ).digest()
+    ).digest()[:16]
     try:
         actual_signature = _base64url_decode(encoded_signature)
-    except (ValueError, UnicodeError) as exc:
+    except (ValueError, UnicodeError, binascii.Error) as exc:
         raise MCPAccessDenied("access denied: malformed MCP signature") from exc
     if not hmac.compare_digest(actual_signature, expected_signature):
         raise MCPAccessDenied("access denied: invalid MCP signature")
 
     try:
-        payload: Any = json.loads(_base64url_decode(encoded))
-    except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
-        raise MCPAccessDenied("access denied: malformed MCP claims") from exc
-    if not isinstance(payload, dict) or payload.get("v") != 1:
-        raise MCPAccessDenied("access denied: invalid MCP claims")
-    if not isinstance(payload.get("exp"), int) or payload["exp"] < int(time.time()):
-        raise MCPAccessDenied("access denied: MCP access token expired")
-    if not isinstance(payload.get("agent_id"), str) or not isinstance(payload.get("execution_id"), str):
-        raise MCPAccessDenied("access denied: missing MCP identity")
-    mcp = payload.get("mcp")
-    if not isinstance(mcp, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in mcp.items()):
-        raise MCPAccessDenied("access denied: invalid MCP permissions")
-    return MCPAccessClaims(
-        agent_id=payload["agent_id"],
-        execution_id=payload["execution_id"],
-        mcp=mcp,
-    )
+        raw_execution_id = _base64url_decode(encoded)
+        if len(raw_execution_id) != 16:
+            raise ValueError("invalid UUID length")
+        return str(uuid.UUID(bytes=raw_execution_id))
+    except (ValueError, UnicodeError, binascii.Error) as exc:
+        raise MCPAccessDenied("access denied: malformed MCP execution id") from exc
 
 
 def _base64url_decode(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    padded = value + "=" * (-len(value) % 4)
+    return base64.b64decode(padded, altchars=b"-_", validate=True)

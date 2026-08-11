@@ -36,11 +36,13 @@ class AgentRead(BaseModel):
 
 class AgentRunRequest(BaseModel):
     input: str = Field(min_length=1, max_length=100_000)
+    session_id: str = Field(default="default", pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 class AgentRunResponse(BaseModel):
     execution_id: UUID
     agent_id: str
+    session_id: str
     status: Literal["succeeded"]
     output: str
     hermes_run_id: str | None = None

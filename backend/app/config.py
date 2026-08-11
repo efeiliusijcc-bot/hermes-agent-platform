@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=10, ge=1, le=100)
     database_pool_timeout: int = Field(default=30, ge=1, le=300)
 
+    redis_host: str = "redis"
+    redis_port: int = 6379
+    redis_db: int = Field(default=0, ge=0, le=15)
+    redis_password: SecretStr
+    redis_socket_timeout_seconds: int = Field(default=5, ge=1, le=30)
+
+    agent_memory_max_turns: int = Field(default=8, ge=1, le=50)
+    agent_memory_ttl_seconds: int = Field(default=2_592_000, ge=60, le=31_536_000)
+    agent_memory_max_message_chars: int = Field(default=20_000, ge=256, le=100_000)
+
     hermes_endpoint: str = "http://hermes-runtime:8642/v1"
     hermes_api_key: SecretStr
     hermes_model: str = "hermes-agent"
@@ -32,7 +42,6 @@ class Settings(BaseSettings):
 
     mcp_gateway_endpoint: str = "http://mcp-gateway:8090/mcp"
     mcp_gateway_signing_key: SecretStr = Field(min_length=32)
-    mcp_access_token_ttl_seconds: int = Field(default=300, ge=60, le=3600)
 
     @property
     def database_url(self) -> str:

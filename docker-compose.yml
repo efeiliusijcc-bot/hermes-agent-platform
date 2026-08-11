@@ -5,10 +5,12 @@ services:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
-    image: hermes-agent-platform/agent-api:phase5
+    image: hermes-agent-platform/agent-api:phase6
     restart: unless-stopped
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       hermes-runtime:
         condition: service_healthy
@@ -22,6 +24,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-5}
+      AGENT_MEMORY_MAX_TURNS: ${AGENT_MEMORY_MAX_TURNS:-8}
+      AGENT_MEMORY_TTL_SECONDS: ${AGENT_MEMORY_TTL_SECONDS:-2592000}
+      AGENT_MEMORY_MAX_MESSAGE_CHARS: ${AGENT_MEMORY_MAX_MESSAGE_CHARS:-20000}
       HERMES_ENDPOINT: http://hermes-runtime:8642/v1
       HERMES_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
       HERMES_MODEL: hermes-agent
@@ -30,7 +40,6 @@ services:
       SKILL_MAX_DOCUMENT_BYTES: ${SKILL_MAX_DOCUMENT_BYTES:-262144}
       MCP_GATEWAY_ENDPOINT: http://mcp-gateway:8090/mcp
       MCP_GATEWAY_SIGNING_KEY: ${MCP_GATEWAY_SIGNING_KEY:?MCP_GATEWAY_SIGNING_KEY is required}
-      MCP_ACCESS_TOKEN_TTL_SECONDS: ${MCP_ACCESS_TOKEN_TTL_SECONDS:-300}
     volumes:
       - ./skills:/app/skills:ro
     ports:
@@ -50,7 +59,7 @@ services:
       - platform-edge
 
   model-gateway:
-    image: hermes-agent-platform/agent-api:phase5
+    image: hermes-agent-platform/agent-api:phase6
     restart: unless-stopped
     entrypoint: ["uvicorn", "app.model_gateway:app", "--host", "0.0.0.0", "--port", "8080"]
     environment:
@@ -77,7 +86,7 @@ services:
 
   model-stub:
     profiles: ["test"]
-    image: hermes-agent-platform/agent-api:phase5
+    image: hermes-agent-platform/agent-api:phase6
     restart: "no"
     entrypoint: ["uvicorn", "app.model_stub:app", "--host", "0.0.0.0", "--port", "8090"]
     expose:
@@ -142,7 +151,7 @@ services:
     build:
       context: .
       dockerfile: services/mcp-gateway/Dockerfile
-    image: hermes-agent-platform/mcp-gateway:phase5
+    image: hermes-agent-platform/mcp-gateway:phase6
     restart: unless-stopped
     user: "${MCP_GATEWAY_UID:-10001}:${MCP_GATEWAY_GID:-10001}"
     depends_on:
@@ -151,6 +160,7 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MCP_GATEWAY_SIGNING_KEY: ${MCP_GATEWAY_SIGNING_KEY:?MCP_GATEWAY_SIGNING_KEY is required}
+      MCP_ACCESS_TOKEN_TTL_SECONDS: ${MCP_ACCESS_TOKEN_TTL_SECONDS:-300}
       MCP_FILES_ROOT: /data/files
       MCP_MAX_FILE_BYTES: ${MCP_MAX_FILE_BYTES:-262144}
       MCP_MAX_DATABASE_ROWS: ${MCP_MAX_DATABASE_ROWS:-100}
