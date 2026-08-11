@@ -1,0 +1,18 @@
+name: hermes-agent-platform
+
+# Phase 0 仅提供可校验的 Compose 骨架。
+# PostgreSQL/pgvector、Redis、MinIO 将在 Phase 1 中按设计加入。
+services: {}
+
+networks:
+  platform-internal:
+    name: hermes-agent-platform-internal
+    internal: true
+
+volumes:
+  postgres-data:
+    name: hermes-agent-platform-postgres-data
+  redis-data:
+    name: hermes-agent-platform-redis-data
+  minio-data:
+    name: hermes-agent-platform-minio-data
