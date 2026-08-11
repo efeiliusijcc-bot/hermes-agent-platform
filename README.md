@@ -4,7 +4,7 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 ## 当前阶段
 
-当前仓库处于 **Phase 6：Agent 隔离**。Skill 与 MCP 能力只从当前 Agent 的数据库绑定加载；MCP Gateway 使用逐次执行的短期能力令牌硬性拒绝未绑定工具，并把成功、失败和拒绝摘要写入 `execution_logs.details.mcp_calls`。会话记忆存入 Redis，命名空间同时包含 `agent_id` 与 `session_id`，相同会话名也不会跨 Agent 共享上下文。
+当前仓库处于 **Phase 7：Knowledge 能力**。独立 `knowledge-service` 负责 Markdown、文本、PDF、Word `.docx` 和 Excel `.xlsx` 的解析、切片、离线 Embedding、MinIO 原文存储与 pgvector 向量检索。Agent 只检索自身绑定且启用的 Knowledge Source，召回片段以不可信资料注入上下文，执行日志只保留文档/分片 ID 和分数。
 
 Hermes API Server 的原生 terminal、文件、浏览器、内置 Skill、委派等工具集已关闭，仅启用 `mcp-gateway`。这保证 Agent 不能绕过平台绑定直接使用 Hermes 本地工具。
 
@@ -55,6 +55,8 @@ scripts/    开发、校验和部署脚本
 项目唯一架构依据是 [docs/hermes_agent_offline_platform_detailed_design.md](docs/hermes_agent_offline_platform_detailed_design.md)。如实现与文档发生架构冲突，应停止开发并先确认设计变更。
 
 Phase 6 的权限边界、Memory 命名空间和 116 验收步骤见 [docs/phase6-agent-isolation.md](docs/phase6-agent-isolation.md)。
+
+Phase 7 的 Knowledge 数据模型、解析/Embedding 边界和验收步骤见 [docs/phase7-knowledge-service.md](docs/phase7-knowledge-service.md)。
 
 ## 校验
 

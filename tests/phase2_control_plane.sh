@@ -7,7 +7,7 @@ API_URL="http://${AGENT_API_TEST_HOST:-127.0.0.1}:${AGENT_API_PORT:-18088}"
 COMPOSE="docker compose -p hermes-agent-platform -f $PROJECT_ROOT/docker-compose.yml"
 AGENT_ID="phase2-knowledge-agent"
 
-curl -fsS "$API_URL/health" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value == {"status":"ok","database":"ok","memory":"ok"}'
+curl -fsS "$API_URL/health" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value == {"status":"ok","database":"ok","memory":"ok","knowledge":"ok"}'
 
 curl -sS -o /dev/null -X DELETE "$API_URL/api/agents/$AGENT_ID" || true
 

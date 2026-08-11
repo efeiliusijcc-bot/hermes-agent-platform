@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     agent_memory_ttl_seconds: int = Field(default=2_592_000, ge=60, le=31_536_000)
     agent_memory_max_message_chars: int = Field(default=20_000, ge=256, le=100_000)
 
+    knowledge_service_endpoint: str = "http://knowledge-service:8081"
+    knowledge_service_timeout_seconds: int = Field(default=60, ge=5, le=300)
+    knowledge_search_top_k: int = Field(default=5, ge=1, le=20)
+    knowledge_max_upload_bytes: int = Field(default=10_485_760, ge=1024, le=104_857_600)
+
     hermes_endpoint: str = "http://hermes-runtime:8642/v1"
     hermes_api_key: SecretStr
     hermes_model: str = "hermes-agent"

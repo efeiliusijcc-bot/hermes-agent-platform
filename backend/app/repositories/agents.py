@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Agent, ExecutionLog, MCPServer, Skill
+from app.db.models import Agent, ExecutionLog, KnowledgeSource, MCPServer, Skill
 from app.schemas.agent import AgentCreate
 
 
@@ -72,5 +72,21 @@ async def unbind_mcp_server(session: AsyncSession, agent: Agent, mcp_id: str) ->
     if server is None:
         return False
     agent.mcp_servers.remove(server)
+    await session.commit()
+    return True
+
+
+async def bind_knowledge_source(session: AsyncSession, agent: Agent, source: KnowledgeSource) -> Agent:
+    if all(item.id != source.id for item in agent.knowledge_sources):
+        agent.knowledge_sources.append(source)
+        await session.commit()
+    return agent
+
+
+async def unbind_knowledge_source(session: AsyncSession, agent: Agent, source_id: str) -> bool:
+    source = next((item for item in agent.knowledge_sources if item.id == source_id), None)
+    if source is None:
+        return False
+    agent.knowledge_sources.remove(source)
     await session.commit()
     return True
