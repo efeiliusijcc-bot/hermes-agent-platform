@@ -4,7 +4,7 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 ## 当前阶段
 
-当前仓库处于 **Phase 8：完整 Demo**。`knowledge-analyst` 已组合企业知识分析角色、`knowledge-analysis` Skill、只读文件/数据库 MCP、`company-docs` Knowledge Source 和隔离 Memory，通过同一个 Agent API 调用完成真实的多源分析并留下完整执行日志。
+当前仓库已完成 **Phase 9：离线部署验证**。除完整的 `knowledge-analyst` 多源分析闭环外，平台还可导出包含固定镜像、运行配置、PostgreSQL/Redis/MinIO/文件数据和 SHA-256 清单的离线包，并在新内网节点恢复启动。
 
 Hermes API Server 的原生 terminal、文件、浏览器、内置 Skill、委派等工具集已关闭，仅启用 `mcp-gateway`。这保证 Agent 不能绕过平台绑定直接使用 Hermes 本地工具。
 
@@ -59,6 +59,8 @@ Phase 6 的权限边界、Memory 命名空间和 116 验收步骤见 [docs/phase
 Phase 7 的 Knowledge 数据模型、解析/Embedding 边界和验收步骤见 [docs/phase7-knowledge-service.md](docs/phase7-knowledge-service.md)。
 
 Phase 8 的 Knowledge Analyst Demo 配置、部署、调用和验收步骤见 [docs/phase8-knowledge-agent-demo.md](docs/phase8-knowledge-agent-demo.md)。
+
+Phase 9 的镜像导出、配置/数据迁移、新节点恢复和 116 隔离验收步骤见 [docs/phase9-offline-deployment.md](docs/phase9-offline-deployment.md)。
 
 ## 校验
 

@@ -323,7 +323,7 @@ services:
 
 networks:
   platform-internal:
-    name: hermes-agent-platform-internal
+    name: ${HERMES_INTERNAL_NETWORK_NAME:-hermes-agent-platform-internal}
     internal: true
   platform-edge:
-    name: hermes-agent-platform-edge
+    name: ${HERMES_EDGE_NETWORK_NAME:-hermes-agent-platform-edge}
