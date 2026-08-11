@@ -4,7 +4,7 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 ## 当前阶段
 
-当前仓库处于 **Phase 1：基础服务**。PostgreSQL/pgvector、Redis 与 MinIO 通过独立 Compose 项目运行，仅加入内部网络，不发布宿主机端口。
+当前仓库处于 **Phase 2：Agent Control Plane**。FastAPI 提供 Agent 创建、列表、详情和删除接口，配置持久化到 PostgreSQL；pgvector、Redis 与 MinIO 作为独立基础服务运行。
 
 ## 第一阶段核心闭环
 

@@ -1,0 +1,15 @@
+.git
+.env
+__pycache__
+*.py[cod]
+.pytest_cache
+.venv
+data
+models
+artifacts
+docs
+frontend
+tests
+*.tar
+*.tar.gz
+*.log

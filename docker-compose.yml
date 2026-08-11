@@ -1,6 +1,39 @@
 name: hermes-agent-platform
 
 services:
+  agent-api:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    image: hermes-agent-platform/agent-api:phase2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "${AGENT_API_BIND_HOST:-127.0.0.1}:${AGENT_API_PORT:-18088}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - platform-internal
+      - platform-edge
+
   postgres:
     image: pgvector/pgvector:0.8.1-pg17
     restart: unless-stopped
@@ -93,6 +126,8 @@ networks:
   platform-internal:
     name: hermes-agent-platform-internal
     internal: true
+  platform-edge:
+    name: hermes-agent-platform-edge
 
 volumes:
   postgres-data:
