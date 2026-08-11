@@ -4,7 +4,7 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 ## 当前阶段
 
-当前仓库处于 **Phase 7：Knowledge 能力**。独立 `knowledge-service` 负责 Markdown、文本、PDF、Word `.docx` 和 Excel `.xlsx` 的解析、切片、离线 Embedding、MinIO 原文存储与 pgvector 向量检索。Agent 只检索自身绑定且启用的 Knowledge Source，召回片段以不可信资料注入上下文，执行日志只保留文档/分片 ID 和分数。
+当前仓库处于 **Phase 8：完整 Demo**。`knowledge-analyst` 已组合企业知识分析角色、`knowledge-analysis` Skill、只读文件/数据库 MCP、`company-docs` Knowledge Source 和隔离 Memory，通过同一个 Agent API 调用完成真实的多源分析并留下完整执行日志。
 
 Hermes API Server 的原生 terminal、文件、浏览器、内置 Skill、委派等工具集已关闭，仅启用 `mcp-gateway`。这保证 Agent 不能绕过平台绑定直接使用 Hermes 本地工具。
 
@@ -57,6 +57,8 @@ scripts/    开发、校验和部署脚本
 Phase 6 的权限边界、Memory 命名空间和 116 验收步骤见 [docs/phase6-agent-isolation.md](docs/phase6-agent-isolation.md)。
 
 Phase 7 的 Knowledge 数据模型、解析/Embedding 边界和验收步骤见 [docs/phase7-knowledge-service.md](docs/phase7-knowledge-service.md)。
+
+Phase 8 的 Knowledge Analyst Demo 配置、部署、调用和验收步骤见 [docs/phase8-knowledge-agent-demo.md](docs/phase8-knowledge-agent-demo.md)。
 
 ## 校验
 
