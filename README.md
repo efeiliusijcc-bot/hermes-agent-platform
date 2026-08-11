@@ -4,7 +4,7 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 ## 当前阶段
 
-当前仓库处于 **Phase 0：项目初始化**。本阶段只建立工程结构和部署骨架，不实现或启动任何业务服务。
+当前仓库处于 **Phase 1：基础服务**。PostgreSQL/pgvector、Redis 与 MinIO 通过独立 Compose 项目运行，仅加入内部网络，不发布宿主机端口。
 
 ## 第一阶段核心闭环
 
@@ -56,4 +56,13 @@ Compose 校验和容器测试只允许在 116 测试节点执行：
 
 ```bash
 HAP_VALIDATE_COMPOSE=1 ./scripts/validate-phase0.sh
+```
+
+Phase 1 基础设施测试仅在 116 节点执行：
+
+```bash
+set -a
+. ./.env
+set +a
+./tests/phase1_infrastructure.sh
 ```
