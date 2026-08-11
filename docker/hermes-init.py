@@ -7,6 +7,7 @@ home = Path("/opt/data")
 home.mkdir(parents=True, exist_ok=True)
 
 config = {
+    "_config_version": 12,
     "model": {
         "default": os.environ["MODEL_NAME"],
         "provider": "deepseek",
@@ -30,6 +31,18 @@ config = {
     },
     "updates": {"pre_update_backup": False},
     "plugins": {"enabled": []},
+    "mcp_servers": {
+        "mcp-gateway": {
+            "url": "http://mcp-gateway:8090/mcp",
+            "enabled": True,
+            "connect_timeout": 30,
+            "tools": {
+                "include": ["filesystem_read", "database_query"],
+                "prompts": False,
+                "resources": False,
+            },
+        }
+    },
 }
 
 temporary = home / "config.yaml.tmp"

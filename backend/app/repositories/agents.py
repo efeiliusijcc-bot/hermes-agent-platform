@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Agent, ExecutionLog, Skill
+from app.db.models import Agent, ExecutionLog, MCPServer, Skill
 from app.schemas.agent import AgentCreate
 
 
@@ -56,5 +56,21 @@ async def unbind_skill(session: AsyncSession, agent: Agent, skill_id: str) -> bo
     if skill is None:
         return False
     agent.skills.remove(skill)
+    await session.commit()
+    return True
+
+
+async def bind_mcp_server(session: AsyncSession, agent: Agent, server: MCPServer) -> Agent:
+    if all(item.id != server.id for item in agent.mcp_servers):
+        agent.mcp_servers.append(server)
+        await session.commit()
+    return agent
+
+
+async def unbind_mcp_server(session: AsyncSession, agent: Agent, mcp_id: str) -> bool:
+    server = next((item for item in agent.mcp_servers if item.id == mcp_id), None)
+    if server is None:
+        return False
+    agent.mcp_servers.remove(server)
     await session.commit()
     return True

@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     skills_root: str = "/app/skills"
     skill_max_document_bytes: int = Field(default=262_144, ge=1024, le=1_048_576)
 
+    mcp_gateway_endpoint: str = "http://mcp-gateway:8090/mcp"
+    mcp_gateway_signing_key: SecretStr = Field(min_length=32)
+    mcp_access_token_ttl_seconds: int = Field(default=300, ge=60, le=3600)
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)

@@ -44,6 +44,8 @@ docker compose -p hermes-agent-platform ...
 - 禁止复用现有容器名、网络名、卷名和宿主机端口。
 - 禁止停止、重启、删除或重建非本项目容器。
 - Skill 只允许使用 `SKILLS_ROOT` 下的相对目录，注册和运行时都必须通过边界及内容校验。
+- MCP 工具必须经 `mcp-gateway` 调用；Agent API 不得把数据库密码或网关签名密钥写入 Prompt、日志或接口响应。
+- 第一阶段 filesystem/database MCP 均为只读能力；禁止通过放宽 SQL 或路径校验绕过隔离。
 - 部署前后都要记录本项目容器、网络、卷和端口状态。
 
 ## 6. 离线部署规范

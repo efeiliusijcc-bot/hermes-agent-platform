@@ -6,6 +6,8 @@ Phase 1 提供 PostgreSQL + pgvector、Redis 和 MinIO。持久数据写入项�
 
 Phase 3 的 Hermes Runtime 固定使用官方 `v2026.8.3`（Hermes Agent v0.20.0）镜像及不可变 digest，不使用会持续变化的 `latest` 标签。
 
+Phase 5 新增项目自建 `mcp-gateway` 镜像。网关仅连接项目内部网络，不发布宿主机端口；`data/mcp-files/` 以只读方式挂载给网关，数据库工具在只读事务中执行。
+
 首次启动前执行：
 
 ```bash

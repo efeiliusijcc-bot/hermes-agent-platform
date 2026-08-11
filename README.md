@@ -4,11 +4,13 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 ## 当前阶段
 
-当前仓库处于 **Phase 4：Skill 系统**。Agent API 从数据库读取 Agent 绑定的 Skill，在受控的 `SKILLS_ROOT` 目录加载 `SKILL.md` 与 `config.yaml`，将指令注入独立 Hermes Runtime，并在 `execution_logs.details.skills_loaded` 中记录实际加载结果。
+当前仓库处于 **Phase 5：MCP 系统**。Agent API 动态加载数据库中的 MCP 绑定，为每次执行签发短期、不可伪造的能力令牌；独立 MCP Gateway 向 Hermes 提供只读 `filesystem_read` 和 `database_query` 工具，并把调用摘要追加到 `execution_logs.details.mcp_calls`。
 
 `model-stub` 只属于自动化测试 profile，用于验证 OpenAI 协议、Hermes 调度和日志闭环，不是模型实现，也不能作为真实模型验收证据。生产部署不得启用该 profile。
 
 Skill 路径必须是 `skills/` 下的相对目录名。注册接口会在写入数据库前验证目录边界、必需文件、UTF-8/YAML 内容及配置 ID，避免目录穿越和无效 Skill 延迟到执行阶段才暴露。
+
+第一阶段 MCP 统一经 `MCP_GATEWAY_ENDPOINT` 接入，只允许只读 filesystem/database 类型。文件路径限制在 `data/mcp-files/`，数据库查询同时使用语句类型检查、PostgreSQL 只读事务、超时和返回行数限制。
 
 ## 第一阶段核心闭环
 
