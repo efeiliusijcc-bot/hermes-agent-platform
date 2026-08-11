@@ -4,7 +4,9 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 ## 当前阶段
 
-当前仓库处于 **Phase 2：Agent Control Plane**。FastAPI 提供 Agent 创建、列表、详情和删除接口，配置持久化到 PostgreSQL；pgvector、Redis 与 MinIO 作为独立基础服务运行。
+当前仓库处于 **Phase 3：Hermes Runtime**。Agent API 将角色、系统提示和用户输入交给独立 Hermes Runtime；Hermes 通过 Model Gateway 调用 `MODEL_ENDPOINT` 指定的外部 OpenAI Compatible 模型，执行结果和状态写入 `execution_logs`。
+
+`model-stub` 只属于自动化测试 profile，用于验证 OpenAI 协议、Hermes 调度和日志闭环，不是模型实现，也不能作为真实模型验收证据。生产部署不得启用该 profile。
 
 ## 第一阶段核心闭环
 

@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Agent
+from app.db.models import Agent, ExecutionLog
 from app.schemas.agent import AgentCreate
 
 
@@ -33,3 +33,12 @@ async def get_agent(session: AsyncSession, agent_id: str) -> Agent | None:
 async def delete_agent(session: AsyncSession, agent: Agent) -> None:
     await session.delete(agent)
     await session.commit()
+
+
+async def list_execution_logs(session: AsyncSession, agent_id: str) -> list[ExecutionLog]:
+    result = await session.scalars(
+        select(ExecutionLog)
+        .where(ExecutionLog.agent_id == agent_id)
+        .order_by(ExecutionLog.started_at.desc())
+    )
+    return list(result)

@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=10, ge=1, le=100)
     database_pool_timeout: int = Field(default=30, ge=1, le=300)
 
+    hermes_endpoint: str = "http://hermes-runtime:8642/v1"
+    hermes_api_key: SecretStr
+    hermes_model: str = "hermes-agent"
+    hermes_timeout_seconds: int = Field(default=180, ge=10, le=1800)
+    hermes_poll_interval_seconds: float = Field(default=1.0, ge=0.1, le=30.0)
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)

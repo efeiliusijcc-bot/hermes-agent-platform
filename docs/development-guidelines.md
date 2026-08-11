@@ -39,6 +39,7 @@ docker compose -p hermes-agent-platform ...
 ## 5. 116 节点安全边界
 
 - 项目目录：`/opt/hermes-agent-platform`。
+- 持久数据目录：`/opt/hermes-agent-platform/data`，不得交给 Docker 卷清理策略管理。
 - Compose 项目名：`hermes-agent-platform`。
 - 禁止复用现有容器名、网络名、卷名和宿主机端口。
 - 禁止停止、重启、删除或重建非本项目容器。

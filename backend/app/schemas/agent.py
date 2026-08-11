@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -31,3 +32,29 @@ class AgentRead(BaseModel):
     status: Literal["draft", "active", "disabled"]
     created_at: datetime
     updated_at: datetime
+
+
+class AgentRunRequest(BaseModel):
+    input: str = Field(min_length=1, max_length=100_000)
+
+
+class AgentRunResponse(BaseModel):
+    execution_id: UUID
+    agent_id: str
+    status: Literal["succeeded"]
+    output: str
+    hermes_run_id: str | None = None
+
+
+class ExecutionLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    agent_id: str
+    status: Literal["running", "succeeded", "failed"]
+    input: str
+    output: str | None
+    error: str | None
+    details: dict[str, Any]
+    started_at: datetime
+    finished_at: datetime | None
