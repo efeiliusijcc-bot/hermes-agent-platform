@@ -1,0 +1,61 @@
+import type { GlobalThemeOverrides } from 'naive-ui'
+
+export const lightThemeOverrides: GlobalThemeOverrides = {
+  common: {
+    primaryColor: '#176b50',
+    primaryColorHover: '#218060',
+    primaryColorPressed: '#105a42',
+    primaryColorSuppl: '#176b50',
+    successColor: '#176b50',
+    infoColor: '#2f637c',
+    warningColor: '#a76817',
+    errorColor: '#b6413c',
+    borderRadius: '10px',
+    borderRadiusSmall: '8px',
+    fontFamily:
+      'Geist, "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+    fontFamilyMono: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
+    textColorBase: '#1b2420',
+    bodyColor: '#f3f5f4',
+    cardColor: '#ffffff',
+    modalColor: '#ffffff',
+    popoverColor: '#ffffff',
+    tableColor: '#ffffff',
+    inputColor: '#ffffff',
+    borderColor: '#d8dfdb',
+    dividerColor: '#e0e5e2',
+  },
+  Button: {
+    fontWeight: '600',
+    borderRadiusMedium: '8px',
+    borderRadiusSmall: '7px',
+    heightMedium: '38px',
+  },
+  Card: {
+    borderRadius: '12px',
+    borderColor: '#dce2de',
+    paddingMedium: '20px',
+  },
+  DataTable: {
+    thColor: '#f6f8f7',
+    thTextColor: '#59645f',
+    tdColorHover: '#f5f8f6',
+    borderColor: '#e2e7e4',
+  },
+  Input: {
+    borderRadius: '8px',
+    borderHover: '1px solid #79a894',
+    borderFocus: '1px solid #176b50',
+    boxShadowFocus: '0 0 0 2px rgba(23, 107, 80, 0.15)',
+  },
+  Menu: {
+    itemColorActive: '#e9f1ed',
+    itemColorActiveHover: '#e2ede7',
+    itemTextColorActive: '#12563f',
+    itemTextColorActiveHover: '#12563f',
+    itemIconColorActive: '#176b50',
+    itemIconColorActiveHover: '#176b50',
+    itemHeight: '44px',
+    borderRadius: '8px',
+  },
+}

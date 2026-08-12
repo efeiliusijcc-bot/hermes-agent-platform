@@ -6,6 +6,8 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 当前仓库已完成 **Phase 9：离线部署验证**。除完整的 `knowledge-analyst` 多源分析闭环外，平台还可导出包含固定镜像、运行配置、PostgreSQL/Redis/MinIO/文件数据和 SHA-256 清单的离线包，并在新内网节点恢复启动。
 
+管理控制台 MVP 已按现有 FastAPI 契约实现，包含运行总览、Agent 创建/详情/删除、Skill/MCP 展示、能力绑定、Playground 和执行日志查看。控制台不提供后端尚未实现的 Agent 更新、用户/RBAC 或伪流式 Trace 功能。
+
 Hermes API Server 的原生 terminal、文件、浏览器、内置 Skill、委派等工具集已关闭，仅启用 `mcp-gateway`。这保证 Agent 不能绕过平台绑定直接使用 Hermes 本地工具。
 
 `model-stub` 只属于自动化测试 profile，用于验证 OpenAI 协议、Hermes 调度和日志闭环，不是模型实现，也不能作为真实模型验收证据。生产部署不得启用该 profile。
@@ -49,6 +51,7 @@ scripts/    开发、校验和部署脚本
 - 116 测试节点统一使用 Compose 项目名 `hermes-agent-platform`。
 - 116 上现有 `hermes`、`hermes-api` 及其网络、卷、端口不属于本项目，禁止修改。
 - 300B 模型不部署在 116，通过 `MODEL_ENDPOINT` 调用外部 OpenAI Compatible API。
+- 管理控制台默认绑定 `127.0.0.1:18089`，经 Nginx 同源代理调用 `agent-api`，不会把内部容器地址暴露给浏览器。116 节点的 `18080` 已被其他项目使用，因此本项目不占用该端口。
 
 ## 设计依据
 
@@ -74,6 +77,23 @@ Compose 校验和容器测试只允许在 116 测试节点执行：
 
 ```bash
 HAP_VALIDATE_COMPOSE=1 ./scripts/validate-phase0.sh
+```
+
+前端本地类型检查、生产构建和单元测试不使用 Docker：
+
+```bash
+cd frontend
+npm ci
+npm test
+npm run build
+```
+
+在 116 节点启动管理控制台：
+
+```bash
+docker compose -p hermes-agent-platform up -d --build --wait frontend
+curl -fsS http://127.0.0.1:18089/frontend-health
+curl -fsS http://127.0.0.1:18089/health
 ```
 
 Phase 1 基础设施测试仅在 116 节点执行：

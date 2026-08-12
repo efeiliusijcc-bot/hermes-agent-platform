@@ -5,6 +5,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 PROJECT_NAME=${OFFLINE_PROJECT_NAME:-hermes-agent-platform}
 TARGET_API_PORT=${OFFLINE_AGENT_API_PORT:-18088}
+TARGET_FRONTEND_PORT=${OFFLINE_FRONTEND_PORT:-18089}
 TARGET_INTERNAL_NETWORK=${OFFLINE_INTERNAL_NETWORK_NAME:-hermes-agent-platform-internal}
 TARGET_EDGE_NETWORK=${OFFLINE_EDGE_NETWORK_NAME:-hermes-agent-platform-edge}
 
@@ -38,7 +39,8 @@ HERMES_COMPOSE_PROJECT_NAME=$PROJECT_NAME
 HERMES_INTERNAL_NETWORK_NAME=$TARGET_INTERNAL_NETWORK
 HERMES_EDGE_NETWORK_NAME=$TARGET_EDGE_NETWORK
 AGENT_API_PORT=$TARGET_API_PORT
-export HERMES_COMPOSE_PROJECT_NAME HERMES_INTERNAL_NETWORK_NAME HERMES_EDGE_NETWORK_NAME AGENT_API_PORT
+FRONTEND_PORT=$TARGET_FRONTEND_PORT
+export HERMES_COMPOSE_PROJECT_NAME HERMES_INTERNAL_NETWORK_NAME HERMES_EDGE_NETWORK_NAME AGENT_API_PORT FRONTEND_PORT
 
 COMPOSE="docker compose -p $PROJECT_NAME -f $PROJECT_ROOT/docker-compose.yml"
 
@@ -127,7 +129,10 @@ $COMPOSE run --rm --no-deps \
     mc mirror --overwrite /import/knowledge local/knowledge >/dev/null
   '
 
-$COMPOSE up -d --wait agent-api
+$COMPOSE up -d --wait agent-api frontend
 curl -fsS "http://127.0.0.1:$TARGET_API_PORT/health" >/dev/null
+curl -fsS "http://127.0.0.1:$TARGET_FRONTEND_PORT/frontend-health" >/dev/null
+curl -fsS "http://127.0.0.1:$TARGET_FRONTEND_PORT/health" >/dev/null
 
 echo "Offline restore completed for Compose project $PROJECT_NAME"
+echo "Frontend: http://127.0.0.1:$TARGET_FRONTEND_PORT"

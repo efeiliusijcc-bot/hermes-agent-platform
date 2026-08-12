@@ -12,6 +12,7 @@ ARCHIVE=$1
 VERIFY_ROOT=${OFFLINE_VERIFY_ROOT:-/opt/hermes-agent-platform-offline-verify}
 VERIFY_PROJECT=hermes-agent-platform-offline-verify
 VERIFY_PORT=28088
+VERIFY_FRONTEND_PORT=28080
 VERIFY_INTERNAL_NETWORK=hermes-agent-platform-offline-verify-internal
 VERIFY_EDGE_NETWORK=hermes-agent-platform-offline-verify-edge
 SOURCE_COMPOSE="docker compose -p hermes-agent-platform -f $PROJECT_ROOT/docker-compose.yml"
@@ -46,6 +47,7 @@ tar -xzf "$ARCHIVE" -C "$VERIFY_ROOT" --strip-components=1
 
 OFFLINE_PROJECT_NAME=$VERIFY_PROJECT \
 OFFLINE_AGENT_API_PORT=$VERIFY_PORT \
+OFFLINE_FRONTEND_PORT=$VERIFY_FRONTEND_PORT \
 OFFLINE_INTERNAL_NETWORK_NAME=$VERIFY_INTERNAL_NETWORK \
 OFFLINE_EDGE_NETWORK_NAME=$VERIFY_EDGE_NETWORK \
   "$VERIFY_ROOT/scripts/restore-offline-bundle.sh"
@@ -57,12 +59,18 @@ HERMES_COMPOSE_PROJECT_NAME=$VERIFY_PROJECT
 HERMES_INTERNAL_NETWORK_NAME=$VERIFY_INTERNAL_NETWORK
 HERMES_EDGE_NETWORK_NAME=$VERIFY_EDGE_NETWORK
 AGENT_API_PORT=$VERIFY_PORT
-export HERMES_COMPOSE_PROJECT_NAME HERMES_INTERNAL_NETWORK_NAME HERMES_EDGE_NETWORK_NAME AGENT_API_PORT
+FRONTEND_PORT=$VERIFY_FRONTEND_PORT
+export HERMES_COMPOSE_PROJECT_NAME HERMES_INTERNAL_NETWORK_NAME HERMES_EDGE_NETWORK_NAME AGENT_API_PORT FRONTEND_PORT
 VERIFY_COMPOSE="docker compose -p $VERIFY_PROJECT -f $VERIFY_ROOT/docker-compose.yml"
 VERIFY_API="http://127.0.0.1:$VERIFY_PORT"
+VERIFY_FRONTEND="http://127.0.0.1:$VERIFY_FRONTEND_PORT"
 
-test "$($VERIFY_COMPOSE ps --status running -q | wc -l | tr -d ' ')" = "8"
+test "$($VERIFY_COMPOSE ps --status running -q | wc -l | tr -d ' ')" = "9"
 curl -fsS "$VERIFY_API/health" | python3 -c 'import json,sys; assert json.load(sys.stdin)=={"status":"ok","database":"ok","memory":"ok","knowledge":"ok"}'
+test "$(curl -fsS "$VERIFY_FRONTEND/frontend-health")" = "ok"
+curl -fsS "$VERIFY_FRONTEND/health" | python3 -c 'import json,sys; assert json.load(sys.stdin)=={"status":"ok","database":"ok","memory":"ok","knowledge":"ok"}'
+curl -fsS "$VERIFY_FRONTEND/api/agents" | python3 -c 'import json,sys; assert isinstance(json.load(sys.stdin), list)'
+curl -fsS "$VERIFY_FRONTEND/agents/knowledge-analyst" | grep -q '<div id="app"></div>'
 
 agent=$(curl -fsS "$VERIFY_API/api/agents/knowledge-analyst")
 printf '%s' "$agent" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["role"]=="企业知识分析专家"; assert value["status"]=="active"'
