@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Agent, ExecutionLog, KnowledgeSource, MCPServer, Skill
-from app.schemas.agent import AgentCreate
+from app.schemas.agent import AgentCreate, AgentSchemaUpdate
 
 
 async def create_agent(session: AsyncSession, payload: AgentCreate) -> Agent:
@@ -14,6 +14,8 @@ async def create_agent(session: AsyncSession, payload: AgentCreate) -> Agent:
         system_prompt=payload.system_prompt,
         model_settings=payload.model_settings,
         status=payload.status,
+        input_schema=payload.input_schema,
+        output_schema=payload.output_schema,
     )
     session.add(agent)
     await session.commit()
@@ -33,6 +35,14 @@ async def get_agent(session: AsyncSession, agent_id: str) -> Agent | None:
 async def delete_agent(session: AsyncSession, agent: Agent) -> None:
     await session.delete(agent)
     await session.commit()
+
+
+async def update_agent_schema(session: AsyncSession, agent: Agent, payload: AgentSchemaUpdate) -> Agent:
+    agent.input_schema = payload.input_schema
+    agent.output_schema = payload.output_schema
+    await session.commit()
+    await session.refresh(agent)
+    return agent
 
 
 async def list_execution_logs(session: AsyncSession, agent_id: str) -> list[ExecutionLog]:

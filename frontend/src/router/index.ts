@@ -21,6 +21,7 @@ const router = createRouter({
         },
         { path: 'skills', name: 'skills', component: () => import('@/views/SkillListView.vue'), meta: { title: 'Skill 管理' } },
         { path: 'mcps', name: 'mcps', component: () => import('@/views/MCPListView.vue'), meta: { title: 'MCP 管理' } },
+        { path: 'apis', name: 'apis', component: () => import('@/views/APIManagementView.vue'), meta: { title: 'API 管理' } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },

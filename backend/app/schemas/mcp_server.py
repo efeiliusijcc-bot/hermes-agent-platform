@@ -9,6 +9,7 @@ class MCPServerCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     endpoint: str = Field(min_length=1, max_length=2048)
     config: dict[str, Any]
+    permission: Literal["read_only"] = "read_only"
 
     @field_validator("config")
     @classmethod
@@ -21,6 +22,18 @@ class MCPServerCreate(BaseModel):
         return value
 
 
+class MCPServerUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    endpoint: str = Field(min_length=1, max_length=2048)
+    config: dict[str, Any]
+    permission: Literal["read_only"] = "read_only"
+
+    @field_validator("config")
+    @classmethod
+    def validate_config(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return MCPServerCreate.validate_config(value)
+
+
 class MCPServerRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -28,7 +41,17 @@ class MCPServerRead(BaseModel):
     name: str
     endpoint: str
     config: dict[str, Any]
+    permission: Literal["read_only"]
+    status: Literal["unknown", "online", "offline"]
     created_at: datetime
+    updated_at: datetime
+
+
+class MCPServerTestRead(BaseModel):
+    id: str
+    status: Literal["online", "offline"]
+    latency_ms: int
+    detail: str
 
 
 class AgentMCPBindingRead(BaseModel):

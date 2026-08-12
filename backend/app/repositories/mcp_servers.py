@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import MCPServer
-from app.schemas.mcp_server import MCPServerCreate
+from app.schemas.mcp_server import MCPServerCreate, MCPServerUpdate
 
 
 async def create_mcp_server(session: AsyncSession, payload: MCPServerCreate) -> MCPServer:
@@ -11,6 +11,7 @@ async def create_mcp_server(session: AsyncSession, payload: MCPServerCreate) -> 
         name=payload.name,
         endpoint=payload.endpoint,
         config=payload.config,
+        permission=payload.permission,
     )
     session.add(server)
     await session.commit()
@@ -30,3 +31,25 @@ async def get_mcp_server(session: AsyncSession, mcp_id: str) -> MCPServer | None
 async def delete_mcp_server(session: AsyncSession, server: MCPServer) -> None:
     await session.delete(server)
     await session.commit()
+
+
+async def update_mcp_server(
+    session: AsyncSession,
+    server: MCPServer,
+    payload: MCPServerUpdate,
+) -> MCPServer:
+    server.name = payload.name
+    server.endpoint = payload.endpoint
+    server.config = payload.config
+    server.permission = payload.permission
+    server.status = "unknown"
+    await session.commit()
+    await session.refresh(server)
+    return server
+
+
+async def set_status(session: AsyncSession, server: MCPServer, value: str) -> MCPServer:
+    server.status = value
+    await session.commit()
+    await session.refresh(server)
+    return server

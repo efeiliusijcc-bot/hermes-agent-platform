@@ -44,6 +44,9 @@ class Settings(BaseSettings):
 
     skills_root: str = "/app/skills"
     skill_max_document_bytes: int = Field(default=262_144, ge=1024, le=1_048_576)
+    skill_max_upload_bytes: int = Field(default=10_485_760, ge=1024, le=104_857_600)
+    skill_max_extracted_bytes: int = Field(default=52_428_800, ge=1024, le=524_288_000)
+    skill_max_archive_entries: int = Field(default=512, ge=2, le=10_000)
 
     mcp_gateway_endpoint: str = "http://mcp-gateway:8090/mcp"
     mcp_gateway_signing_key: SecretStr = Field(min_length=32)

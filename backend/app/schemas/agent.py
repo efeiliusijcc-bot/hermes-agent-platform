@@ -2,7 +2,9 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.schemas.schema_validation import normalize_schema
 
 
 class AgentCreate(BaseModel):
@@ -15,6 +17,23 @@ class AgentCreate(BaseModel):
     system_prompt: str = Field(min_length=1)
     model_settings: dict[str, Any] = Field(default_factory=dict, alias="model_config")
     status: Literal["draft", "active", "disabled"] = "draft"
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("input_schema", "output_schema")
+    @classmethod
+    def validate_schema(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return normalize_schema(value)
+
+
+class AgentSchemaUpdate(BaseModel):
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("input_schema", "output_schema")
+    @classmethod
+    def validate_schema(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return normalize_schema(value)
 
 
 class AgentRead(BaseModel):
@@ -30,6 +49,8 @@ class AgentRead(BaseModel):
         serialization_alias="model_config",
     )
     status: Literal["draft", "active", "disabled"]
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
     created_at: datetime
     updated_at: datetime
 

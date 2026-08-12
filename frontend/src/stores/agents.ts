@@ -5,6 +5,7 @@ import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
 import type {
   Agent,
+  AgentPublication,
   CreateAgentWorkflowPayload,
   CreateAgentWorkflowResult,
   KnowledgeSource,
@@ -18,6 +19,7 @@ export const useAgentStore = defineStore('agents', () => {
   const currentSkills = ref<Skill[]>([])
   const currentMCPServers = ref<MCPServer[]>([])
   const currentKnowledgeSources = ref<KnowledgeSource[]>([])
+  const currentPublication = ref<AgentPublication | null>(null)
   const loading = ref(false)
   const detailLoading = ref(false)
   const error = ref<string | null>(null)
@@ -42,17 +44,19 @@ export const useAgentStore = defineStore('agents', () => {
     error.value = null
     const requestedId = agentId
     try {
-      const [agent, skills, mcpServers, knowledgeSources] = await Promise.all([
+      const [agent, skills, mcpServers, knowledgeSources, publication] = await Promise.all([
         platformApi.getAgent(agentId),
         platformApi.listAgentSkills(agentId),
         platformApi.listAgentMCPServers(agentId),
         platformApi.listAgentKnowledgeSources(agentId),
+        platformApi.getPublication(agentId).catch(() => null),
       ])
       if (requestedId !== agentId) return
       currentAgent.value = agent
       currentSkills.value = skills
       currentMCPServers.value = mcpServers
       currentKnowledgeSources.value = knowledgeSources
+      currentPublication.value = publication
     } catch (cause) {
       error.value = getApiErrorMessage(cause)
       throw cause
@@ -132,6 +136,7 @@ export const useAgentStore = defineStore('agents', () => {
     currentSkills,
     currentMCPServers,
     currentKnowledgeSources,
+    currentPublication,
     loading,
     detailLoading,
     error,
@@ -143,5 +148,11 @@ export const useAgentStore = defineStore('agents', () => {
     syncSkills,
     syncMCPServers,
     syncKnowledgeSources,
+    async updateSchema(agentId: string, inputSchema: Record<string, unknown>, outputSchema: Record<string, unknown>) {
+      currentAgent.value = await platformApi.updateAgentSchema(agentId, inputSchema, outputSchema)
+    },
+    async refreshPublication(agentId: string) {
+      currentPublication.value = await platformApi.getPublication(agentId).catch(() => null)
+    },
   }
 })

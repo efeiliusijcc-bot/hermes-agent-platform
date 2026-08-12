@@ -4,10 +4,15 @@ import type {
   AgentCreatePayload,
   AgentRunPayload,
   AgentRunResponse,
+  AgentPublication,
+  AgentPublicationSecret,
   ExecutionLog,
   HealthStatus,
   KnowledgeSource,
   MCPServer,
+  MCPServerCreatePayload,
+  MCPServerTestResult,
+  PublicationStatus,
   Skill,
 } from '@/types/api'
 
@@ -56,6 +61,17 @@ export const platformApi = {
     return data
   },
 
+  async uploadSkill(file: File): Promise<Skill> {
+    const form = new FormData()
+    form.append('file', file)
+    const { data } = await apiClient.post<Skill>('/api/skills/upload', form)
+    return data
+  },
+
+  async deleteSkill(skillId: string): Promise<void> {
+    await apiClient.delete(`/api/skills/${encodeURIComponent(skillId)}`)
+  },
+
   async listAgentSkills(agentId: string): Promise<Skill[]> {
     const { data } = await apiClient.get<Skill[]>(
       `/api/agents/${encodeURIComponent(agentId)}/skills`,
@@ -77,6 +93,69 @@ export const platformApi = {
 
   async listMCPServers(): Promise<MCPServer[]> {
     const { data } = await apiClient.get<MCPServer[]>('/api/mcp-servers')
+    return data
+  },
+
+  async createMCPServer(payload: MCPServerCreatePayload): Promise<MCPServer> {
+    const { data } = await apiClient.post<MCPServer>('/api/mcp-servers', payload)
+    return data
+  },
+
+  async updateMCPServer(mcpId: string, payload: Omit<MCPServerCreatePayload, 'id'>): Promise<MCPServer> {
+    const { data } = await apiClient.put<MCPServer>(
+      `/api/mcp-servers/${encodeURIComponent(mcpId)}`,
+      payload,
+    )
+    return data
+  },
+
+  async testMCPServer(mcpId: string): Promise<MCPServerTestResult> {
+    const { data } = await apiClient.post<MCPServerTestResult>(
+      `/api/mcp-servers/${encodeURIComponent(mcpId)}/test`,
+    )
+    return data
+  },
+
+  async deleteMCPServer(mcpId: string): Promise<void> {
+    await apiClient.delete(`/api/mcp-servers/${encodeURIComponent(mcpId)}`)
+  },
+
+  async updateAgentSchema(
+    agentId: string,
+    inputSchema: Record<string, unknown>,
+    outputSchema: Record<string, unknown>,
+  ): Promise<Agent> {
+    const { data } = await apiClient.put<Agent>(`/api/agents/${encodeURIComponent(agentId)}/schema`, {
+      input_schema: inputSchema,
+      output_schema: outputSchema,
+    })
+    return data
+  },
+
+  async listPublications(): Promise<AgentPublication[]> {
+    const { data } = await apiClient.get<AgentPublication[]>('/api/agent-publications')
+    return data
+  },
+
+  async getPublication(agentId: string): Promise<AgentPublication> {
+    const { data } = await apiClient.get<AgentPublication>(
+      `/api/agents/${encodeURIComponent(agentId)}/publication`,
+    )
+    return data
+  },
+
+  async updatePublication(agentId: string, status: PublicationStatus): Promise<AgentPublication> {
+    const { data } = await apiClient.put<AgentPublication>(
+      `/api/agents/${encodeURIComponent(agentId)}/publication`,
+      { status },
+    )
+    return data
+  },
+
+  async rotatePublicationKey(agentId: string): Promise<AgentPublicationSecret> {
+    const { data } = await apiClient.post<AgentPublicationSecret>(
+      `/api/agents/${encodeURIComponent(agentId)}/publication/api-key`,
+    )
     return data
   },
 

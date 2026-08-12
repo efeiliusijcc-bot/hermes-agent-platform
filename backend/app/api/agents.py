@@ -18,7 +18,7 @@ from app.repositories import mcp_servers as mcp_repository
 from app.repositories import knowledge as knowledge_repository
 from app.repositories import skills as skill_repository
 from app.runtime.hermes import HermesClient, HermesRuntimeError
-from app.schemas.agent import AgentCreate, AgentRead, AgentRunRequest, AgentRunResponse, ExecutionLogRead
+from app.schemas.agent import AgentCreate, AgentRead, AgentRunRequest, AgentRunResponse, AgentSchemaUpdate, ExecutionLogRead
 from app.schemas.mcp_server import AgentMCPBindingRead, MCPServerRead
 from app.schemas.knowledge import AgentKnowledgeBindingRead, KnowledgeSearchHit, KnowledgeSearchResponse, KnowledgeSourceRead
 from app.schemas.skill import AgentSkillBindingRead, SkillRead
@@ -49,6 +49,18 @@ async def get_agent(agent_id: str, session: AsyncSession = Depends(get_session))
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
     return AgentRead.model_validate(agent)
+
+
+@router.put("/{agent_id}/schema", response_model=AgentRead)
+async def update_agent_schema(
+    agent_id: str,
+    payload: AgentSchemaUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> AgentRead:
+    agent = await repository.get_agent(session, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
+    return AgentRead.model_validate(await repository.update_agent_schema(session, agent, payload))
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)

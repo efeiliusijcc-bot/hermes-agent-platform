@@ -32,5 +32,13 @@ export const useResourceStore = defineStore('resources', () => {
     }
   }
 
-  return { skills, mcpServers, knowledgeSources, loading, error, fetchAll }
+  async function fetchSkills(): Promise<void> {
+    skills.value = await platformApi.listSkills()
+  }
+
+  async function fetchMCPServers(): Promise<void> {
+    mcpServers.value = await platformApi.listMCPServers()
+  }
+
+  return { skills, mcpServers, knowledgeSources, loading, error, fetchAll, fetchSkills, fetchMCPServers }
 })

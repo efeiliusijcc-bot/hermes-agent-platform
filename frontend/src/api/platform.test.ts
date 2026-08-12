@@ -21,6 +21,8 @@ describe('platformApi contract', () => {
       system_prompt: '只根据可靠数据回答',
       model_config: { model: 'qwen-300b' },
       status: 'active' as const,
+      input_schema: {},
+      output_schema: {},
     }
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: payload })
     await platformApi.createAgent(payload)

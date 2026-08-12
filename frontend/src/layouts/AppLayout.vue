@@ -4,6 +4,7 @@ import { RouterLink, useRoute } from 'vue-router'
 import { NIcon, type MenuOption } from 'naive-ui'
 import {
   Apps,
+  Api,
   Hierarchy,
   ChevronLeft,
   ChevronRight,
@@ -32,6 +33,7 @@ const menuOptions: MenuOption[] = [
   { label: renderLink('Agent 管理', 'agents'), key: 'agents', icon: renderIcon(Robot) },
   { label: renderLink('Skill 管理', 'skills'), key: 'skills', icon: renderIcon(Hierarchy) },
   { label: renderLink('MCP 管理', 'mcps'), key: 'mcps', icon: renderIcon(PlugConnected) },
+  { label: renderLink('API 管理', 'apis'), key: 'apis', icon: renderIcon(Api) },
 ]
 
 const healthTimer = ref<number | null>(null)

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,7 +18,11 @@ class SkillRead(BaseModel):
     name: str
     description: str | None
     path: str
+    version: str
+    manifest: dict[str, Any]
+    package_sha256: str | None
     created_at: datetime
+    updated_at: datetime
 
 
 class AgentSkillBindingRead(BaseModel):

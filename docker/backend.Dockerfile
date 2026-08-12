@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+RUN groupadd --system --gid 10002 app && useradd --system --uid 10002 --gid app --home-dir /app app
 WORKDIR /app
 
 COPY backend/requirements.txt ./requirements.txt

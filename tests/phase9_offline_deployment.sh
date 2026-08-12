@@ -65,6 +65,11 @@ VERIFY_COMPOSE="docker compose -p $VERIFY_PROJECT -f $VERIFY_ROOT/docker-compose
 VERIFY_API="http://127.0.0.1:$VERIFY_PORT"
 VERIFY_FRONTEND="http://127.0.0.1:$VERIFY_FRONTEND_PORT"
 
+AGENT_API_TEST_HOST=127.0.0.1 \
+AGENT_API_PORT=$VERIFY_PORT \
+HERMES_COMPOSE_PROJECT_NAME=$VERIFY_PROJECT \
+  "$VERIFY_ROOT/tests/phase10_phase2_platform.sh"
+
 test "$($VERIFY_COMPOSE ps --status running -q | wc -l | tr -d ' ')" = "9"
 curl -fsS "$VERIFY_API/health" | python3 -c 'import json,sys; assert json.load(sys.stdin)=={"status":"ok","database":"ok","memory":"ok","knowledge":"ok"}'
 test "$(curl -fsS "$VERIFY_FRONTEND/frontend-health")" = "ok"

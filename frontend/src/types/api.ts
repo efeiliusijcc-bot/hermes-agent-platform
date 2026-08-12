@@ -1,5 +1,6 @@
 export type AgentStatus = 'draft' | 'active' | 'disabled'
 export type ExecutionStatus = 'running' | 'succeeded' | 'failed'
+export type PublicationStatus = 'draft' | 'testing' | 'published' | 'disabled'
 
 export interface Agent {
   id: string
@@ -9,6 +10,8 @@ export interface Agent {
   system_prompt: string
   model_config: Record<string, unknown>
   status: AgentStatus
+  input_schema: Record<string, unknown>
+  output_schema: Record<string, unknown>
   created_at: string
   updated_at: string
 }
@@ -21,6 +24,8 @@ export interface AgentCreatePayload {
   system_prompt: string
   model_config: Record<string, unknown>
   status: AgentStatus
+  input_schema?: Record<string, unknown>
+  output_schema?: Record<string, unknown>
 }
 
 export interface AgentRunPayload {
@@ -82,7 +87,11 @@ export interface Skill {
   name: string
   description: string | null
   path: string
+  version: string
+  manifest: Record<string, unknown>
+  package_sha256: string | null
   created_at: string
+  updated_at: string
 }
 
 export interface MCPServer {
@@ -94,7 +103,41 @@ export interface MCPServer {
     read_only: true
     [key: string]: unknown
   }
+  permission: 'read_only'
+  status: 'unknown' | 'online' | 'offline'
   created_at: string
+  updated_at: string
+}
+
+export interface MCPServerCreatePayload {
+  id: string
+  name: string
+  endpoint: string
+  permission: 'read_only'
+  config: { kind: 'filesystem' | 'database'; read_only: true }
+}
+
+export interface MCPServerTestResult {
+  id: string
+  status: 'online' | 'offline'
+  latency_ms: number
+  detail: string
+}
+
+export interface AgentPublication {
+  agent_id: string
+  agent_name: string | null
+  status: PublicationStatus
+  endpoint: string
+  api_key_prefix: string | null
+  call_count: number
+  last_called_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentPublicationSecret extends AgentPublication {
+  api_key: string
 }
 
 export interface KnowledgeSource {

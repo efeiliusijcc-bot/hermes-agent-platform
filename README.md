@@ -1,5 +1,7 @@
 # Hermes Agent Platform
 
+Phase 2 adds safe Skill ZIP registration, dynamic read-only MCP registry testing, Agent input/output JSON Schema, and hashed-key public Agent APIs. See `docs/phase2-registry-publication.md`.
+
 Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台以 Hermes Agent Runtime 为执行核心，通过外部 OpenAI Compatible 模型服务完成推理，并组合 Agent、Skill、MCP、Knowledge 与 Memory 构建可配置、可隔离的 AI 工作单元。
 
 ## 当前阶段

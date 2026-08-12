@@ -38,6 +38,8 @@ mkdir -p \
 rsync -a \
   --exclude='.git/' \
   --exclude='.codebase-memory/' \
+  --exclude='.venv/' \
+  --exclude='node_modules/' \
   --exclude='.env' \
   --exclude='data/' \
   --exclude='dist/' \

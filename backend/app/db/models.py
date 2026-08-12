@@ -44,6 +44,8 @@ class Agent(Base):
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     model_settings: Mapped[dict[str, Any]] = mapped_column("model_config", JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    input_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    output_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
@@ -53,6 +55,9 @@ class Agent(Base):
     mcp_servers: Mapped[list[MCPServer]] = relationship(secondary=agent_mcp, lazy="selectin")
     knowledge_sources: Mapped[list[KnowledgeSource]] = relationship(secondary=agent_knowledge, lazy="selectin")
     execution_logs: Mapped[list[ExecutionLog]] = relationship(back_populates="agent", cascade="all, delete-orphan")
+    publication: Mapped[AgentPublication | None] = relationship(
+        back_populates="agent", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class Skill(Base):
@@ -62,17 +67,57 @@ class Skill(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     path: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    version: Mapped[str] = mapped_column(String(64), nullable=False, default="0.0.0")
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    package_sha256: Mapped[str | None] = mapped_column(String(64), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
 
 class MCPServer(Base):
     __tablename__ = "mcp_servers"
+    __table_args__ = (
+        CheckConstraint("permission = 'read_only'", name="ck_mcp_servers_permission"),
+        CheckConstraint("status IN ('unknown', 'online', 'offline')", name="ck_mcp_servers_status"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     endpoint: Mapped[str] = mapped_column(Text, nullable=False)
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    permission: Mapped[str] = mapped_column(String(32), nullable=False, default="read_only")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AgentPublication(Base):
+    __tablename__ = "agent_publications"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'testing', 'published', 'disabled')",
+            name="ck_agent_publications_status",
+        ),
+    )
+
+    agent_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    api_key_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    api_key_prefix: Mapped[str | None] = mapped_column(String(16))
+    call_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    last_called_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    agent: Mapped[Agent] = relationship(back_populates="publication", lazy="joined")
 
 
 class KnowledgeSource(Base):

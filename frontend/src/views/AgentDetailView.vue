@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
-import { ArrowLeft, Hierarchy, Book2, Edit, PlugConnected, TestPipe } from '@vicons/tabler'
+import { ArrowLeft, Hierarchy, Book2, Edit, PlugConnected, TestPipe, Api } from '@vicons/tabler'
 import { useRoute, useRouter } from 'vue-router'
 
 import BindingDialog from '@/components/BindingDialog.vue'
@@ -20,6 +20,9 @@ const resourceStore = useResourceStore()
 const agentId = computed(() => String(route.params.id))
 const dialogType = ref<'skills' | 'mcps' | 'knowledge' | null>(null)
 const saving = ref(false)
+const schemaSaving = ref(false)
+const inputSchemaText = ref('{}')
+const outputSchemaText = ref('{}')
 
 const skillOptions = computed(() => resourceStore.skills.map((item) => ({ label: `${item.name} (${item.id})`, value: item.id })))
 const mcpOptions = computed(() => resourceStore.mcpServers.map((item) => ({ label: `${item.name} (${item.config.kind})`, value: item.id })))
@@ -36,6 +39,20 @@ async function load() {
     agentStore.fetchAgentDetail(agentId.value),
     resourceStore.fetchAll(),
   ]).catch(() => undefined)
+  if (agentStore.currentAgent) {
+    inputSchemaText.value = JSON.stringify(agentStore.currentAgent.input_schema || {}, null, 2)
+    outputSchemaText.value = JSON.stringify(agentStore.currentAgent.output_schema || {}, null, 2)
+  }
+}
+
+async function saveSchema() {
+  schemaSaving.value = true
+  try {
+    const inputSchema = JSON.parse(inputSchemaText.value) as Record<string, unknown>
+    const outputSchema = JSON.parse(outputSchemaText.value) as Record<string, unknown>
+    await agentStore.updateSchema(agentId.value, inputSchema, outputSchema)
+    message.success('输入输出 Schema 已保存并通过后端校验')
+  } catch (error) { message.error(getApiErrorMessage(error), { duration: 7000 }) } finally { schemaSaving.value = false }
 }
 
 async function saveBindings(selected: string[]) {
@@ -90,12 +107,22 @@ onMounted(load)
         </section>
 
         <section class="surface panel">
+          <div class="section-heading"><div><h2>输入 / 输出 Schema</h2><p>保存时校验 JSON Schema；公共调用还会校验实际请求和输出。</p></div><NButton type="primary" secondary :loading="schemaSaving" @click="saveSchema">保存 Schema</NButton></div>
+          <div class="schema-grid"><NFormItem label="Input Schema"><NInput v-model:value="inputSchemaText" type="textarea" :rows="11" class="mono" /></NFormItem><NFormItem label="Output Schema"><NInput v-model:value="outputSchemaText" type="textarea" :rows="11" class="mono" /></NFormItem></div>
+        </section>
+
+        <section class="surface panel">
           <div class="section-heading"><div><h2>System Prompt</h2><p>执行时与 Role、能力、知识和记忆共同组成最终输入</p></div></div>
           <pre class="prompt-block">{{ agentStore.currentAgent.system_prompt }}</pre>
         </section>
       </div>
 
       <aside class="detail-stack">
+        <section class="surface panel">
+          <div class="section-heading"><div><h2>API 发布</h2><p>独立于 Agent 运行状态</p></div><NIcon :component="Api" size="20" /></div>
+          <dl class="definition-list" style="grid-template-columns: 1fr; gap: 10px"><div class="definition-item"><dt>状态</dt><dd>{{ agentStore.currentPublication?.status || '未配置' }}</dd></div><div class="definition-item"><dt>Endpoint</dt><dd class="mono">/api/public/agents/{{ agentId }}/run</dd></div><div class="definition-item"><dt>API Key</dt><dd class="mono">{{ agentStore.currentPublication?.api_key_prefix ? `${agentStore.currentPublication.api_key_prefix}…` : '未生成' }}</dd></div></dl>
+          <NButton style="margin-top: 14px" block @click="router.push({ name: 'apis' })">打开 API 管理</NButton>
+        </section>
         <section class="surface panel">
           <div class="section-heading">
             <div><h2>Skill</h2><p>{{ agentStore.currentSkills.length }} 个已绑定</p></div>
