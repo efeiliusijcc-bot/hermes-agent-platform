@@ -62,6 +62,8 @@ schema=$(curl -fsS -X PUT "$API_URL/api/agents/$AGENT_ID/schema" -H 'Content-Typ
 printf '%s' "$schema" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["input_schema"]["required"]==["topic"]; assert value["output_schema"]["properties"]["recommendations"]["type"]=="array"'
 # Keep the end-to-end model assertion deterministic while schema behavior remains covered above and by backend tests.
 curl -fsS -X PUT "$API_URL/api/agents/$AGENT_ID/schema" -H 'Content-Type: application/json' --data '{"input_schema":{"topic":{"type":"string","required":true}},"output_schema":{}}' >/dev/null
+mode=$(curl -fsS -X PUT "$API_URL/api/agents/$AGENT_ID/response-mode" -H 'Content-Type: application/json' --data '{"response_mode":"stream"}')
+printf '%s' "$mode" | python3 -c 'import json,sys; assert json.load(sys.stdin)["response_mode"]=="stream"'
 
 secret=$(curl -fsS -X POST "$API_URL/api/agents/$AGENT_ID/publication/api-key")
 api_key=$(printf '%s' "$secret" | python3 -c 'import json,sys; print(json.load(sys.stdin)["api_key"])')
@@ -74,10 +76,24 @@ invalid=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$API_URL/api/public/a
 test "$invalid" = "422"
 
 result=$(curl -fsS --max-time 300 -X POST "$API_URL/api/public/agents/$AGENT_ID/run" -H "X-API-Key: $api_key" -H 'Content-Type: application/json' --data '{"topic":"用一句话说明企业部署 Agent 时为什么要保护 API Key"}')
-printf '%s' "$result" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["agent_id"]=="phase2-public-agent"; assert value["status"]=="success"; assert value["result"]; assert [item["stage"] for item in value["trace"]]==["schema_input","hermes_runtime","schema_output"]'
+printf '%s' "$result" | python3 -c '
+import json,sys
+frames=[frame for frame in sys.stdin.read().split("\n\n") if frame.strip() and not frame.startswith(":")]
+events=[]
+for frame in frames:
+    data="\n".join(line[5:].lstrip() for line in frame.splitlines() if line.startswith("data:"))
+    if data: events.append(json.loads(data))
+assert events[0]["event"]=="start"
+assert any(event["event"]=="token" and event.get("text") for event in events)
+assert any(event["event"]=="trace" for event in events)
+assert events[-1]["event"]=="end" and events[-1]["status"]=="success"
+'
+
+sync_result=$(curl -fsS --max-time 300 -X POST "$API_URL/api/public/agents/$AGENT_ID/run?response_mode=sync" -H "X-API-Key: $api_key" -H 'Content-Type: application/json' --data '{"topic":"用一句话说明企业部署 Agent 时为什么要保护 API Key"}')
+printf '%s' "$sync_result" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["agent_id"]=="phase2-public-agent"; assert value["status"]=="success"; assert value["result"]; assert [item["stage"] for item in value["trace"]]==["schema_input","hermes_runtime","schema_output"]'
 
 publication=$(curl -fsS "$API_URL/api/agents/$AGENT_ID/publication")
-printf '%s' "$publication" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["status"]=="published"; assert value["call_count"]==1; assert value["last_called_at"]; assert "api_key" not in value'
+printf '%s' "$publication" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["status"]=="published"; assert value["response_mode"]=="stream"; assert value["call_count"]==2; assert value["last_called_at"]; assert "api_key" not in value'
 expected_hash=$(printf '%s' "$api_key" | sha256sum | cut -d' ' -f1)
 stored_hash=$($COMPOSE exec -T postgres psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT api_key_hash FROM agent_publications WHERE agent_id = '$AGENT_ID'")
 test "$stored_hash" = "$expected_hash"

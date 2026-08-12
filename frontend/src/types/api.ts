@@ -1,6 +1,7 @@
 export type AgentStatus = 'draft' | 'active' | 'disabled'
 export type ExecutionStatus = 'running' | 'succeeded' | 'failed'
 export type PublicationStatus = 'draft' | 'testing' | 'published' | 'disabled'
+export type ResponseMode = 'sync' | 'stream'
 
 export interface Agent {
   id: string
@@ -10,6 +11,7 @@ export interface Agent {
   system_prompt: string
   model_config: Record<string, unknown>
   status: AgentStatus
+  response_mode: ResponseMode
   input_schema: Record<string, unknown>
   output_schema: Record<string, unknown>
   created_at: string
@@ -24,6 +26,7 @@ export interface AgentCreatePayload {
   system_prompt: string
   model_config: Record<string, unknown>
   status: AgentStatus
+  response_mode?: ResponseMode
   input_schema?: Record<string, unknown>
   output_schema?: Record<string, unknown>
 }
@@ -128,6 +131,7 @@ export interface AgentPublication {
   agent_id: string
   agent_name: string | null
   status: PublicationStatus
+  response_mode: ResponseMode
   endpoint: string
   api_key_prefix: string | null
   call_count: number
@@ -138,6 +142,13 @@ export interface AgentPublication {
 
 export interface AgentPublicationSecret extends AgentPublication {
   api_key: string
+}
+
+export type AgentStreamEventName = 'start' | 'trace' | 'tool' | 'token' | 'end' | 'error' | 'keepalive'
+
+export interface AgentStreamEvent {
+  event: AgentStreamEventName
+  [key: string]: unknown
 }
 
 export interface KnowledgeSource {

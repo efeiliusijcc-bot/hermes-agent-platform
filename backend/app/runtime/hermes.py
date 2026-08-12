@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,12 +35,8 @@ class HermesClient:
         self.poll_interval = settings.hermes_poll_interval_seconds
 
     async def run(self, *, prompt: str, agent_id: str, execution_id: str) -> HermesRunResult:
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        payload = {
-            "model": self.model,
-            "input": prompt,
-            "metadata": {"agent_id": agent_id, "execution_id": execution_id, "source": "hermes-agent-platform"},
-        }
+        headers = self._headers()
+        payload = self._payload(prompt=prompt, agent_id=agent_id, execution_id=execution_id)
         timeout = httpx.Timeout(self.timeout + 10, connect=10)
         async with httpx.AsyncClient(timeout=timeout) as client:
             created = await self._request_json(client, "POST", self.runs_url, headers=headers, json=payload)
@@ -68,6 +66,111 @@ class HermesClient:
                     error = self._extract_error(run)
                     raise HermesRuntimeError(f"Hermes run ended with status {status}: {error}")
             raise HermesRuntimeError(f"Hermes run timed out after {self.timeout} seconds")
+
+    async def stream(
+        self,
+        *,
+        prompt: str,
+        agent_id: str,
+        execution_id: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Yield Hermes' native structured run events, including real message deltas."""
+        headers = self._headers()
+        payload = self._payload(prompt=prompt, agent_id=agent_id, execution_id=execution_id)
+        timeout = httpx.Timeout(self.timeout + 10, connect=10)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            created = await self._request_json(client, "POST", self.runs_url, headers=headers, json=payload)
+            run_id = self._extract_id(created)
+            immediate_output = self._extract_output(created)
+            created_status = self._extract_status(created)
+            if immediate_output and (not run_id or created_status in self.successful_statuses):
+                yield {
+                    "event": "run.completed",
+                    "run_id": run_id,
+                    "output": immediate_output,
+                    "status": created_status or "completed",
+                }
+                return
+            if not run_id:
+                raise HermesRuntimeError("Hermes did not return a run id or final output")
+
+            yield {"event": "run.created", "run_id": run_id, "status": created_status or "started"}
+            terminal_seen = False
+            try:
+                async with client.stream(
+                    "GET",
+                    f"{self.runs_url}/{run_id}/events",
+                    headers=headers,
+                ) as response:
+                    if response.is_error:
+                        body = (await response.aread()).decode(errors="replace")[:500]
+                        raise HermesRuntimeError(
+                            f"Hermes event stream returned HTTP {response.status_code}: {body}"
+                        )
+                    async for line in response.aiter_lines():
+                        if line.startswith(":"):
+                            yield {"event": "_keepalive", "run_id": run_id}
+                            continue
+                        if not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if not raw:
+                            continue
+                        try:
+                            event = json.loads(raw)
+                        except ValueError as exc:
+                            raise HermesRuntimeError("Hermes returned an invalid SSE event") from exc
+                        if not isinstance(event, dict):
+                            raise HermesRuntimeError("Hermes returned a non-object SSE event")
+                        event.setdefault("run_id", run_id)
+                        yield event
+                        if str(event.get("event", "")) in {
+                            "run.completed",
+                            "run.failed",
+                            "run.cancelled",
+                            "run.canceled",
+                        }:
+                            terminal_seen = True
+            except asyncio.CancelledError:
+                try:
+                    await client.post(f"{self.runs_url}/{run_id}/stop", headers=headers)
+                except httpx.HTTPError:
+                    pass
+                raise
+            except httpx.TimeoutException as exc:
+                raise HermesRuntimeError("Hermes event stream timed out") from exc
+            except httpx.HTTPError as exc:
+                raise HermesRuntimeError(f"Hermes event stream failed: {exc}") from exc
+
+            if terminal_seen:
+                return
+            final = await self._request_json(client, "GET", f"{self.runs_url}/{run_id}", headers=headers)
+            final_status = self._extract_status(final)
+            if final_status in self.successful_statuses:
+                yield {
+                    "event": "run.completed",
+                    "run_id": run_id,
+                    "output": self._extract_output(final),
+                    "status": final_status,
+                }
+                return
+            raise HermesRuntimeError(
+                f"Hermes event stream ended with status {final_status or 'unknown'}: {self._extract_error(final)}"
+            )
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+
+    def _payload(self, *, prompt: str, agent_id: str, execution_id: str) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "input": prompt,
+            "metadata": {
+                "agent_id": agent_id,
+                "execution_id": execution_id,
+                "source": "hermes-agent-platform",
+            },
+        }
 
     @staticmethod
     async def _request_json(client: httpx.AsyncClient, method: str, url: str, **kwargs: Any) -> dict[str, Any]:

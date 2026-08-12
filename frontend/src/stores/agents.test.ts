@@ -12,6 +12,7 @@ const agent = {
   system_prompt: '只根据可靠数据回答',
   model_config: {},
   status: 'active' as const,
+  response_mode: 'sync' as const,
   input_schema: {},
   output_schema: {},
   created_at: '2026-08-12T00:00:00Z',

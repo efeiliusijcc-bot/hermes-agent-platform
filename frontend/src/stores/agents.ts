@@ -151,6 +151,9 @@ export const useAgentStore = defineStore('agents', () => {
     async updateSchema(agentId: string, inputSchema: Record<string, unknown>, outputSchema: Record<string, unknown>) {
       currentAgent.value = await platformApi.updateAgentSchema(agentId, inputSchema, outputSchema)
     },
+    async updateResponseMode(agentId: string, responseMode: 'sync' | 'stream') {
+      currentAgent.value = await platformApi.updateAgentResponseMode(agentId, responseMode)
+    },
     async refreshPublication(agentId: string) {
       currentPublication.value = await platformApi.getPublication(agentId).catch(() => null)
     },

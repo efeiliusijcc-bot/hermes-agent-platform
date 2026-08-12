@@ -1,15 +1,20 @@
 from datetime import datetime, timezone
+from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from typing import Any
+import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.session import get_session
-from app.db.models import ExecutionLog
+from app.db.session import SessionFactory, get_session
+from app.db.models import Agent, ExecutionLog
 from app.memory import AgentMemoryError, AgentMemoryStore, MemoryMessage, get_memory_store
 from app.knowledge import KnowledgeServiceClient, KnowledgeServiceError
 from app.mcp import issue_mcp_access_token
@@ -17,8 +22,17 @@ from app.repositories import agents as repository
 from app.repositories import mcp_servers as mcp_repository
 from app.repositories import knowledge as knowledge_repository
 from app.repositories import skills as skill_repository
-from app.runtime.hermes import HermesClient, HermesRuntimeError
-from app.schemas.agent import AgentCreate, AgentRead, AgentRunRequest, AgentRunResponse, AgentSchemaUpdate, ExecutionLogRead
+from app.runtime.hermes import HermesClient, HermesRunResult, HermesRuntimeError
+from app.schemas.agent import (
+    AgentCreate,
+    AgentRead,
+    AgentResponseModeUpdate,
+    AgentRunRequest,
+    AgentRunResponse,
+    AgentSchemaUpdate,
+    ExecutionLogRead,
+    ResponseMode,
+)
 from app.schemas.mcp_server import AgentMCPBindingRead, MCPServerRead
 from app.schemas.knowledge import AgentKnowledgeBindingRead, KnowledgeSearchHit, KnowledgeSearchResponse, KnowledgeSourceRead
 from app.schemas.skill import AgentSkillBindingRead, SkillRead
@@ -63,6 +77,20 @@ async def update_agent_schema(
     return AgentRead.model_validate(await repository.update_agent_schema(session, agent, payload))
 
 
+@router.put("/{agent_id}/response-mode", response_model=AgentRead)
+async def update_agent_response_mode(
+    agent_id: str,
+    payload: AgentResponseModeUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> AgentRead:
+    agent = await repository.get_agent(session, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
+    return AgentRead.model_validate(
+        await repository.update_agent_response_mode(session, agent, payload.response_mode)
+    )
+
+
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(
     agent_id: str,
@@ -83,19 +111,153 @@ async def delete_agent(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/{agent_id}/run", response_model=AgentRunResponse)
+@router.post("/{agent_id}/run", response_model=None)
 async def run_agent(
     agent_id: str,
     payload: AgentRunRequest,
+    response_mode: ResponseMode | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
     memory_store: AgentMemoryStore = Depends(get_memory_store),
+) -> AgentRunResponse | StreamingResponse:
+    agent = await _active_agent(session, agent_id)
+    selected_mode = response_mode or agent.response_mode
+    if selected_mode == "stream":
+        context = await _prepare_agent_execution(agent, payload, session, memory_store)
+        return StreamingResponse(
+            _internal_sse_events(context, payload, memory_store),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+    return await execute_agent_sync(agent, payload, session, memory_store)
+
+
+@dataclass
+class AgentExecutionContext:
+    agent: Agent
+    execution: ExecutionLog
+    prompt: str
+    loaded_skills: list[Any]
+    mcp_servers: list[Any]
+    knowledge_sources: list[Any]
+    knowledge_summary: list[dict[str, Any]]
+    memory_scope: dict[str, Any]
+
+
+async def execute_agent_sync(
+    agent: Agent,
+    payload: AgentRunRequest,
+    session: AsyncSession,
+    memory_store: AgentMemoryStore,
 ) -> AgentRunResponse:
+    context = await _prepare_agent_execution(agent, payload, session, memory_store)
+    try:
+        result = await HermesClient().run(
+            prompt=context.prompt,
+            agent_id=agent.id,
+            execution_id=str(context.execution.id),
+        )
+        await memory_store.append_turn(agent.id, payload.session_id, payload.input, result.output)
+    except AgentMemoryError as exc:
+        await _fail_execution(context.execution, session, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent memory is unavailable",
+        ) from exc
+    except HermesRuntimeError as exc:
+        await _fail_execution(context.execution, session, exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Hermes execution failed") from exc
+    await _complete_execution(context, result, session)
+    return _run_response(context, payload, result)
+
+
+async def stream_prepared_agent(
+    context: AgentExecutionContext,
+    payload: AgentRunRequest,
+    session: AsyncSession,
+    memory_store: AgentMemoryStore,
+) -> AsyncIterator[dict[str, Any]]:
+    run_id: str | None = None
+    output_parts: list[str] = []
+    completed = False
+    try:
+        async for event in HermesClient().stream(
+            prompt=context.prompt,
+            agent_id=context.agent.id,
+            execution_id=str(context.execution.id),
+        ):
+            event_type = str(event.get("event", ""))
+            run_id = str(event.get("run_id")) if event.get("run_id") else run_id
+            if event_type == "message.delta" and isinstance(event.get("delta"), str):
+                output_parts.append(event["delta"])
+            if event_type in {"run.failed", "run.cancelled", "run.canceled"}:
+                raise HermesRuntimeError(str(event.get("error") or f"Hermes {event_type}"))
+            if event_type == "run.completed":
+                output = str(event.get("output") or "".join(output_parts))
+                result = HermesRunResult(output=output, run_id=run_id, status="completed")
+                await memory_store.append_turn(
+                    context.agent.id,
+                    payload.session_id,
+                    payload.input,
+                    result.output,
+                )
+                await _complete_execution(context, result, session)
+                event["output"] = output
+                completed = True
+            yield event
+        if not completed:
+            raise HermesRuntimeError("Hermes event stream ended without a completion event")
+    except AgentMemoryError as exc:
+        await _fail_execution(context.execution, session, exc)
+        raise
+    except HermesRuntimeError as exc:
+        await _fail_execution(context.execution, session, exc)
+        raise
+    except asyncio.CancelledError:
+        await _fail_execution(context.execution, session, RuntimeError("stream client disconnected"))
+        raise
+
+
+async def _internal_sse_events(
+    context: AgentExecutionContext,
+    payload: AgentRunRequest,
+    memory_store: AgentMemoryStore,
+) -> AsyncIterator[str]:
+    yield _sse("start", {"event": "start", "agent_id": context.agent.id, "execution_id": str(context.execution.id)})
+    async with SessionFactory() as stream_session:
+        execution = await stream_session.get(ExecutionLog, context.execution.id)
+        if execution is None:
+            yield _sse("error", {"event": "error", "status": "failed", "message": "execution log not found"})
+            return
+        context.execution = execution
+        try:
+            async for event in stream_prepared_agent(context, payload, stream_session, memory_store):
+                mapped = _map_hermes_event(event)
+                if mapped is not None:
+                    yield _sse(mapped[0], mapped[1])
+            yield _sse("end", {"event": "end", "status": "success", "execution_id": str(context.execution.id)})
+        except (AgentMemoryError, HermesRuntimeError) as exc:
+            yield _sse("error", {"event": "error", "status": "failed", "message": str(exc)})
+
+
+async def _active_agent(session: AsyncSession, agent_id: str) -> Agent:
     agent = await repository.get_agent(session, agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
     if agent.status != "active":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="agent is not active")
+    return agent
 
+
+async def _prepare_agent_execution(
+    agent: Agent,
+    payload: AgentRunRequest,
+    session: AsyncSession,
+    memory_store: AgentMemoryStore,
+) -> AgentExecutionContext:
     memory_scope = {
         "namespace": "agent_session",
         "agent_id": agent.id,
@@ -175,68 +337,103 @@ async def run_agent(
             f"User input:\n{payload.input}\n\n"
             "Follow the system instructions, bound skills, and MCP permissions, then return the final answer."
         )
-        result = await HermesClient().run(
-            prompt=prompt,
-            agent_id=agent.id,
-            execution_id=str(execution.id),
-        )
-        await memory_store.append_turn(agent.id, payload.session_id, payload.input, result.output)
     except KnowledgeServiceError as exc:
-        execution.status = "failed"
-        execution.error = str(exc)[:2000]
-        execution.finished_at = datetime.now(timezone.utc)
-        await session.commit()
+        await _fail_execution(execution, session, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Knowledge retrieval failed",
         ) from exc
     except AgentMemoryError as exc:
-        execution.status = "failed"
-        execution.error = str(exc)[:2000]
-        execution.finished_at = datetime.now(timezone.utc)
-        await session.commit()
+        await _fail_execution(execution, session, exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Agent memory is unavailable",
         ) from exc
     except SkillLoadError as exc:
-        execution.status = "failed"
-        execution.error = str(exc)[:2000]
-        execution.finished_at = datetime.now(timezone.utc)
-        await session.commit()
+        await _fail_execution(execution, session, exc)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Skill loading failed") from exc
-    except HermesRuntimeError as exc:
-        execution.status = "failed"
-        execution.error = str(exc)[:2000]
-        execution.finished_at = datetime.now(timezone.utc)
-        await session.commit()
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Hermes execution failed") from exc
+    return AgentExecutionContext(
+        agent=agent,
+        execution=execution,
+        prompt=prompt,
+        loaded_skills=loaded_skills,
+        mcp_servers=mcp_servers,
+        knowledge_sources=knowledge_sources,
+        knowledge_summary=knowledge_summary,
+        memory_scope=memory_scope,
+    )
 
-    await session.refresh(execution, attribute_names=["details"])
-    mcp_calls = execution.details.get("mcp_calls", []) if isinstance(execution.details, dict) else []
-    execution.status = "succeeded"
-    execution.output = result.output
-    execution.details = {
+
+async def _complete_execution(
+    context: AgentExecutionContext,
+    result: HermesRunResult,
+    session: AsyncSession,
+) -> None:
+    await session.refresh(context.execution, attribute_names=["details"])
+    details = context.execution.details
+    mcp_calls = details.get("mcp_calls", []) if isinstance(details, dict) else []
+    context.execution.status = "succeeded"
+    context.execution.output = result.output
+    context.execution.details = {
         "phase": "hermes_runtime",
-        "skills_loaded": [skill.id for skill in loaded_skills],
-        "mcp_loaded": [server.id for server in mcp_servers],
+        "skills_loaded": [skill.id for skill in context.loaded_skills],
+        "mcp_loaded": [server.id for server in context.mcp_servers],
         "mcp_calls": mcp_calls,
-        "knowledge_loaded": [source.id for source in knowledge_sources],
-        "knowledge_hits": knowledge_summary,
-        "memory_scope": memory_scope,
+        "knowledge_loaded": [source.id for source in context.knowledge_sources],
+        "knowledge_hits": context.knowledge_summary,
+        "memory_scope": context.memory_scope,
         "hermes_run_id": result.run_id,
         "hermes_status": result.status,
     }
+    context.execution.finished_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
+async def _fail_execution(execution: ExecutionLog, session: AsyncSession, exc: Exception) -> None:
+    execution.status = "failed"
+    execution.error = str(exc)[:2000]
     execution.finished_at = datetime.now(timezone.utc)
     await session.commit()
+
+
+def _run_response(
+    context: AgentExecutionContext,
+    payload: AgentRunRequest,
+    result: HermesRunResult,
+) -> AgentRunResponse:
     return AgentRunResponse(
-        execution_id=execution.id,
-        agent_id=agent.id,
+        execution_id=context.execution.id,
+        agent_id=context.agent.id,
         session_id=payload.session_id,
         status="succeeded",
         output=result.output,
         hermes_run_id=result.run_id,
     )
+
+
+def _map_hermes_event(event: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    event_type = str(event.get("event", ""))
+    if event_type == "_keepalive":
+        return "keepalive", {"event": "keepalive"}
+    if event_type == "message.delta":
+        return "token", {"event": "token", "text": str(event.get("delta") or "")}
+    if event_type.startswith("tool."):
+        return "tool", {
+            "event": "tool",
+            "type": event_type.removeprefix("tool."),
+            "name": event.get("tool"),
+            "duration": event.get("duration"),
+            "error": event.get("error", False),
+        }
+    if event_type in {"run.created", "reasoning.available"} or event_type.startswith("subagent."):
+        return "trace", {"event": "trace", "type": event_type, "data": event}
+    if event_type == "run.completed":
+        return None
+    return "trace", {"event": "trace", "type": event_type or "runtime", "data": event}
+
+
+def _sse(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
 @router.get("/{agent_id}/runs", response_model=list[ExecutionLogRead])

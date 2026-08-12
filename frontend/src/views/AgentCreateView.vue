@@ -9,7 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { useAgentStore } from '@/stores/agents'
 import { useResourceStore } from '@/stores/resources'
-import type { AgentCreatePayload, AgentStatus } from '@/types/api'
+import type { AgentCreatePayload, AgentStatus, ResponseMode } from '@/types/api'
 
 const router = useRouter()
 const message = useMessage()
@@ -27,6 +27,7 @@ interface FormModel {
   model: string
   temperature: number
   status: AgentStatus
+  response_mode: ResponseMode
   skillIds: string[]
   mcpIds: string[]
 }
@@ -40,6 +41,7 @@ const form = reactive<FormModel>({
   model: '',
   temperature: 0.1,
   status: 'active',
+  response_mode: 'sync',
   skillIds: [],
   mcpIds: [],
 })
@@ -72,6 +74,7 @@ async function submit() {
       system_prompt: form.system_prompt,
       model_config: modelConfig,
       status: form.status,
+      response_mode: form.response_mode,
     }
     const result = await agentStore.createAgentWorkflow({ agent, skillIds: form.skillIds, mcpIds: form.mcpIds })
     if (result.bindingErrors.length) {
@@ -121,6 +124,9 @@ onMounted(() => resourceStore.fetchAll().catch(() => undefined))
             <NFormItem label="模型标识（配置元数据）" path="model">
               <NInput v-model:value="form.model" placeholder="qwen-300b" />
             </NFormItem>
+            <NFormItem label="默认响应模式" path="response_mode">
+              <NSelect v-model:value="form.response_mode" :options="[{ label: 'Sync JSON', value: 'sync' }, { label: 'SSE Stream', value: 'stream' }]" />
+            </NFormItem>
             <NFormItem class="span-2" label="温度（配置元数据）" path="temperature">
               <NSlider v-model:value="form.temperature" :min="0" :max="2" :step="0.1" :tooltip="true" />
             </NFormItem>
@@ -166,6 +172,7 @@ onMounted(() => resourceStore.fetchAll().catch(() => undefined))
           <div class="summary-row"><span>ID</span><strong class="mono">{{ form.id || '待填写' }}</strong></div>
           <div class="summary-row"><span>名称</span><strong>{{ form.name || '待填写' }}</strong></div>
           <div class="summary-row"><span>状态</span><strong>{{ { active: '启用', draft: '草稿', disabled: '禁用' }[form.status] }}</strong></div>
+          <div class="summary-row"><span>响应</span><strong>{{ form.response_mode === 'stream' ? 'SSE Stream' : 'Sync JSON' }}</strong></div>
           <div class="summary-row"><span>Skill</span><strong>{{ form.skillIds.length }} 个</strong></div>
           <div class="summary-row"><span>MCP</span><strong>{{ form.mcpIds.length }} 个</strong></div>
         </div>

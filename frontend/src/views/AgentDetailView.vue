@@ -120,7 +120,7 @@ onMounted(load)
       <aside class="detail-stack">
         <section class="surface panel">
           <div class="section-heading"><div><h2>API 发布</h2><p>独立于 Agent 运行状态</p></div><NIcon :component="Api" size="20" /></div>
-          <dl class="definition-list" style="grid-template-columns: 1fr; gap: 10px"><div class="definition-item"><dt>状态</dt><dd>{{ agentStore.currentPublication?.status || '未配置' }}</dd></div><div class="definition-item"><dt>Endpoint</dt><dd class="mono">/api/public/agents/{{ agentId }}/run</dd></div><div class="definition-item"><dt>API Key</dt><dd class="mono">{{ agentStore.currentPublication?.api_key_prefix ? `${agentStore.currentPublication.api_key_prefix}…` : '未生成' }}</dd></div></dl>
+          <dl class="definition-list" style="grid-template-columns: 1fr; gap: 10px"><div class="definition-item"><dt>状态</dt><dd>{{ agentStore.currentPublication?.status || '未配置' }}</dd></div><div class="definition-item"><dt>默认响应</dt><dd>{{ agentStore.currentAgent.response_mode === 'stream' ? 'SSE Stream' : 'Sync JSON' }}</dd></div><div class="definition-item"><dt>Endpoint</dt><dd class="mono">/api/public/agents/{{ agentId }}/run</dd></div><div class="definition-item"><dt>API Key</dt><dd class="mono">{{ agentStore.currentPublication?.api_key_prefix ? `${agentStore.currentPublication.api_key_prefix}…` : '未生成' }}</dd></div></dl>
           <NButton style="margin-top: 14px" block @click="router.push({ name: 'apis' })">打开 API 管理</NButton>
         </section>
         <section class="surface panel">

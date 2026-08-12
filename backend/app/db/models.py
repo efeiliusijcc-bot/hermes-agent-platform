@@ -35,7 +35,10 @@ agent_knowledge = Table(
 
 class Agent(Base):
     __tablename__ = "agents"
-    __table_args__ = (CheckConstraint("status IN ('draft', 'active', 'disabled')", name="ck_agents_status"),)
+    __table_args__ = (
+        CheckConstraint("status IN ('draft', 'active', 'disabled')", name="ck_agents_status"),
+        CheckConstraint("response_mode IN ('sync', 'stream')", name="ck_agents_response_mode"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -44,6 +47,7 @@ class Agent(Base):
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     model_settings: Mapped[dict[str, Any]] = mapped_column("model_config", JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    response_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="sync")
     input_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     output_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

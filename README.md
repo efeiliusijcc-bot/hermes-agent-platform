@@ -1,6 +1,6 @@
 # Hermes Agent Platform
 
-Phase 2 adds safe Skill ZIP registration, dynamic read-only MCP registry testing, Agent input/output JSON Schema, and hashed-key public Agent APIs. See `docs/phase2-registry-publication.md`.
+Phase 2.5 adds selectable synchronous JSON and real Hermes-native SSE streaming to the safe Skill/MCP/Schema/public API platform. See `docs/phase2-registry-publication.md`.
 
 Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台以 Hermes Agent Runtime 为执行核心，通过外部 OpenAI Compatible 模型服务完成推理，并组合 Agent、Skill、MCP、Knowledge 与 Memory 构建可配置、可隔离的 AI 工作单元。
 
@@ -8,7 +8,7 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 当前仓库已完成 **Phase 9：离线部署验证**。除完整的 `knowledge-analyst` 多源分析闭环外，平台还可导出包含固定镜像、运行配置、PostgreSQL/Redis/MinIO/文件数据和 SHA-256 清单的离线包，并在新内网节点恢复启动。
 
-管理控制台 MVP 已按现有 FastAPI 契约实现，包含运行总览、Agent 创建/详情/删除、Skill/MCP 展示、能力绑定、Playground 和执行日志查看。控制台不提供后端尚未实现的 Agent 更新、用户/RBAC 或伪流式 Trace 功能。
+管理控制台 MVP 已按现有 FastAPI 契约实现，包含运行总览、Agent 创建/详情/删除、Skill/MCP 展示、能力绑定、Playground、Sync/SSE 模式选择、实时 Trace 和执行日志查看。SSE 直接转发 Hermes Runtime 原生增量事件，不使用伪流式切分。
 
 Hermes API Server 的原生 terminal、文件、浏览器、内置 Skill、委派等工具集已关闭，仅启用 `mcp-gateway`。这保证 Agent 不能绕过平台绑定直接使用 Hermes 本地工具。
 

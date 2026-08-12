@@ -7,7 +7,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
 import { formatDate } from '@/utils/format'
-import type { Agent, AgentPublication, PublicationStatus } from '@/types/api'
+import type { Agent, AgentPublication, PublicationStatus, ResponseMode } from '@/types/api'
 
 const message = useMessage()
 const agents = ref<Agent[]>([])
@@ -28,6 +28,11 @@ async function setStatus(agentId: string, status: PublicationStatus) {
   catch (error) { message.error(getApiErrorMessage(error), { duration: 7000 }) }
 }
 
+async function setResponseMode(agentId: string, responseMode: ResponseMode) {
+  try { await platformApi.updateAgentResponseMode(agentId, responseMode); await load(); message.success('默认响应模式已更新') }
+  catch (error) { message.error(getApiErrorMessage(error), { duration: 7000 }) }
+}
+
 async function rotate(agentId: string) {
   try { const value = await platformApi.rotatePublicationKey(agentId); secret.value = value.api_key; await load() }
   catch (error) { message.error(getApiErrorMessage(error), { duration: 7000 }) }
@@ -38,7 +43,7 @@ onMounted(load)
 
 <template>
   <div>
-    <PageHeader title="API 管理" description="管理 Agent 的独立发布生命周期、API Key 和外部调用统计。API Key 明文仅在生成或轮换时显示一次。" />
+    <PageHeader title="API 管理" description="管理 Agent 的发布生命周期、API Key、默认响应模式和外部调用统计。调用方也可用 response_mode 查询参数覆盖默认模式。" />
     <NAlert v-if="secret" type="warning" :bordered="false" style="margin-bottom: 16px" closable @close="secret = null">
       请立即保存 API Key，关闭后无法再次查看：<span class="mono secret-value">{{ secret }}</span>
     </NAlert>
@@ -48,8 +53,8 @@ onMounted(load)
       <article v-for="agent in agents" v-else :key="agent.id" class="api-row">
         <span class="resource-icon"><NIcon :component="Api" size="19" /></span>
         <div class="resource-main"><strong>{{ agent.name }}</strong><span class="mono">{{ agent.id }}</span><span class="mono endpoint-line">/api/public/agents/{{ agent.id }}/run</span></div>
-        <div class="api-metrics"><span>状态 <NTag size="small" :bordered="false">{{ publicationFor(agent.id)?.status || '未配置' }}</NTag></span><span>Key {{ publicationFor(agent.id)?.api_key_prefix ? `${publicationFor(agent.id)?.api_key_prefix}…` : '未生成' }}</span><span>调用 {{ publicationFor(agent.id)?.call_count || 0 }}</span><span>最近 {{ formatDate(publicationFor(agent.id)?.last_called_at) }}</span></div>
-        <div class="api-actions"><NButton size="small" secondary @click="rotate(agent.id)"><template #icon><NIcon :component="Key" /></template>{{ publicationFor(agent.id)?.api_key_prefix ? '轮换 Key' : '生成 Key' }}</NButton><NSelect :value="publicationFor(agent.id)?.status || 'draft'" size="small" style="width: 122px" :options="[{label:'Draft',value:'draft'},{label:'Testing',value:'testing'},{label:'Published',value:'published'},{label:'Disabled',value:'disabled'}]" @update:value="setStatus(agent.id, $event as PublicationStatus)" /></div>
+        <div class="api-metrics"><span>状态 <NTag size="small" :bordered="false">{{ publicationFor(agent.id)?.status || '未配置' }}</NTag></span><span>默认响应 {{ agent.response_mode === 'stream' ? 'SSE Stream' : 'Sync JSON' }}</span><span>Key {{ publicationFor(agent.id)?.api_key_prefix ? `${publicationFor(agent.id)?.api_key_prefix}…` : '未生成' }}</span><span>调用 {{ publicationFor(agent.id)?.call_count || 0 }}</span><span>最近 {{ formatDate(publicationFor(agent.id)?.last_called_at) }}</span></div>
+        <div class="api-actions"><NButton size="small" secondary @click="rotate(agent.id)"><template #icon><NIcon :component="Key" /></template>{{ publicationFor(agent.id)?.api_key_prefix ? '轮换 Key' : '生成 Key' }}</NButton><NSelect :value="agent.response_mode" size="small" style="width: 126px" :options="[{label:'Sync JSON',value:'sync'},{label:'SSE Stream',value:'stream'}]" @update:value="setResponseMode(agent.id, $event as ResponseMode)" /><NSelect :value="publicationFor(agent.id)?.status || 'draft'" size="small" style="width: 122px" :options="[{label:'Draft',value:'draft'},{label:'Testing',value:'testing'},{label:'Published',value:'published'},{label:'Disabled',value:'disabled'}]" @update:value="setStatus(agent.id, $event as PublicationStatus)" /></div>
       </article>
     </section>
   </div>

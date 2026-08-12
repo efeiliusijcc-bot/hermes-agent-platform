@@ -14,6 +14,7 @@ async def create_agent(session: AsyncSession, payload: AgentCreate) -> Agent:
         system_prompt=payload.system_prompt,
         model_settings=payload.model_settings,
         status=payload.status,
+        response_mode=payload.response_mode,
         input_schema=payload.input_schema,
         output_schema=payload.output_schema,
     )
@@ -40,6 +41,13 @@ async def delete_agent(session: AsyncSession, agent: Agent) -> None:
 async def update_agent_schema(session: AsyncSession, agent: Agent, payload: AgentSchemaUpdate) -> Agent:
     agent.input_schema = payload.input_schema
     agent.output_schema = payload.output_schema
+    await session.commit()
+    await session.refresh(agent)
+    return agent
+
+
+async def update_agent_response_mode(session: AsyncSession, agent: Agent, response_mode: str) -> Agent:
+    agent.response_mode = response_mode
     await session.commit()
     await session.refresh(agent)
     return agent

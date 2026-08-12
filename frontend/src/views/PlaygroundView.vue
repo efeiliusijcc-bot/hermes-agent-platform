@@ -9,6 +9,7 @@ import StatusTag from '@/components/StatusTag.vue'
 import { useAgentStore } from '@/stores/agents'
 import { useExecutionStore } from '@/stores/executions'
 import { formatDate, formatDuration, truncate } from '@/utils/format'
+import type { ResponseMode } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,6 +19,7 @@ const executionStore = useExecutionStore()
 const agentId = computed(() => String(route.params.id))
 const input = ref('')
 const sessionId = ref('default')
+const responseMode = ref<ResponseMode>('sync')
 
 const selectedRun = computed(() => executionStore.currentRun)
 const toolCalls = computed(() => selectedRun.value?.details.mcp_calls || [])
@@ -30,6 +32,7 @@ async function load() {
     executionStore.fetchRuns(agentId.value),
   ]).catch(() => undefined)
   if (executionStore.runs.length) executionStore.selectRun(executionStore.runs[0])
+  responseMode.value = agentStore.currentAgent?.response_mode || 'sync'
 }
 
 async function submitRun() {
@@ -38,7 +41,7 @@ async function submitRun() {
     return
   }
   try {
-    await executionStore.runAgent(agentId.value, input.value.trim(), sessionId.value.trim() || 'default')
+    await executionStore.runAgent(agentId.value, input.value.trim(), sessionId.value.trim() || 'default', responseMode.value)
     message.success('Agent 执行成功')
   } catch {
     message.error(executionStore.error || 'Agent 执行失败', { duration: 7000 })
@@ -57,7 +60,7 @@ onMounted(load)
   <div>
     <PageHeader
       :title="`${agentStore.currentAgent?.name || agentId} 执行台`"
-      description="提交任务并查看同步执行结果。工具调用、知识召回和记忆范围以后端 ExecutionLog 为准。"
+      description="可选择同步 JSON 或真实 SSE 流式执行。流式事件直接来自 Hermes Runtime，最终日志仍以后端 ExecutionLog 为准。"
     >
       <template #actions>
         <NButton @click="router.push({ name: 'agent-detail', params: { id: agentId } })">
@@ -77,6 +80,9 @@ onMounted(load)
           <NFormItem label="Session ID">
             <NInput v-model:value="sessionId" maxlength="128" placeholder="default" :disabled="executionStore.running" />
           </NFormItem>
+          <NFormItem label="响应模式">
+            <NSelect v-model:value="responseMode" :disabled="executionStore.running" :options="[{ label: 'Sync JSON（等待完整结果）', value: 'sync' }, { label: 'SSE Stream（实时 token / trace / tool）', value: 'stream' }]" />
+          </NFormItem>
           <NFormItem label="任务内容">
             <NInput v-model:value="input" type="textarea" :rows="11" maxlength="100000" show-count placeholder="描述需要 Agent 完成的企业任务" :disabled="executionStore.running" />
           </NFormItem>
@@ -84,9 +90,9 @@ onMounted(load)
             当前 Agent 状态为 {{ agentStore.currentAgent?.status }}，后端只允许 active Agent 执行。
           </NAlert>
           <div class="playground-actions">
-            <span class="muted" style="font-size: 11px">同步请求最长可能等待 300 秒</span>
+            <span class="muted" style="font-size: 11px">{{ responseMode === 'stream' ? 'SSE 会实时显示 Hermes 增量事件' : '同步请求最长可能等待 300 秒' }}</span>
             <NButton type="primary" attr-type="submit" :loading="executionStore.running" :disabled="agentStore.currentAgent?.status !== 'active'">
-              <template #icon><NIcon :component="PlayerPlay" /></template>{{ executionStore.running ? '等待执行完成' : '运行 Agent' }}
+              <template #icon><NIcon :component="PlayerPlay" /></template>{{ executionStore.running ? (responseMode === 'stream' ? '正在流式执行' : '等待执行完成') : '运行 Agent' }}
             </NButton>
           </div>
         </NForm>
@@ -98,12 +104,24 @@ onMounted(load)
           <StatusTag v-if="selectedRun" :status="selectedRun.status" />
         </div>
 
-        <div v-if="executionStore.running" class="empty-state">
+        <div v-if="executionStore.running && responseMode === 'sync'" class="empty-state">
           <div>
             <div class="empty-state-icon"><NIcon :component="Bolt" size="24" /></div>
             <h3>后端正在同步执行</h3>
-            <p>当前接口不提供流式事件。界面不会伪造中间步骤，将在响应完成后读取 ExecutionLog。</p>
+            <p>同步模式将在响应完成后读取最终结果和 ExecutionLog。</p>
             <div class="loading-stack" style="width: min(420px, 70vw); margin-top: 18px"><div class="skeleton-line" /><div class="skeleton-line" /></div>
+          </div>
+        </div>
+        <div v-else-if="responseMode === 'stream' && (executionStore.running || executionStore.streamEvents.length)">
+          <NAlert v-if="executionStore.error" type="error" :title="executionStore.error" style="margin-bottom: 14px" />
+          <pre v-if="executionStore.streamedOutput" class="result-output">{{ executionStore.streamedOutput }}</pre>
+          <div v-else class="loading-stack"><div class="skeleton-line" /><div class="skeleton-line" /></div>
+          <div class="section-heading" style="margin-top: 22px"><div><h2>实时事件</h2><p>已接收 {{ executionStore.streamEvents.length }} 个 SSE 事件</p></div></div>
+          <div class="tool-call-list">
+            <article v-for="(event, index) in executionStore.streamEvents.filter((item) => item.event !== 'token' && item.event !== 'keepalive')" :key="index" class="tool-call">
+              <div class="tool-call-head"><h4>{{ event.event }} · {{ event.type || '' }}</h4></div>
+              <pre>{{ formatJson(event) }}</pre>
+            </article>
           </div>
         </div>
         <div v-else-if="selectedRun">

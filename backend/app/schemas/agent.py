@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.schema_validation import normalize_schema
 
+ResponseMode = Literal["sync", "stream"]
+
 
 class AgentCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -17,6 +19,7 @@ class AgentCreate(BaseModel):
     system_prompt: str = Field(min_length=1)
     model_settings: dict[str, Any] = Field(default_factory=dict, alias="model_config")
     status: Literal["draft", "active", "disabled"] = "draft"
+    response_mode: ResponseMode = "sync"
     input_schema: dict[str, Any] = Field(default_factory=dict)
     output_schema: dict[str, Any] = Field(default_factory=dict)
 
@@ -36,6 +39,10 @@ class AgentSchemaUpdate(BaseModel):
         return normalize_schema(value)
 
 
+class AgentResponseModeUpdate(BaseModel):
+    response_mode: ResponseMode
+
+
 class AgentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -49,6 +56,7 @@ class AgentRead(BaseModel):
         serialization_alias="model_config",
     )
     status: Literal["draft", "active", "disabled"]
+    response_mode: ResponseMode
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
     created_at: datetime

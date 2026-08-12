@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiClient } from './client'
-import { platformApi } from './platform'
+import { consumeSSE, platformApi } from './platform'
 
 describe('platformApi contract', () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -44,5 +44,48 @@ describe('platformApi contract', () => {
     expect(put).toHaveBeenNthCalledWith(1, '/api/agents/agent-a/skills/knowledge-analysis')
     expect(put).toHaveBeenNthCalledWith(2, '/api/agents/agent-a/mcp-servers/database-mcp')
     expect(post).toHaveBeenCalledWith('/api/agents/agent-a/run', { input: '分析数据', session_id: 'review' })
+  })
+
+  it('updates the persisted default response mode', async () => {
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} })
+    await platformApi.updateAgentResponseMode('agent-a', 'stream')
+    expect(put).toHaveBeenCalledWith('/api/agents/agent-a/response-mode', { response_mode: 'stream' })
+  })
+
+  it('parses fragmented SSE events without losing token boundaries', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: token\ndata: {"event":"token","text":"分析"}\n'))
+        controller.enqueue(encoder.encode('\nevent: end\ndata: {"event":"end","status":"success"}\n\n'))
+        controller.close()
+      },
+    })
+    const events: Array<Record<string, unknown>> = []
+    await consumeSSE(body, (event) => events.push(event))
+    expect(events).toEqual([
+      { event: 'token', text: '分析' },
+      { event: 'end', status: 'success' },
+    ])
+  })
+
+  it('requests the internal stream endpoint with an explicit mode override', async () => {
+    const encoder = new TextEncoder()
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: end\ndata: {"event":"end","status":"success"}\n\n'))
+          controller.close()
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    ))
+    const events: Array<Record<string, unknown>> = []
+    await platformApi.streamAgent('agent-a', { input: '分析', session_id: 'review' }, (event) => events.push(event))
+    expect(fetchMock).toHaveBeenCalledWith('/api/agents/agent-a/run?response_mode=stream', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ input: '分析', session_id: 'review' }),
+    }))
+    expect(events).toEqual([{ event: 'end', status: 'success' }])
   })
 })

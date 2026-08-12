@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.agent import ResponseMode
+
 
 PublicationStatus = Literal["draft", "testing", "published", "disabled"]
 
@@ -20,6 +22,7 @@ class PublicationRead(BaseModel):
     agent_id: str
     agent_name: str | None = None
     status: PublicationStatus
+    response_mode: ResponseMode
     endpoint: str
     api_key_prefix: str | None
     call_count: int

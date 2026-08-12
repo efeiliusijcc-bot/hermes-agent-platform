@@ -4,19 +4,28 @@ import hashlib
 import json
 import secrets
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.agents import run_agent
-from app.db.models import AgentPublication
-from app.db.session import get_session
+from app.api.agents import (
+    _map_hermes_event,
+    _prepare_agent_execution,
+    _sse,
+    execute_agent_sync,
+    stream_prepared_agent,
+)
+from app.db.models import AgentPublication, ExecutionLog
+from app.db.session import SessionFactory, get_session
 from app.memory import AgentMemoryStore, get_memory_store
 from app.repositories import agents as agent_repository
 from app.repositories import publications as repository
-from app.schemas.agent import AgentRunRequest
+from app.runtime.hermes import HermesRuntimeError
+from app.schemas.agent import AgentRunRequest, ResponseMode
 from app.schemas.publication import (
     PublicationRead,
     PublicationSecret,
@@ -82,15 +91,16 @@ async def rotate_api_key(agent_id: str, session: AsyncSession = Depends(get_sess
     return PublicationSecret(**_read(publication).model_dump(), api_key=api_key)
 
 
-@public_router.post("/{agent_id}/run", response_model=PublicAgentRunResponse)
+@public_router.post("/{agent_id}/run", response_model=None)
 async def run_public_agent(
     agent_id: str,
     payload: dict[str, Any],
+    response_mode: ResponseMode | None = Query(default=None),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     authorization: str | None = Header(default=None, alias="Authorization"),
     session: AsyncSession = Depends(get_session),
     memory_store: AgentMemoryStore = Depends(get_memory_store),
-) -> PublicAgentRunResponse:
+) -> PublicAgentRunResponse | StreamingResponse:
     publication = await repository.get_publication(session, agent_id)
     if publication is None or publication.status != "published":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="published Agent not found")
@@ -107,26 +117,29 @@ async def run_public_agent(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
-    run = await run_agent(
-        agent_id,
-        AgentRunRequest(
-            input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            session_id=f"public-{uuid.uuid4().hex}",
-        ),
-        session,
-        memory_store,
+    request = AgentRunRequest(
+        input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        session_id=f"public-{uuid.uuid4().hex}",
     )
+    selected_mode = response_mode or agent.response_mode
+    if selected_mode == "stream":
+        context = await _prepare_agent_execution(agent, request, session, memory_store)
+        return StreamingResponse(
+            _public_sse_events(context, request, publication, memory_store),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    run = await execute_agent_sync(agent, request, session, memory_store)
+    try:
+        result = _validate_public_output(agent.output_schema, run.output)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     await repository.record_call(session, publication)
-    result: Any = run.output
-    if agent.output_schema:
-        try:
-            result = json.loads(run.output)
-            validate_instance(agent.output_schema, result, label="Agent output")
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Agent output schema validation failed: {exc}",
-            ) from exc
     return PublicAgentRunResponse(
         agent_id=agent.id,
         execution_id=run.execution_id,
@@ -140,11 +153,75 @@ async def run_public_agent(
     )
 
 
+async def _public_sse_events(
+    context: Any,
+    request: AgentRunRequest,
+    publication: AgentPublication,
+    memory_store: AgentMemoryStore,
+) -> AsyncIterator[str]:
+    yield _sse(
+        "start",
+        {
+            "event": "start",
+            "agent_id": context.agent.id,
+            "execution_id": str(context.execution.id),
+        },
+    )
+    yield _sse("trace", {"event": "trace", "type": "schema_input", "status": "succeeded"})
+    async with SessionFactory() as stream_session:
+        execution = await stream_session.get(ExecutionLog, context.execution.id)
+        if execution is None:
+            yield _sse("error", {"event": "error", "status": "failed", "message": "execution log not found"})
+            return
+        context.execution = execution
+        try:
+            async for event in stream_prepared_agent(context, request, stream_session, memory_store):
+                if str(event.get("event", "")) == "run.completed":
+                    result = _validate_public_output(context.agent.output_schema, str(event.get("output") or ""))
+                    await repository.record_call(stream_session, publication)
+                    yield _sse(
+                        "trace",
+                        {"event": "trace", "type": "schema_output", "status": "succeeded"},
+                    )
+                    yield _sse(
+                        "end",
+                        {
+                            "event": "end",
+                            "status": "success",
+                            "agent_id": context.agent.id,
+                            "execution_id": str(context.execution.id),
+                            "result": result,
+                        },
+                    )
+                    return
+                mapped = _map_hermes_event(event)
+                if mapped is not None:
+                    yield _sse(mapped[0], mapped[1])
+            raise HermesRuntimeError("Hermes event stream ended without a completion event")
+        except (HermesRuntimeError, ValueError, json.JSONDecodeError) as exc:
+            yield _sse(
+                "error",
+                {"event": "error", "status": "failed", "message": str(exc)},
+            )
+
+
+def _validate_public_output(output_schema: dict[str, Any], output: str) -> Any:
+    result: Any = output
+    if output_schema:
+        try:
+            result = json.loads(output)
+            validate_instance(output_schema, result, label="Agent output")
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"Agent output schema validation failed: {exc}") from exc
+    return result
+
+
 def _read(publication: AgentPublication) -> PublicationRead:
     return PublicationRead(
         agent_id=publication.agent_id,
         agent_name=publication.agent.name if publication.agent else None,
         status=publication.status,
+        response_mode=publication.agent.response_mode if publication.agent else "sync",
         endpoint=f"/api/public/agents/{publication.agent_id}/run",
         api_key_prefix=publication.api_key_prefix,
         call_count=publication.call_count,
