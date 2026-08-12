@@ -43,7 +43,7 @@ describe('platformApi contract', () => {
 
     expect(put).toHaveBeenNthCalledWith(1, '/api/agents/agent-a/skills/knowledge-analysis')
     expect(put).toHaveBeenNthCalledWith(2, '/api/agents/agent-a/mcp-servers/database-mcp')
-    expect(post).toHaveBeenCalledWith('/api/agents/agent-a/run', { input: '分析数据', session_id: 'review' })
+    expect(post).toHaveBeenCalledWith('/api/agents/agent-a/run?response_mode=sync', { input: '分析数据', session_id: 'review' })
   })
 
   it('updates the persisted default response mode', async () => {

@@ -45,7 +45,7 @@ export const platformApi = {
 
   async runAgent(agentId: string, payload: AgentRunPayload): Promise<AgentRunResponse> {
     const { data } = await apiClient.post<AgentRunResponse>(
-      `/api/agents/${encodeURIComponent(agentId)}/run`,
+      `/api/agents/${encodeURIComponent(agentId)}/run?response_mode=sync`,
       payload,
     )
     return data
