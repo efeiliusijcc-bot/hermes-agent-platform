@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Table, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, String, Table, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +23,8 @@ agent_mcp = Table(
     Base.metadata,
     Column("agent_id", String(64), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
     Column("mcp_id", String(64), ForeignKey("mcp_servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("permission", String(32), nullable=False, server_default="read_only"),
+    CheckConstraint("permission = 'read_only'", name="ck_agent_mcp_permission"),
 )
 
 agent_knowledge = Table(
@@ -32,12 +34,37 @@ agent_knowledge = Table(
     Column("source_id", String(64), ForeignKey("knowledge_sources.id", ondelete="CASCADE"), primary_key=True),
 )
 
+execution_artifact = Table(
+    "execution_artifacts",
+    Base.metadata,
+    Column(
+        "execution_id",
+        UUID(as_uuid=True),
+        ForeignKey("execution_logs.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "artifact_id",
+        UUID(as_uuid=True),
+        ForeignKey("artifacts.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
 
 class Agent(Base):
     __tablename__ = "agents"
     __table_args__ = (
-        CheckConstraint("status IN ('draft', 'active', 'disabled')", name="ck_agents_status"),
+        CheckConstraint(
+            "status IN ('active', 'inactive', 'archived')",
+            name="ck_agents_status",
+        ),
         CheckConstraint("response_mode IN ('sync', 'stream')", name="ck_agents_response_mode"),
+        CheckConstraint(
+            "model_adapter IN ('hermes', 'qwen', 'deepseek', 'gpt', 'claude')",
+            name="ck_agents_model_adapter",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -46,10 +73,19 @@ class Agent(Base):
     role: Mapped[str] = mapped_column(Text, nullable=False)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     model_settings: Mapped[dict[str, Any]] = mapped_column("model_config", JSONB, nullable=False, default=dict)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    model: Mapped[str] = mapped_column(String(255), nullable=False, default="hermes-agent")
+    prompt_template: Mapped[str] = mapped_column(Text, nullable=False, default="{{input}}")
+    model_adapter: Mapped[str] = mapped_column(String(32), nullable=False, default="hermes")
+    api_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     response_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="sync")
     input_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     output_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_versions.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
@@ -59,8 +95,30 @@ class Agent(Base):
     mcp_servers: Mapped[list[MCPServer]] = relationship(secondary=agent_mcp, lazy="selectin")
     knowledge_sources: Mapped[list[KnowledgeSource]] = relationship(secondary=agent_knowledge, lazy="selectin")
     execution_logs: Mapped[list[ExecutionLog]] = relationship(back_populates="agent", cascade="all, delete-orphan")
+    sessions: Mapped[list[AgentSession]] = relationship(back_populates="agent", cascade="all, delete-orphan")
+    tasks: Mapped[list[AgentTask]] = relationship(back_populates="agent", cascade="all, delete-orphan")
+    artifacts: Mapped[list[Artifact]] = relationship(back_populates="agent", cascade="all, delete-orphan")
+    schema_versions: Mapped[list[AgentSchemaVersion]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    api_versions: Mapped[list[AgentAPIVersion]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
     publication: Mapped[AgentPublication | None] = relationship(
         back_populates="agent", cascade="all, delete-orphan", uselist=False
+    )
+    api_client_bindings: Mapped[list[AgentAPIClient]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    audit_logs: Mapped[list[AuditLog]] = relationship(back_populates="agent")
+    metrics: Mapped[list[AgentMetric]] = relationship(back_populates="agent", cascade="all, delete-orphan")
+    versions: Mapped[list[AgentVersion]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+        foreign_keys="AgentVersion.agent_id",
+    )
+    current_version: Mapped[AgentVersion | None] = relationship(
+        foreign_keys=[current_version_id], post_update=True
     )
 
 
@@ -124,6 +182,53 @@ class AgentPublication(Base):
     agent: Mapped[Agent] = relationship(back_populates="publication", lazy="joined")
 
 
+class AgentSchemaVersion(Base):
+    __tablename__ = "agent_schema_versions"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "version", name="uq_agent_schema_versions_agent_version"),
+        CheckConstraint(
+            "status IN ('draft', 'testing', 'published', 'deprecated', 'disabled')",
+            name="ck_agent_schema_versions_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    output_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    agent: Mapped[Agent] = relationship(back_populates="schema_versions")
+    api_versions: Mapped[list[AgentAPIVersion]] = relationship(back_populates="schema_version")
+
+
+class AgentAPIVersion(Base):
+    __tablename__ = "agent_api_versions"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "api_version", name="uq_agent_api_versions_agent_version"),
+        CheckConstraint(
+            "status IN ('draft', 'testing', 'published', 'deprecated', 'disabled')",
+            name="ck_agent_api_versions_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    api_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    schema_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_schema_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    agent: Mapped[Agent] = relationship(back_populates="api_versions")
+    schema_version: Mapped[AgentSchemaVersion] = relationship(back_populates="api_versions", lazy="joined")
+
+
 class KnowledgeSource(Base):
     __tablename__ = "knowledge_sources"
     __table_args__ = (
@@ -171,17 +276,377 @@ class KnowledgeDocument(Base):
 class ExecutionLog(Base):
     __tablename__ = "execution_logs"
     __table_args__ = (
-        CheckConstraint("status IN ('running', 'succeeded', 'failed')", name="ck_execution_logs_status"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="ck_execution_logs_status",
+        ),
+        CheckConstraint(
+            "response_mode IN ('sync', 'stream', 'async')",
+            name="ck_execution_logs_response_mode",
+        ),
+        CheckConstraint(
+            "priority IS NULL OR priority BETWEEN 0 AND 9",
+            name="ck_execution_logs_priority",
+        ),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_execution_logs_duration",
+        ),
+        CheckConstraint(
+            "token_usage IS NULL OR token_usage >= 0",
+            name="ck_execution_logs_token_usage",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_sessions.id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     input: Mapped[str] = mapped_column(Text, nullable=False)
+    input_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     output: Mapped[str | None] = mapped_column(Text)
+    output_json: Mapped[Any | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    response_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="sync")
+    priority: Mapped[int | None] = mapped_column(Integer)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+    token_usage: Mapped[int | None] = mapped_column(BigInteger)
+    retry_of_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("execution_logs.id", ondelete="SET NULL"), nullable=True
+    )
+    agent_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_versions.id", ondelete="SET NULL"), nullable=True
+    )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     agent: Mapped[Agent] = relationship(back_populates="execution_logs")
+    session: Mapped[AgentSession | None] = relationship(back_populates="execution_logs")
+    steps: Mapped[list[ExecutionStep]] = relationship(
+        back_populates="execution", cascade="all, delete-orphan", order_by="ExecutionStep.sequence"
+    )
+    artifacts: Mapped[list[Artifact]] = relationship(secondary=execution_artifact, lazy="selectin")
+    retry_of: Mapped[ExecutionLog | None] = relationship(
+        remote_side="ExecutionLog.id", foreign_keys=[retry_of_execution_id]
+    )
+    agent_version: Mapped[AgentVersion | None] = relationship(
+        foreign_keys=[agent_version_id], lazy="joined"
+    )
+
+
+class ExecutionStep(Base):
+    __tablename__ = "execution_steps"
+    __table_args__ = (
+        UniqueConstraint("execution_id", "step_key", name="uq_execution_steps_execution_key"),
+        CheckConstraint(
+            "step_type IN ('request', 'schema', 'memory', 'skill', 'mcp', 'knowledge', 'model', 'artifact', 'runtime')",
+            name="ck_execution_steps_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'running', 'succeeded', 'failed', 'skipped', 'cancelled')",
+            name="ck_execution_steps_status",
+        ),
+        CheckConstraint("sequence >= 0", name="ck_execution_steps_sequence"),
+        CheckConstraint(
+            "latency_ms IS NULL OR latency_ms >= 0", name="ck_execution_steps_latency"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    execution_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("execution_logs.id", ondelete="CASCADE"), nullable=False
+    )
+    step_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    step_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    step_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    input_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    output_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    latency_ms: Mapped[int | None] = mapped_column(BigInteger)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    execution: Mapped[ExecutionLog] = relationship(back_populates="steps")
+
+
+class AgentSession(Base):
+    __tablename__ = "agent_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="ck_agent_sessions_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(String(128))
+    memory_session_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    input: Mapped[str] = mapped_column(Text, nullable=False)
+    output: Mapped[str | None] = mapped_column(Text)
+    workspace_path: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    agent: Mapped[Agent] = relationship(back_populates="sessions")
+    execution_logs: Mapped[list[ExecutionLog]] = relationship(back_populates="session")
+    task: Mapped[AgentTask | None] = relationship(back_populates="session", uselist=False)
+    artifacts: Mapped[list[Artifact]] = relationship(back_populates="session", cascade="all, delete-orphan")
+
+
+class AgentTask(Base):
+    __tablename__ = "agent_tasks"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'retrying', 'succeeded', 'failed', 'cancelled')",
+            name="ck_agent_tasks_status",
+        ),
+        CheckConstraint("priority BETWEEN 0 AND 9", name="ck_agent_tasks_priority"),
+        CheckConstraint("attempt >= 0 AND max_attempts >= 1", name="ck_agent_tasks_attempts"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("execution_logs.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    worker_id: Mapped[str | None] = mapped_column(String(128))
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    agent: Mapped[Agent] = relationship(back_populates="tasks")
+    session: Mapped[AgentSession] = relationship(back_populates="task", lazy="joined")
+
+
+class Artifact(Base):
+    __tablename__ = "artifacts"
+    __table_args__ = (
+        UniqueConstraint("session_id", "filename", name="uq_artifacts_session_filename"),
+        UniqueConstraint("storage_type", "storage_path", name="uq_artifacts_storage_location"),
+        CheckConstraint("size_bytes >= 0", name="ck_artifacts_size"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    agent: Mapped[Agent] = relationship(back_populates="artifacts")
+    session: Mapped[AgentSession] = relationship(back_populates="artifacts")
+
+
+class AgentMemory(Base):
+    __tablename__ = "agent_memories"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_id", "session_id", "memory_type", "key",
+            name="uq_agent_memories_namespace_key",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    memory_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    key: Mapped[str] = mapped_column(String(128), nullable=False)
+    value: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class APIClient(Base):
+    __tablename__ = "api_clients"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'suspended', 'revoked')",
+            name="ck_api_clients_status",
+        ),
+        CheckConstraint("rate_limit_per_minute > 0", name="ck_api_clients_rate_limit"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    owner: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    rate_limit_per_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    agent_bindings: Mapped[list[AgentAPIClient]] = relationship(
+        back_populates="client", cascade="all, delete-orphan"
+    )
+    api_keys: Mapped[list[APIKey]] = relationship(back_populates="client", cascade="all, delete-orphan")
+    audit_logs: Mapped[list[AuditLog]] = relationship(back_populates="client")
+
+
+class AgentAPIClient(Base):
+    __tablename__ = "agent_api_clients"
+    __table_args__ = (
+        CheckConstraint("permission = 'invoke'", name="ck_agent_api_clients_permission"),
+    )
+
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_clients.id", ondelete="CASCADE"), primary_key=True
+    )
+    agent_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True
+    )
+    permission: Mapped[str] = mapped_column(String(32), nullable=False, default="invoke")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    client: Mapped[APIClient] = relationship(back_populates="agent_bindings")
+    agent: Mapped[Agent] = relationship(back_populates="api_client_bindings")
+
+
+class APIKey(Base):
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'revoked')", name="ck_api_keys_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_clients.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    prefix: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    client: Mapped[APIClient] = relationship(back_populates="api_keys")
+    audit_logs: Mapped[list[AuditLog]] = relationship(back_populates="api_key")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('succeeded', 'failed', 'rejected')",
+            name="ck_audit_logs_status",
+        ),
+        CheckConstraint("latency_ms >= 0", name="ck_audit_logs_latency"),
+        CheckConstraint("token_usage IS NULL OR token_usage >= 0", name="ck_audit_logs_token_usage"),
+        CheckConstraint("mcp_call_count >= 0", name="ck_audit_logs_mcp_calls"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_clients.id", ondelete="SET NULL")
+    )
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL")
+    )
+    agent_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("agents.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    token_usage: Mapped[int | None] = mapped_column(BigInteger)
+    mcp_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    client: Mapped[APIClient | None] = relationship(back_populates="audit_logs")
+    api_key: Mapped[APIKey | None] = relationship(back_populates="audit_logs")
+    agent: Mapped[Agent | None] = relationship(back_populates="audit_logs")
+
+
+class AgentMetric(Base):
+    __tablename__ = "agent_metrics"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "metric_date", name="uq_agent_metrics_agent_date"),
+        CheckConstraint(
+            "call_count >= 0 AND success_count >= 0 AND failure_count >= 0",
+            name="ck_agent_metrics_call_counts",
+        ),
+        CheckConstraint(
+            "total_latency_ms >= 0 AND total_token_usage >= 0 AND "
+            "token_usage_observed_count >= 0 AND mcp_call_count >= 0",
+            name="ck_agent_metrics_totals",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False)
+    call_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    total_latency_ms: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    total_token_usage: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    token_usage_observed_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    mcp_call_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    agent: Mapped[Agent] = relationship(back_populates="metrics")
+
+
+class AgentVersion(Base):
+    __tablename__ = "agent_versions"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "version", name="uq_agent_versions_agent_version"),
+        CheckConstraint(
+            "status IN ('development', 'testing', 'release_candidate', 'published', 'deprecated')",
+            name="ck_agent_versions_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="development")
+    description: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deprecated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    agent: Mapped[Agent] = relationship(back_populates="versions", foreign_keys=[agent_id])
+    executions: Mapped[list[ExecutionLog]] = relationship(
+        back_populates="agent_version", foreign_keys="ExecutionLog.agent_version_id"
+    )

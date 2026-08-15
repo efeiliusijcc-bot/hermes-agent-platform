@@ -2,15 +2,16 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NIcon } from 'naive-ui'
-import { Activity, Hierarchy, PlugConnected, Plus, Robot, TestPipe } from '@vicons/tabler'
+import { Activity, AlertTriangle, Coin, Plus, Robot, TestPipe } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import MetricCard from '@/components/common/MetricCard.vue'
 import { useAgentStore } from '@/stores/agents'
 import { useResourceStore } from '@/stores/resources'
 import { useSystemStore } from '@/stores/system'
 import { platformApi } from '@/api/platform'
-import type { ExecutionLog } from '@/types/api'
+import type { AgentTask, AuditLog, ExecutionLog, MetricsSummary } from '@/types/api'
 import { formatDate, truncate } from '@/utils/format'
 
 const router = useRouter()
@@ -20,8 +21,22 @@ const systemStore = useSystemStore()
 const recentRuns = ref<ExecutionLog[]>([])
 const loadingRuns = ref(false)
 const pageError = ref<string | null>(null)
+const tasks = ref<AgentTask[]>([])
+const metrics = ref<MetricsSummary | null>(null)
+const recentAudit = ref<AuditLog[]>([])
+const metricsLoading = ref(false)
 
 const failedRuns = computed(() => recentRuns.value.filter((run) => run.status === 'failed').length)
+const runningCount = computed(() => tasks.value.filter((item) => ['pending', 'retrying', 'running'].includes(item.status)).length)
+const todayExecutionCount = computed(() => {
+  const today = new Date()
+  return recentRuns.value.filter((run) => {
+    const value = new Date(run.started_at)
+    return value.getFullYear() === today.getFullYear()
+      && value.getMonth() === today.getMonth()
+      && value.getDate() === today.getDate()
+  }).length
+})
 
 async function loadDashboard() {
   pageError.value = null
@@ -32,16 +47,31 @@ async function loadDashboard() {
       systemStore.fetchHealth().catch(() => undefined),
     ])
     loadingRuns.value = true
-    const settled = await Promise.allSettled(agentStore.agents.map((agent) => platformApi.listAgentRuns(agent.id)))
+    metricsLoading.value = true
+    const [metricsResult, auditResult, ...settled] = await Promise.allSettled([
+      platformApi.getMetricsSummary(),
+      platformApi.listAuditLogs({ limit: 6 }),
+      ...agentStore.agents.map((agent) => platformApi.listAgentRuns(agent.id)),
+    ])
+    metrics.value = metricsResult.status === 'fulfilled' ? metricsResult.value : null
+    recentAudit.value = auditResult.status === 'fulfilled' ? auditResult.value : []
     recentRuns.value = settled
       .flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
       .sort((left, right) => new Date(right.started_at).valueOf() - new Date(left.started_at).valueOf())
       .slice(0, 8)
+    tasks.value = await platformApi.listTasks()
   } catch {
     pageError.value = agentStore.error || resourceStore.error || '总览数据加载失败'
   } finally {
     loadingRuns.value = false
+    metricsLoading.value = false
   }
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '--'
+  const normalized = value <= 1 ? value * 100 : value
+  return `${normalized.toFixed(1)}%`
 }
 
 onMounted(loadDashboard)
@@ -69,27 +99,21 @@ onMounted(loadDashboard)
     <div v-if="pageError" class="error-panel" style="margin-bottom: 16px">{{ pageError }}</div>
 
     <section class="metric-grid" aria-label="平台指标">
-      <article class="metric metric-primary surface">
-        <div class="metric-icon"><NIcon :component="Robot" size="18" /></div>
-        <div class="metric-value">{{ agentStore.loading ? '-' : agentStore.agents.length }}</div>
-        <div class="metric-label">已注册 Agent</div>
-        <div class="metric-note">{{ agentStore.activeAgentCount }} 个已启用</div>
-      </article>
-      <article class="metric surface">
-        <div class="metric-icon"><NIcon :component="Hierarchy" size="18" /></div>
-        <div class="metric-value">{{ resourceStore.loading ? '-' : resourceStore.skills.length }}</div>
-        <div class="metric-label">可绑定 Skill</div>
-      </article>
-      <article class="metric surface">
-        <div class="metric-icon"><NIcon :component="PlugConnected" size="18" /></div>
-        <div class="metric-value">{{ resourceStore.loading ? '-' : resourceStore.mcpServers.length }}</div>
-        <div class="metric-label">只读 MCP</div>
-      </article>
-      <article class="metric surface">
-        <div class="metric-icon"><NIcon :component="Activity" size="18" /></div>
-        <div class="metric-value">{{ loadingRuns ? '-' : recentRuns.length }}</div>
-        <div class="metric-label">最近加载的执行</div>
-      </article>
+      <MetricCard
+        label="Agent 数量"
+        :value="agentStore.loading ? '--' : (metrics?.agent_count ?? agentStore.agents.length)"
+        :note="metrics ? `${metrics.published_agent_count} 个已发布` : `${agentStore.activeAgentCount} 个可运行`"
+        primary
+      ><template #icon><NIcon :component="Robot" size="18" /></template></MetricCard>
+      <MetricCard label="运行数量" :value="loadingRuns ? '--' : runningCount" note="排队、重试或执行中">
+        <template #icon><NIcon :component="Activity" size="18" /></template>
+      </MetricCard>
+      <MetricCard label="今日执行" :value="loadingRuns ? '--' : todayExecutionCount" note="当前已加载记录">
+        <template #icon><NIcon :component="Coin" size="18" /></template>
+      </MetricCard>
+      <MetricCard label="成功率" :value="metricsLoading ? '--' : formatPercent(metrics?.success_rate)" :note="metrics ? `${metrics.call_count} 次生产调用` : '指标接口暂不可用'">
+        <template #icon><NIcon :component="AlertTriangle" size="18" /></template>
+      </MetricCard>
     </section>
 
     <div class="content-grid">
@@ -112,17 +136,20 @@ onMounted(loadDashboard)
           </div>
         </div>
         <div v-else>
-          <div
+          <button
             v-for="run in recentRuns"
             :key="run.id"
             class="history-row"
-            @click="router.push({ name: 'agent-playground', params: { id: run.agent_id } })"
+            type="button"
+            @click="router.push({ name: 'execution-detail', params: { id: run.id } })"
           >
-            <StatusTag :status="run.status" />
+            <div class="history-execution"><strong class="mono">{{ run.id }}</strong><span>{{ run.agent_id }}</span></div>
             <div class="history-input truncate">{{ truncate(run.input, 100) }}</div>
-            <div class="mono muted" style="font-size: 10px">{{ run.agent_id }}</div>
-            <div class="muted" style="font-size: 10px">{{ formatDate(run.started_at) }}</div>
-          </div>
+            <div class="mono muted">{{ run.agent_version_id || '未记录版本' }}</div>
+            <StatusTag :status="run.status" />
+            <div class="mono muted">{{ run.duration_ms === null ? '--' : `${run.duration_ms} ms` }}</div>
+            <div class="muted">{{ formatDate(run.started_at) }}</div>
+          </button>
         </div>
       </section>
 
@@ -145,13 +172,34 @@ onMounted(loadDashboard)
         <section class="surface panel">
           <div class="section-heading"><div><h2>执行提示</h2><p>当前后端能力边界</p></div></div>
           <p class="muted" style="margin: 14px 0 0; font-size: 12px; line-height: 1.7">
-            Agent 运行是同步接口。执行过程来自完成后的 ExecutionLog，不显示伪造的实时流式状态。
+            同步 JSON、真实 SSE 与 Redis 异步队列并存；异步任务由 Worker Pool 执行，最终状态以后端 Task、Session 和 ExecutionLog 为准。
           </p>
           <p class="muted" style="margin: 10px 0 0; font-size: 12px; line-height: 1.7">
             最近记录中有 {{ failedRuns }} 次失败。失败原因以后端 `error` 字段为准。
           </p>
+          <p class="muted" style="margin: 10px 0 0; font-size: 12px; line-height: 1.7">
+            当前有 {{ tasks.filter((item) => ['pending','retrying','running'].includes(item.status)).length }} 个排队或执行中的异步任务。
+          </p>
         </section>
       </aside>
     </div>
+
+    <section class="surface panel-flush" style="margin-top: 18px">
+      <div class="section-heading">
+        <div><h2>最近调用审计</h2><p>不展示敏感输入，仅显示请求、Client、Agent 和生产调用指标</p></div>
+        <span class="muted" style="font-size: 11px">{{ metrics ? `${metrics.call_count} 次累计调用` : '指标接口暂不可用' }}</span>
+      </div>
+      <div v-if="metricsLoading" class="loading-stack" style="padding: 12px 20px 20px"><div v-for="index in 3" :key="index" class="skeleton-line" /></div>
+      <div v-else-if="recentAudit.length" class="audit-list">
+        <div v-for="item in recentAudit" :key="item.id" class="audit-row">
+          <StatusTag :status="item.status" />
+          <div><strong class="mono">{{ item.request_id }}</strong><span>{{ item.agent_id }} · Client {{ item.client_id || '内部调用' }}</span></div>
+          <span>{{ item.latency_ms }} ms</span>
+          <span>{{ item.token_usage === null ? '--' : item.token_usage }} tokens</span>
+          <span>{{ formatDate(item.created_at) }}</span>
+        </div>
+      </div>
+      <div v-else class="version-empty">暂无可展示的生产调用审计记录。</div>
+    </section>
   </div>
 </template>

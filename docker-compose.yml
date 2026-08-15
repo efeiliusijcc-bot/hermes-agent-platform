@@ -32,6 +32,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       hermes-runtime:
         condition: service_healthy
       mcp-gateway:
@@ -51,9 +55,26 @@ services:
       REDIS_DB: ${REDIS_DB:-0}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-5}
+      TASK_QUEUE_KEY: ${TASK_QUEUE_KEY:-hermes:agent-tasks:v1}
+      TASK_QUEUE_POLL_SECONDS: ${TASK_QUEUE_POLL_SECONDS:-1}
+      TASK_MAX_ATTEMPTS: ${TASK_MAX_ATTEMPTS:-3}
+      TASK_RETRY_DELAY_SECONDS: ${TASK_RETRY_DELAY_SECONDS:-1}
+      TASK_STALE_SECONDS: ${TASK_STALE_SECONDS:-600}
+      WORKSPACE_ROOT: /data/workspaces
+      ARTIFACT_STORAGE_PROVIDER: ${ARTIFACT_STORAGE_PROVIDER:-minio}
+      ARTIFACT_LOCAL_ROOT: /data/artifacts
+      ARTIFACT_NAS_ROOT: /data/artifacts
+      ARTIFACT_MAX_BYTES: ${ARTIFACT_MAX_BYTES:-104857600}
+      ARTIFACT_MINIO_BUCKET: ${ARTIFACT_MINIO_BUCKET:-artifacts}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_SECURE: "false"
       AGENT_MEMORY_MAX_TURNS: ${AGENT_MEMORY_MAX_TURNS:-8}
       AGENT_MEMORY_TTL_SECONDS: ${AGENT_MEMORY_TTL_SECONDS:-2592000}
       AGENT_MEMORY_MAX_MESSAGE_CHARS: ${AGENT_MEMORY_MAX_MESSAGE_CHARS:-20000}
+      MEMORY_PROVIDER: ${MEMORY_PROVIDER:-redis}
+      MEMORY_TYPE: ${MEMORY_TYPE:-short-term}
       HERMES_ENDPOINT: http://hermes-runtime:8642/v1
       HERMES_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
       HERMES_MODEL: hermes-agent
@@ -71,6 +92,10 @@ services:
       KNOWLEDGE_MAX_UPLOAD_BYTES: ${KNOWLEDGE_MAX_UPLOAD_BYTES:-10485760}
     volumes:
       - ./skills:/app/skills
+      - ./data/hermes-workspace:/data/workspaces
+      - ./data/artifacts:/data/artifacts
+    group_add:
+      - "${WORKSPACE_SHARED_GID:-10003}"
     ports:
       - "${AGENT_API_BIND_HOST:-127.0.0.1}:${AGENT_API_PORT:-18088}:8000"
     healthcheck:
@@ -87,6 +112,94 @@ services:
       - platform-internal
       - platform-edge
 
+  agent-worker:
+    image: hermes-agent-platform/agent-api:phase7
+    restart: unless-stopped
+    entrypoint: ["python", "-m", "app.worker"]
+    depends_on:
+      agent-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      hermes-runtime:
+        condition: service_healthy
+      mcp-gateway:
+        condition: service_healthy
+      knowledge-service:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-5}
+      TASK_QUEUE_KEY: ${TASK_QUEUE_KEY:-hermes:agent-tasks:v1}
+      TASK_QUEUE_POLL_SECONDS: ${TASK_QUEUE_POLL_SECONDS:-1}
+      TASK_MAX_ATTEMPTS: ${TASK_MAX_ATTEMPTS:-3}
+      TASK_RETRY_DELAY_SECONDS: ${TASK_RETRY_DELAY_SECONDS:-1}
+      TASK_STALE_SECONDS: ${TASK_STALE_SECONDS:-600}
+      WORKER_ID: ${WORKER_ID:-agent-worker}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      WORKSPACE_ROOT: /data/workspaces
+      ARTIFACT_STORAGE_PROVIDER: ${ARTIFACT_STORAGE_PROVIDER:-minio}
+      ARTIFACT_LOCAL_ROOT: /data/artifacts
+      ARTIFACT_NAS_ROOT: /data/artifacts
+      ARTIFACT_MAX_BYTES: ${ARTIFACT_MAX_BYTES:-104857600}
+      ARTIFACT_MINIO_BUCKET: ${ARTIFACT_MINIO_BUCKET:-artifacts}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_SECURE: "false"
+      AGENT_MEMORY_MAX_TURNS: ${AGENT_MEMORY_MAX_TURNS:-8}
+      AGENT_MEMORY_TTL_SECONDS: ${AGENT_MEMORY_TTL_SECONDS:-2592000}
+      AGENT_MEMORY_MAX_MESSAGE_CHARS: ${AGENT_MEMORY_MAX_MESSAGE_CHARS:-20000}
+      MEMORY_PROVIDER: ${MEMORY_PROVIDER:-redis}
+      MEMORY_TYPE: ${MEMORY_TYPE:-short-term}
+      HERMES_ENDPOINT: http://hermes-runtime:8642/v1
+      HERMES_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
+      HERMES_MODEL: hermes-agent
+      HERMES_TIMEOUT_SECONDS: ${HERMES_TIMEOUT_SECONDS:-180}
+      SKILLS_ROOT: /app/skills
+      SKILL_MAX_DOCUMENT_BYTES: ${SKILL_MAX_DOCUMENT_BYTES:-262144}
+      SKILL_MAX_UPLOAD_BYTES: ${SKILL_MAX_UPLOAD_BYTES:-10485760}
+      SKILL_MAX_EXTRACTED_BYTES: ${SKILL_MAX_EXTRACTED_BYTES:-52428800}
+      SKILL_MAX_ARCHIVE_ENTRIES: ${SKILL_MAX_ARCHIVE_ENTRIES:-512}
+      MCP_GATEWAY_ENDPOINT: http://mcp-gateway:8090/mcp
+      MCP_GATEWAY_SIGNING_KEY: ${MCP_GATEWAY_SIGNING_KEY:?MCP_GATEWAY_SIGNING_KEY is required}
+      KNOWLEDGE_SERVICE_ENDPOINT: http://knowledge-service:8081
+      KNOWLEDGE_SERVICE_TIMEOUT_SECONDS: ${KNOWLEDGE_SERVICE_TIMEOUT_SECONDS:-60}
+      KNOWLEDGE_SEARCH_TOP_K: ${KNOWLEDGE_SEARCH_TOP_K:-5}
+      KNOWLEDGE_MAX_UPLOAD_BYTES: ${KNOWLEDGE_MAX_UPLOAD_BYTES:-10485760}
+    volumes:
+      - ./skills:/app/skills:ro
+      - ./data/hermes-workspace:/data/workspaces
+      - ./data/artifacts:/data/artifacts
+    group_add:
+      - "${WORKSPACE_SHARED_GID:-10003}"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from pathlib import Path; import os; assert Path('/proc/1/cmdline').exists(); assert Path('/data/workspaces').is_dir()"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - platform-internal
+
   model-gateway:
     image: hermes-agent-platform/agent-api:phase7
     restart: unless-stopped
@@ -97,6 +210,10 @@ services:
       MODEL_NAME: ${MODEL_NAME:?MODEL_NAME is required}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:?MODEL_GATEWAY_API_KEY is required}
       MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-180}
+      MODEL_MAX_CONCURRENCY: ${MODEL_MAX_CONCURRENCY:-5}
+      MODEL_QUEUE_TIMEOUT_SECONDS: ${MODEL_QUEUE_TIMEOUT_SECONDS:-60}
+      MODEL_MAX_RETRIES: ${MODEL_MAX_RETRIES:-2}
+      MODEL_RETRY_DELAY_SECONDS: ${MODEL_RETRY_DELAY_SECONDS:-1}
     expose:
       - "8080"
     healthcheck:
@@ -139,6 +256,7 @@ services:
     entrypoint: ["/opt/hermes/.venv/bin/python", "/opt/bootstrap/hermes-init.py"]
     environment:
       MODEL_NAME: ${MODEL_NAME:?MODEL_NAME is required}
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:?MODEL_GATEWAY_API_KEY is required}
     volumes:
       - ./data/hermes:/opt/data
       - ./docker/hermes-init.py:/opt/bootstrap/hermes-init.py:ro
@@ -160,11 +278,11 @@ services:
       HERMES_DISABLE_LAZY_INSTALLS: "1"
       API_SERVER_HOST: 0.0.0.0
       API_SERVER_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
+      TERMINAL_CWD: /opt/data
       DEEPSEEK_API_KEY: ${MODEL_GATEWAY_API_KEY:?MODEL_GATEWAY_API_KEY is required}
     command: ["gateway", "run"]
     volumes:
       - ./data/hermes:/opt/data
-      - ./data/hermes-workspace:/workspace
     expose:
       - "8642"
     healthcheck:

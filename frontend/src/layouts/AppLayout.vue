@@ -1,16 +1,22 @@
 <script setup lang="ts">
-import { h, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { NIcon, type MenuOption } from 'naive-ui'
 import {
   Apps,
   Api,
+  Archive,
+  ChartBar,
   Hierarchy,
+  Activity,
   ChevronLeft,
   ChevronRight,
   Menu2,
   PlugConnected,
   Robot,
+  ListCheck,
+  Plus,
+  Settings,
 } from '@vicons/tabler'
 
 import { useSystemStore } from '@/stores/system'
@@ -29,12 +35,36 @@ function renderLink(label: string, name: string) {
 }
 
 const menuOptions: MenuOption[] = [
-  { label: renderLink('运行总览', 'dashboard'), key: 'dashboard', icon: renderIcon(Apps) },
-  { label: renderLink('Agent 管理', 'agents'), key: 'agents', icon: renderIcon(Robot) },
-  { label: renderLink('Skill 管理', 'skills'), key: 'skills', icon: renderIcon(Hierarchy) },
-  { label: renderLink('MCP 管理', 'mcps'), key: 'mcps', icon: renderIcon(PlugConnected) },
-  { label: renderLink('API 管理', 'apis'), key: 'apis', icon: renderIcon(Api) },
+  { label: '工作台', key: 'workspace', type: 'group', children: [
+    { label: renderLink('运行总览', 'dashboard'), key: 'dashboard', icon: renderIcon(Apps) },
+  ] },
+  { label: 'AGENT', key: 'agent-group', type: 'group', children: [
+    { label: renderLink('Agent 列表', 'agents'), key: 'agents', icon: renderIcon(Robot) },
+    { label: renderLink('创建 Agent', 'agent-create'), key: 'agent-create', icon: renderIcon(Plus) },
+  ] },
+  { label: '执行', key: 'execution-group', type: 'group', children: [
+    { label: renderLink('执行历史', 'executions'), key: 'executions', icon: renderIcon(ListCheck) },
+    { label: renderLink('Trace Center', 'execution-trace'), key: 'execution-trace', icon: renderIcon(Activity) },
+  ] },
+  { label: '能力资源', key: 'resource-group', type: 'group', children: [
+    { label: renderLink('Skill Registry', 'skills'), key: 'skills', icon: renderIcon(Hierarchy) },
+    { label: renderLink('MCP Registry', 'mcps'), key: 'mcps', icon: renderIcon(PlugConnected) },
+    { label: renderLink('Artifacts', 'artifacts'), key: 'artifacts', icon: renderIcon(Archive) },
+  ] },
+  { label: '平台', key: 'platform-group', type: 'group', children: [
+    { label: renderLink('API Center', 'apis'), key: 'apis', icon: renderIcon(Api) },
+    { label: renderLink('Operations', 'operations'), key: 'operations', icon: renderIcon(ChartBar) },
+    { label: renderLink('Settings', 'settings'), key: 'settings', icon: renderIcon(Settings) },
+  ] },
 ]
+
+const activeMenuKey = computed(() => {
+  const name = String(route.name || '')
+  if (['agent-detail', 'agent-playground'].includes(name)) return 'agents'
+  if (name === 'execution-detail') return 'executions'
+  if (name === 'trace-detail') return 'execution-trace'
+  return name
+})
 
 const healthTimer = ref<number | null>(null)
 
@@ -59,13 +89,13 @@ onBeforeUnmount(() => {
       <div class="brand">
         <div class="brand-mark"><NIcon :component="Robot" size="22" /></div>
         <div v-show="!collapsed" class="brand-copy">
-          <strong>Hermes</strong>
-          <span>Agent Control Center</span>
+          <strong>Hermes Platform</strong>
+          <span>Enterprise Agent Console</span>
         </div>
       </div>
 
       <NMenu
-        :value="String(route.name || '')"
+        :value="activeMenuKey"
         :options="menuOptions"
         :collapsed="collapsed"
         :collapsed-width="72"
@@ -87,8 +117,20 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <main class="app-main">
-      <RouterView />
-    </main>
+    <div class="app-workspace">
+      <header class="app-topbar">
+        <div>
+          <span>AI Platform</span>
+          <strong>{{ route.meta.title || '控制台' }}</strong>
+        </div>
+        <div class="topbar-health" :class="{ offline: !systemStore.health }">
+          <span class="health-indicator" />
+          {{ systemStore.health ? 'Runtime online' : 'Runtime unavailable' }}
+        </div>
+      </header>
+      <main class="app-main">
+        <RouterView />
+      </main>
+    </div>
   </div>
 </template>

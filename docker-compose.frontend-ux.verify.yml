@@ -1,0 +1,24 @@
+name: hermes-agent-ux-verify
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    image: hermes-agent-platform/frontend:ux-20260814
+    restart: "no"
+    ports:
+      - "127.0.0.1:38289:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/frontend-health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    networks:
+      - platform-edge
+
+networks:
+  platform-edge:
+    external: true
+    name: hermes-agent-platform-edge

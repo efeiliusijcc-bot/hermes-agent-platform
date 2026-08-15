@@ -59,6 +59,26 @@ def test_imports_phase2_manifest_and_generates_runtime_config(tmp_path) -> None:
     assert "id: knowledge-analysis" in (installed / "config.yaml").read_text()
 
 
+def test_imports_structured_entry_manifest(tmp_path) -> None:
+    imported = SkillPackageImporter().import_zip(
+        package(
+            {
+                "write-hb/skill.yaml": (
+                    "name: write-hb\nversion: 3.0.0\n"
+                    "description: Enterprise offline report skill\n"
+                    "entry:\n  file: SKILL.md\n"
+                ),
+                "write-hb/SKILL.md": "# Write HB\n\nGenerate an offline enterprise report.",
+            }
+        )
+    )
+
+    assert imported.id == "write-hb"
+    installed = tmp_path / "skills" / "write-hb"
+    assert (installed / "SKILL.md").is_file()
+    assert "entry: SKILL.md" in (installed / "config.yaml").read_text()
+
+
 @pytest.mark.parametrize(
     "payload, message",
     [

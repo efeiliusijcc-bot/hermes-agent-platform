@@ -1,0 +1,35 @@
+name: hermes-agent-phase3-verify
+
+services:
+  frontend:
+    image: hermes-agent-phase3-verify/frontend:v3
+
+  agent-api:
+    image: hermes-agent-phase3-verify/agent-api:v3
+
+  agent-worker:
+    image: hermes-agent-phase3-verify/agent-api:v3
+
+  model-gateway:
+    image: hermes-agent-phase3-verify/agent-api:v3
+    environment:
+      MODEL_ENDPOINT: http://model-stub:8090/v1
+      MODEL_API_KEY: verify-model-key
+      MODEL_NAME: verify-default-model
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:?MODEL_GATEWAY_API_KEY is required}
+
+  model-stub:
+    profiles: []
+    image: hermes-agent-phase3-verify/agent-api:v3
+
+  mcp-gateway:
+    image: hermes-agent-phase3-verify/mcp-gateway:v3
+
+  knowledge-service:
+    image: hermes-agent-phase3-verify/knowledge-service:v3
+
+networks:
+  platform-internal:
+    name: hermes-agent-phase3-verify-internal
+  platform-edge:
+    name: hermes-agent-phase3-verify-edge

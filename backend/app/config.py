@@ -1,6 +1,8 @@
 from functools import lru_cache
 from urllib.parse import quote_plus
 
+from typing import Literal
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -27,9 +29,31 @@ class Settings(BaseSettings):
     redis_password: SecretStr
     redis_socket_timeout_seconds: int = Field(default=5, ge=1, le=30)
 
+    task_queue_key: str = "hermes:agent-tasks:v1"
+    task_queue_poll_seconds: float = Field(default=1.0, ge=0.1, le=30.0)
+    task_max_attempts: int = Field(default=3, ge=1, le=10)
+    task_retry_delay_seconds: float = Field(default=1.0, ge=0.0, le=300.0)
+    task_stale_seconds: int = Field(default=600, ge=30, le=86_400)
+    worker_concurrency: int = Field(default=4, ge=1, le=64)
+    worker_id: str = "agent-worker"
+
+    workspace_root: str = "/data/workspaces"
+
+    artifact_storage_provider: Literal["local", "minio", "nas"] = "minio"
+    artifact_local_root: str = "/data/artifacts"
+    artifact_nas_root: str = "/data/artifacts"
+    artifact_max_bytes: int = Field(default=104_857_600, ge=1, le=1_073_741_824)
+    artifact_minio_bucket: str = "artifacts"
+    minio_endpoint: str = "minio:9000"
+    minio_root_user: str = "hermes_minio"
+    minio_root_password: SecretStr
+    minio_secure: bool = False
+
     agent_memory_max_turns: int = Field(default=8, ge=1, le=50)
     agent_memory_ttl_seconds: int = Field(default=2_592_000, ge=60, le=31_536_000)
     agent_memory_max_message_chars: int = Field(default=20_000, ge=256, le=100_000)
+    memory_provider: Literal["redis", "postgres", "vector"] = "redis"
+    memory_type: str = Field(default="short-term", pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
     knowledge_service_endpoint: str = "http://knowledge-service:8081"
     knowledge_service_timeout_seconds: int = Field(default=60, ge=5, le=300)

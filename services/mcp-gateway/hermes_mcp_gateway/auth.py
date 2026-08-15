@@ -16,13 +16,18 @@ class MCPAccessDenied(ValueError):
 class MCPAccessClaims:
     agent_id: str
     execution_id: str
-    mcp: dict[str, str]
+    mcp: dict[str, dict[str, str]]
 
     def require(self, capability: str) -> str:
-        mcp_id = self.mcp.get(capability)
-        if not mcp_id:
+        binding = self.mcp.get(capability)
+        # String snapshots were emitted by Phase 6. Accept them only as the
+        # historical read-only format while all new executions use explicit
+        # permission objects.
+        if isinstance(binding, str) and binding:
+            return binding
+        if not isinstance(binding, dict) or binding.get("permission") != "read_only" or not binding.get("mcp_id"):
             raise MCPAccessDenied(f"access denied: {capability} MCP is not bound to this Agent")
-        return mcp_id
+        return binding["mcp_id"]
 
 
 def verify_mcp_access_token(token: str, signing_key: str) -> str:

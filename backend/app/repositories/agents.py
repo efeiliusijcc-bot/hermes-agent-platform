@@ -1,8 +1,8 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Agent, ExecutionLog, KnowledgeSource, MCPServer, Skill
-from app.schemas.agent import AgentCreate, AgentSchemaUpdate
+from app.db.models import Agent, AgentSchemaVersion, ExecutionLog, KnowledgeSource, MCPServer, Skill
+from app.schemas.agent import AgentConfigurationUpdate, AgentCreate, AgentSchemaUpdate
 
 
 async def create_agent(session: AsyncSession, payload: AgentCreate) -> Agent:
@@ -13,12 +13,25 @@ async def create_agent(session: AsyncSession, payload: AgentCreate) -> Agent:
         role=payload.role,
         system_prompt=payload.system_prompt,
         model_settings=payload.model_settings,
+        model=payload.model,
+        prompt_template=payload.prompt_template,
+        model_adapter=payload.model_adapter,
+        api_enabled=False,
         status=payload.status,
         response_mode=payload.response_mode,
         input_schema=payload.input_schema,
         output_schema=payload.output_schema,
     )
     session.add(agent)
+    session.add(
+        AgentSchemaVersion(
+            agent=agent,
+            version="v1",
+            input_schema=payload.input_schema,
+            output_schema=payload.output_schema,
+            status="draft",
+        )
+    )
     await session.commit()
     await session.refresh(agent)
     return agent
@@ -51,6 +64,23 @@ async def update_agent_response_mode(session: AsyncSession, agent: Agent, respon
     await session.commit()
     await session.refresh(agent)
     return agent
+
+
+async def update_agent_configuration(
+    session: AsyncSession,
+    agent: Agent,
+    payload: AgentConfigurationUpdate,
+) -> Agent:
+    agent.system_prompt = payload.system_prompt
+    agent.model = payload.model
+    agent.prompt_template = payload.prompt_template
+    agent.model_adapter = payload.model_adapter
+    agent.model_settings = payload.model_settings
+    await session.commit()
+    await session.refresh(agent)
+    return agent
+
+
 
 
 async def list_execution_logs(session: AsyncSession, agent_id: str) -> list[ExecutionLog]:

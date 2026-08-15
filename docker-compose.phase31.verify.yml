@@ -1,0 +1,36 @@
+name: hermes-agent-phase31-verify
+
+services:
+  frontend:
+    image: hermes-agent-phase31-verify/frontend:v31
+
+  agent-api:
+    image: hermes-agent-phase31-verify/agent-api:v31
+
+  agent-worker:
+    image: hermes-agent-phase31-verify/agent-api:v31
+
+  model-gateway:
+    image: hermes-agent-phase31-verify/agent-api:v31
+    environment:
+      MODEL_ENDPOINT: http://model-stub:8090/v1
+      MODEL_API_KEY: phase31-model-key
+      MODEL_NAME: phase31-model
+      MODEL_MAX_CONCURRENCY: 2
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:?MODEL_GATEWAY_API_KEY is required}
+
+  model-stub:
+    profiles: []
+    image: hermes-agent-phase31-verify/agent-api:v31
+
+  mcp-gateway:
+    image: hermes-agent-phase31-verify/mcp-gateway:v31
+
+  knowledge-service:
+    image: hermes-agent-phase31-verify/knowledge-service:v31
+
+networks:
+  platform-internal:
+    name: hermes-agent-phase31-verify-internal
+  platform-edge:
+    name: hermes-agent-phase31-verify-edge

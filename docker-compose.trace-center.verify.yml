@@ -1,0 +1,48 @@
+name: ${TRACE_VERIFY_PROJECT:-hermes-agent-trace-center-verify}
+
+services:
+  api-contract:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    image: ${TRACE_VERIFY_API_IMAGE:-hermes-agent-platform/agent-api:trace-center-verify}
+    entrypoint: ["python", "-c"]
+    command:
+      - >-
+        from app.main import app;
+        paths = app.openapi()["paths"];
+        assert "/api/executions/{execution_id}/trace" in paths;
+        schema = app.openapi()["components"]["schemas"]["ExecutionListRead"];
+        assert "metrics" in schema["properties"];
+        print("trace-api-contract-ok")
+    environment:
+      POSTGRES_PASSWORD: trace-verify-postgres
+      REDIS_PASSWORD: trace-verify-redis
+      MINIO_ROOT_PASSWORD: trace-verify-minio
+      HERMES_API_KEY: trace-verify-hermes
+      MCP_GATEWAY_SIGNING_KEY: trace-verify-signing-key-000000000000
+    network_mode: none
+    restart: "no"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    image: ${TRACE_VERIFY_FRONTEND_IMAGE:-hermes-agent-platform/frontend:trace-center-verify}
+    restart: "no"
+    extra_hosts:
+      - "agent-api:127.0.0.1"
+    ports:
+      - "127.0.0.1:${TRACE_VERIFY_FRONTEND_PORT:-39389}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/frontend-health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    networks:
+      - trace-verify
+
+networks:
+  trace-verify:
+    name: ${TRACE_VERIFY_NETWORK:-hermes-agent-trace-center-verify-network}

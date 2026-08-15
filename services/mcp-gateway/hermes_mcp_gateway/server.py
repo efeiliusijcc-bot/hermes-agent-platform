@@ -188,7 +188,16 @@ async def _authorize(access_token: str, ctx: Context) -> MCPAccessClaims:
     except json.JSONDecodeError as exc:
         raise MCPAccessDenied("access denied: invalid MCP permission snapshot") from exc
     if not isinstance(permissions, dict) or not all(
-        isinstance(key, str) and isinstance(value, str) for key, value in permissions.items()
+        isinstance(key, str)
+        and (
+            isinstance(value, str)
+            or (
+                isinstance(value, dict)
+                and isinstance(value.get("mcp_id"), str)
+                and value.get("permission") == "read_only"
+            )
+        )
+        for key, value in permissions.items()
     ):
         raise MCPAccessDenied("access denied: invalid MCP permission snapshot")
     return MCPAccessClaims(

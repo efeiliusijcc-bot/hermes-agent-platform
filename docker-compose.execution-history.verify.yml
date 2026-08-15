@@ -1,0 +1,111 @@
+name: hermes-agent-execution-history-verify
+
+services:
+  phase-history-data-init:
+    image: hermes-agent-execution-history-verify/agent-api:v1
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        chown -R 10002:${WORKSPACE_SHARED_GID:-10003} /data/workspaces /data/artifacts &&
+        chmod 2770 /data/workspaces /data/artifacts
+    volumes:
+      - execution-history-workspaces:/data/workspaces
+      - execution-history-artifacts:/data/artifacts
+    network_mode: none
+    restart: "no"
+
+  frontend:
+    image: hermes-agent-execution-history-verify/frontend:v1
+    ports: !override
+      - "127.0.0.1:${EXECUTION_HISTORY_FRONTEND_PORT:-39189}:8080"
+
+  agent-api:
+    image: hermes-agent-execution-history-verify/agent-api:v1
+    depends_on:
+      phase-history-data-init:
+        condition: service_completed_successfully
+    ports: !override
+      - "127.0.0.1:${EXECUTION_HISTORY_API_PORT:-39188}:8000"
+    volumes:
+      - ./skills:/app/skills
+      - execution-history-workspaces:/data/workspaces
+      - execution-history-artifacts:/data/artifacts
+
+  agent-worker:
+    image: hermes-agent-execution-history-verify/agent-api:v1
+    depends_on:
+      phase-history-data-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./skills:/app/skills:ro
+      - execution-history-workspaces:/data/workspaces
+      - execution-history-artifacts:/data/artifacts
+
+  model-gateway:
+    image: hermes-agent-execution-history-verify/agent-api:v1
+    depends_on:
+      model-stub:
+        condition: service_healthy
+    environment:
+      MODEL_ENDPOINT: http://model-stub:8090/v1
+      MODEL_API_KEY: execution-history-model-key
+      MODEL_NAME: execution-history-model
+      MODEL_MAX_CONCURRENCY: 2
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:?MODEL_GATEWAY_API_KEY is required}
+
+  model-stub:
+    profiles: !override []
+    image: hermes-agent-execution-history-verify/agent-api:v1
+
+  hermes-init:
+    volumes:
+      - execution-history-hermes:/opt/data
+      - ./docker/hermes-init.py:/opt/bootstrap/hermes-init.py:ro
+
+  hermes-runtime:
+    volumes:
+      - execution-history-hermes:/opt/data
+
+  mcp-gateway:
+    image: hermes-agent-execution-history-verify/mcp-gateway:v1
+    volumes:
+      - execution-history-mcp-files:/data/files:ro
+
+  knowledge-service:
+    image: hermes-agent-execution-history-verify/knowledge-service:v1
+
+  postgres:
+    volumes:
+      - execution-history-postgres:/var/lib/postgresql/data
+      - ./services/postgres/init:/docker-entrypoint-initdb.d:ro
+
+  redis:
+    volumes:
+      - execution-history-redis:/data
+
+  minio:
+    volumes:
+      - execution-history-minio:/data
+
+networks:
+  platform-internal:
+    name: hermes-agent-execution-history-verify-internal
+  platform-edge:
+    name: hermes-agent-execution-history-verify-edge
+
+volumes:
+  execution-history-postgres:
+    name: hermes-agent-execution-history-verify-postgres
+  execution-history-redis:
+    name: hermes-agent-execution-history-verify-redis
+  execution-history-minio:
+    name: hermes-agent-execution-history-verify-minio
+  execution-history-hermes:
+    name: hermes-agent-execution-history-verify-hermes
+  execution-history-workspaces:
+    name: hermes-agent-execution-history-verify-workspaces
+  execution-history-artifacts:
+    name: hermes-agent-execution-history-verify-artifacts
+  execution-history-mcp-files:
+    name: hermes-agent-execution-history-verify-mcp-files

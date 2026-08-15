@@ -1,12 +1,12 @@
 # Hermes Agent Platform
 
-Phase 2.5 adds selectable synchronous JSON and real Hermes-native SSE streaming to the safe Skill/MCP/Schema/public API platform. See `docs/phase2-registry-publication.md`.
+The platform now includes the Phase 10 Agent Schema / public API contract, the Phase 3 Agent isolation / concurrency runtime, Phase 3.1 Schema and storage abstractions, and the Phase 4 production Agent runtime. See `docs/phase2-registry-publication.md`, `docs/phase3-agent-isolation-concurrency.md`, `docs/phase3.1-schema-storage.md`, and `docs/phase4-production-agent-runtime.md`.
 
 Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台以 Hermes Agent Runtime 为执行核心，通过外部 OpenAI Compatible 模型服务完成推理，并组合 Agent、Skill、MCP、Knowledge 与 Memory 构建可配置、可隔离的 AI 工作单元。
 
 ## 当前阶段
 
-当前仓库已完成 **Phase 9：离线部署验证**。除完整的 `knowledge-analyst` 多源分析闭环外，平台还可导出包含固定镜像、运行配置、PostgreSQL/Redis/MinIO/文件数据和 SHA-256 清单的离线包，并在新内网节点恢复启动。
+当前仓库已完成 **Phase 10：Agent Schema 与 API Gateway**、Phase 3 隔离并发、Phase 3.1 Schema/Storage，以及 Phase 4 生产 Agent Runtime。除 `knowledge-analyst` 多源分析和离线恢复能力外，平台支持版本化 Input/Output Schema、API Version 固定绑定、Prompt Template、Model Adapter、API Client/Key、生命周期、发布/回滚、审计/指标、健康门禁、Sync JSON、原生 SSE Stream、异步队列、MinIO Artifact 和 Redis/PostgreSQL/pgvector Memory。
 
 管理控制台 MVP 已按现有 FastAPI 契约实现，包含运行总览、Agent 创建/详情/删除、Skill/MCP 展示、能力绑定、Playground、Sync/SSE 模式选择、实时 Trace 和执行日志查看。SSE 直接转发 Hermes Runtime 原生增量事件，不使用伪流式切分。
 
@@ -66,6 +66,14 @@ Phase 7 的 Knowledge 数据模型、解析/Embedding 边界和验收步骤见 [
 Phase 8 的 Knowledge Analyst Demo 配置、部署、调用和验收步骤见 [docs/phase8-knowledge-agent-demo.md](docs/phase8-knowledge-agent-demo.md)。
 
 Phase 9 的镜像导出、配置/数据迁移、新节点恢复和 116 隔离验收步骤见 [docs/phase9-offline-deployment.md](docs/phase9-offline-deployment.md)。
+
+Phase 10 的 Agent Schema、Prompt Builder、Model Adapter、公开 API 与 SSE 契约见 [docs/phase2-registry-publication.md](docs/phase2-registry-publication.md)。
+
+Phase 3 的 Agent/Session/Workspace/Artifact 隔离、Task Queue、Worker Pool、模型并发保护和 116 独立验收步骤见 [docs/phase3-agent-isolation-concurrency.md](docs/phase3-agent-isolation-concurrency.md)。
+
+Phase 3.1 的 Schema/API 版本生命周期、Artifact Storage Provider、Memory Provider 和 116 独立验收证据见 [docs/phase3.1-schema-storage.md](docs/phase3.1-schema-storage.md)。
+
+Phase 4 的生产生命周期、Client/Key 鉴权、限流、审计、指标、健康门禁、版本回滚及 116 独立验收证据见 [docs/phase4-production-agent-runtime.md](docs/phase4-production-agent-runtime.md)。控制面管理员认证尚未定义，因此管理接口只允许放在可信内网或由外层可信网关保护，不能直接暴露公网。
 
 ## 校验
 

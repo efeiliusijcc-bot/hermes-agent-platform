@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NIcon, useMessage } from 'naive-ui'
-import { ArrowLeft, Bolt, History, PlayerPlay, Tool } from '@vicons/tabler'
+import { NIcon, NInputNumber, useMessage } from 'naive-ui'
+import { ArrowLeft, PlayerPlay, Settings } from '@vicons/tabler'
 import { useRoute, useRouter } from 'vue-router'
 
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import SchemaForm from '@/components/execution/SchemaForm.vue'
+import ExecutionTimeline from '@/components/execution/ExecutionTimeline.vue'
+import ResultViewer from '@/components/execution/ResultViewer.vue'
+import RuntimeMetrics from '@/components/execution/RuntimeMetrics.vue'
+import { platformApi } from '@/api/platform'
+import { getApiErrorMessage } from '@/api/client'
 import { useAgentStore } from '@/stores/agents'
 import { useExecutionStore } from '@/stores/executions'
-import { formatDate, formatDuration, truncate } from '@/utils/format'
-import type { ResponseMode } from '@/types/api'
+import { buildSchemaParameters, createInitialSchemaValues, formatJson } from '@/utils/executionStudio'
+import type { AgentTask, AgentVersion } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,39 +23,84 @@ const message = useMessage()
 const agentStore = useAgentStore()
 const executionStore = useExecutionStore()
 const agentId = computed(() => String(route.params.id))
-const input = ref('')
+const task = ref('')
 const sessionId = ref('default')
-const responseMode = ref<ResponseMode>('sync')
+const mode = ref<'sync' | 'stream' | 'async'>('sync')
+const priority = ref(5)
+const temperature = ref<number | null>(null)
+const parameters = ref<Record<string, unknown>>({})
+const parameterErrors = ref<Record<string, string>>({})
+const submittedTask = ref<AgentTask | null>(null)
+const versions = ref<AgentVersion[]>([])
+const localError = ref<string | null>(null)
 
-const selectedRun = computed(() => executionStore.currentRun)
-const toolCalls = computed(() => selectedRun.value?.details.mcp_calls || [])
+const agent = computed(() => agentStore.currentAgent)
+const execution = computed(() => executionStore.currentExecution)
+const executable = computed(() => agent.value?.status === 'active')
+const currentVersion = computed(() => versions.value.find((item) => item.status === 'published') || versions.value[0] || null)
+const schemaVersion = computed(() => String(currentVersion.value?.snapshot.schema?.version || execution.value?.schema_version || '--'))
+const isActive = computed(() => executionStore.running || ['queued', 'running'].includes(execution.value?.status || ''))
+const visibleOutput = computed(() => execution.value?.output || executionStore.streamedOutput || null)
 
 async function load() {
-  executionStore.currentRun = null
-  executionStore.currentResult = null
-  await Promise.all([
-    agentStore.fetchAgentDetail(agentId.value),
-    executionStore.fetchRuns(agentId.value),
-  ]).catch(() => undefined)
-  if (executionStore.runs.length) executionStore.selectRun(executionStore.runs[0])
-  responseMode.value = agentStore.currentAgent?.response_mode || 'sync'
+  localError.value = null
+  submittedTask.value = null
+  executionStore.currentExecution = null
+  try {
+    const [, versionResult] = await Promise.all([
+      agentStore.fetchAgentDetail(agentId.value),
+      platformApi.listAgentVersions(agentId.value).catch(() => []),
+    ])
+    versions.value = versionResult
+    mode.value = agent.value?.response_mode || 'sync'
+    parameters.value = createInitialSchemaValues(agent.value?.input_schema || {})
+    parameterErrors.value = {}
+  } catch (error) {
+    localError.value = getApiErrorMessage(error)
+  }
 }
 
 async function submitRun() {
-  if (!input.value.trim()) {
+  localError.value = null
+  if (!task.value.trim()) {
     message.warning('请输入需要 Agent 执行的任务')
     return
   }
-  try {
-    await executionStore.runAgent(agentId.value, input.value.trim(), sessionId.value.trim() || 'default', responseMode.value)
-    message.success('Agent 执行成功')
-  } catch {
-    message.error(executionStore.error || 'Agent 执行失败', { duration: 7000 })
+  const built = buildSchemaParameters(agent.value?.input_schema || {}, parameters.value)
+  parameterErrors.value = built.errors
+  if (Object.keys(built.errors).length) {
+    message.warning('请修正 Schema 输入字段')
+    return
   }
-}
 
-function formatJson(value: unknown): string {
-  return JSON.stringify(value ?? {}, null, 2)
+  try {
+    submittedTask.value = null
+    if (mode.value === 'async') {
+      const created = await platformApi.submitAgentTask(agentId.value, {
+        input: task.value.trim(),
+        session_id: sessionId.value.trim() || 'default',
+        priority: priority.value,
+        parameters: built.parameters,
+        ...(temperature.value === null ? {} : { temperature: temperature.value }),
+      })
+      submittedTask.value = created
+      if (created.execution_id) await executionStore.fetchExecution(created.execution_id)
+      message.success('任务已进入 Worker 队列')
+      return
+    }
+    await executionStore.runAgent(
+      agentId.value,
+      task.value.trim(),
+      sessionId.value.trim() || 'default',
+      mode.value as 'sync' | 'stream',
+      built.parameters,
+      temperature.value,
+    )
+    message.success(mode.value === 'stream' ? '流式执行完成' : 'Agent 执行成功')
+  } catch (error) {
+    localError.value = executionStore.error || getApiErrorMessage(error)
+    message.error(localError.value, { duration: 7000 })
+  }
 }
 
 watch(agentId, load)
@@ -58,124 +109,114 @@ onMounted(load)
 
 <template>
   <div>
-    <PageHeader
-      :title="`${agentStore.currentAgent?.name || agentId} 执行台`"
-      description="可选择同步 JSON 或真实 SSE 流式执行。流式事件直接来自 Hermes Runtime，最终日志仍以后端 ExecutionLog 为准。"
-    >
+    <PageHeader title="执行工作台" description="以 Agent Schema 构造输入，统一查看同步、流式和异步执行的 Trace 与产物。">
       <template #actions>
         <NButton @click="router.push({ name: 'agent-detail', params: { id: agentId } })">
-          <template #icon><NIcon :component="ArrowLeft" /></template>返回详情
+          <template #icon><NIcon :component="ArrowLeft" /></template>返回 Agent
         </NButton>
       </template>
     </PageHeader>
 
-    <div v-if="agentStore.error || executionStore.error" class="error-panel" style="margin-bottom: 16px">
-      {{ agentStore.error || executionStore.error }}
-    </div>
+    <section class="surface execution-studio-header">
+      <div class="execution-agent-identity">
+        <div>
+          <div class="execution-agent-title"><h2>{{ agent?.name || agentId }}</h2><StatusTag v-if="agent" :status="agent.status" /></div>
+          <p>{{ agent?.description || '当前 Agent 没有说明。' }}</p>
+        </div>
+      </div>
+      <dl class="execution-agent-meta">
+        <div><dt>模型</dt><dd class="mono">{{ agent?.model || '--' }}</dd></div>
+        <div><dt>适配器</dt><dd>{{ agent?.model_adapter || '--' }}</dd></div>
+        <div><dt>Schema</dt><dd class="mono">{{ schemaVersion }}</dd></div>
+        <div><dt>当前版本</dt><dd class="mono">{{ currentVersion?.version || '--' }}</dd></div>
+      </dl>
+    </section>
 
-    <div class="playground-layout">
-      <section class="surface playground-input">
-        <div class="section-heading"><div><h2>任务输入</h2><p>调用 `POST /api/agents/{id}/run`</p></div></div>
+    <div v-if="localError || agentStore.error" class="error-panel execution-page-error">{{ localError || agentStore.error }}</div>
+
+    <div class="execution-studio-grid">
+      <section class="surface execution-input-panel">
+        <div class="section-heading"><div><h2>输入</h2><p>任务与 Schema 参数分开传递</p></div></div>
         <NForm label-placement="top" @submit.prevent="submitRun">
-          <NFormItem label="Session ID">
-            <NInput v-model:value="sessionId" maxlength="128" placeholder="default" :disabled="executionStore.running" />
+          <NFormItem label="自然语言任务" required>
+            <NInput v-model:value="task" type="textarea" :rows="6" maxlength="100000" show-count placeholder="描述需要 Agent 完成的任务" :disabled="executionStore.running" />
           </NFormItem>
-          <NFormItem label="响应模式">
-            <NSelect v-model:value="responseMode" :disabled="executionStore.running" :options="[{ label: 'Sync JSON（等待完整结果）', value: 'sync' }, { label: 'SSE Stream（实时 token / trace / tool）', value: 'stream' }]" />
-          </NFormItem>
-          <NFormItem label="任务内容">
-            <NInput v-model:value="input" type="textarea" :rows="11" maxlength="100000" show-count placeholder="描述需要 Agent 完成的企业任务" :disabled="executionStore.running" />
-          </NFormItem>
-          <NAlert v-if="agentStore.currentAgent?.status !== 'active'" type="warning" :bordered="false">
-            当前 Agent 状态为 {{ agentStore.currentAgent?.status }}，后端只允许 active Agent 执行。
-          </NAlert>
-          <div class="playground-actions">
-            <span class="muted" style="font-size: 11px">{{ responseMode === 'stream' ? 'SSE 会实时显示 Hermes 增量事件' : '同步请求最长可能等待 300 秒' }}</span>
-            <NButton type="primary" attr-type="submit" :loading="executionStore.running" :disabled="agentStore.currentAgent?.status !== 'active'">
-              <template #icon><NIcon :component="PlayerPlay" /></template>{{ executionStore.running ? (responseMode === 'stream' ? '正在流式执行' : '等待执行完成') : '运行 Agent' }}
+
+          <div class="subsection-title">Schema 参数</div>
+          <SchemaForm
+            :schema="agent?.input_schema || {}"
+            :values="parameters"
+            :errors="parameterErrors"
+            :disabled="executionStore.running"
+            @update:values="parameters = $event"
+          />
+
+          <NCollapse class="execution-advanced">
+            <NCollapseItem title="高级配置" name="advanced">
+              <template #header-extra><NIcon :component="Settings" /></template>
+              <NFormItem label="Session ID"><NInput v-model:value="sessionId" maxlength="128" :disabled="executionStore.running" /></NFormItem>
+              <NFormItem label="执行模式">
+                <NSelect v-model:value="mode" :disabled="executionStore.running" :options="[
+                  { label: 'Sync 同步', value: 'sync' },
+                  { label: 'Stream 流式', value: 'stream' },
+                  { label: 'Async 异步队列', value: 'async' },
+                ]" />
+              </NFormItem>
+              <NFormItem v-if="mode === 'async'" label="优先级 0-9"><NInputNumber v-model:value="priority" :min="0" :max="9" /></NFormItem>
+              <NFormItem label="Temperature">
+                <NInputNumber v-model:value="temperature" :min="0" :max="2" :step="0.1" clearable placeholder="使用模型默认值" />
+              </NFormItem>
+            </NCollapseItem>
+          </NCollapse>
+
+          <NAlert v-if="agent && !executable" type="warning" :bordered="false">当前 Agent 状态为 {{ agent.status }}，只有测试中或已发布的 Agent 可执行。</NAlert>
+          <div class="execution-submit-row">
+            <span>{{ mode === 'async' ? '提交后由 Worker Pool 执行' : mode === 'stream' ? '实时接收 SSE 增量事件' : '等待完整响应后返回' }}</span>
+            <NButton type="primary" attr-type="submit" :loading="executionStore.running" :disabled="!executable">
+              <template #icon><NIcon :component="PlayerPlay" /></template>{{ mode === 'async' ? '提交任务' : '运行 Agent' }}
             </NButton>
           </div>
         </NForm>
       </section>
 
-      <section class="surface run-panel">
+      <section class="surface execution-trace-panel">
         <div class="section-heading">
-          <div><h2>执行结果</h2><p>最终结果和真实运行详情</p></div>
-          <StatusTag v-if="selectedRun" :status="selectedRun.status" />
+          <div><h2>Trace Timeline</h2><p>最终状态以 Execution Detail 为准</p></div>
+          <StatusTag v-if="execution" :status="execution.status" />
         </div>
+        <div v-if="executionStore.running && !execution" class="loading-stack"><div v-for="index in 5" :key="index" class="skeleton-line" /></div>
+        <ExecutionTimeline v-else :steps="execution?.steps || []" :active="isActive" />
+        <NCollapse v-if="executionStore.streamEvents.length" class="stream-event-log">
+          <NCollapseItem :title="`SSE 事件 ${executionStore.streamEvents.length}`" name="events">
+            <pre class="json-viewer">{{ formatJson(executionStore.streamEvents.filter((item) => item.event !== 'token' && item.event !== 'keepalive')) }}</pre>
+          </NCollapseItem>
+        </NCollapse>
+      </section>
 
-        <div v-if="executionStore.running && responseMode === 'sync'" class="empty-state">
-          <div>
-            <div class="empty-state-icon"><NIcon :component="Bolt" size="24" /></div>
-            <h3>后端正在同步执行</h3>
-            <p>同步模式将在响应完成后读取最终结果和 ExecutionLog。</p>
-            <div class="loading-stack" style="width: min(420px, 70vw); margin-top: 18px"><div class="skeleton-line" /><div class="skeleton-line" /></div>
-          </div>
+      <section class="surface execution-result-panel">
+        <div class="section-heading">
+          <div><h2>输出</h2><p v-if="execution" class="mono">{{ execution.id }}</p><p v-else>等待本次执行结果</p></div>
+          <NButton v-if="execution" text type="primary" @click="router.push({ name: 'execution-detail', params: { id: execution.id } })">打开详情</NButton>
         </div>
-        <div v-else-if="responseMode === 'stream' && (executionStore.running || executionStore.streamEvents.length)">
-          <NAlert v-if="executionStore.error" type="error" :title="executionStore.error" style="margin-bottom: 14px" />
-          <pre v-if="executionStore.streamedOutput" class="result-output">{{ executionStore.streamedOutput }}</pre>
-          <div v-else class="loading-stack"><div class="skeleton-line" /><div class="skeleton-line" /></div>
-          <div class="section-heading" style="margin-top: 22px"><div><h2>实时事件</h2><p>已接收 {{ executionStore.streamEvents.length }} 个 SSE 事件</p></div></div>
-          <div class="tool-call-list">
-            <article v-for="(event, index) in executionStore.streamEvents.filter((item) => item.event !== 'token' && item.event !== 'keepalive')" :key="index" class="tool-call">
-              <div class="tool-call-head"><h4>{{ event.event }} · {{ event.type || '' }}</h4></div>
-              <pre>{{ formatJson(event) }}</pre>
-            </article>
-          </div>
-        </div>
-        <div v-else-if="selectedRun">
-          <NAlert v-if="selectedRun.error" type="error" :title="selectedRun.error" style="margin-bottom: 14px" />
-          <pre v-if="selectedRun.output" class="result-output">{{ selectedRun.output }}</pre>
-          <div v-else class="empty-state empty-state-compact"><div><h3>本次执行没有输出</h3><p>请查看错误信息和后端运行详情。</p></div></div>
-
-          <div class="trace-grid">
-            <div class="trace-step"><strong>技能加载</strong>{{ selectedRun.details.skills_loaded?.length || 0 }} 项</div>
-            <div class="trace-step"><strong>MCP 加载</strong>{{ selectedRun.details.mcp_loaded?.length || 0 }} 项</div>
-            <div class="trace-step"><strong>知识召回</strong>{{ selectedRun.details.knowledge_hits?.length || 0 }} 条</div>
-            <div class="trace-step"><strong>会话历史</strong>{{ selectedRun.details.memory_scope?.history_messages_loaded || 0 }} 条</div>
-          </div>
-
-          <div class="section-heading" style="margin-top: 22px">
-            <div><h2>MCP 调用</h2><p>来自 `details.mcp_calls`，共 {{ toolCalls.length }} 次</p></div>
-            <NIcon :component="Tool" size="19" class="muted" />
-          </div>
-          <div v-if="toolCalls.length" class="tool-call-list">
-            <article v-for="(call, index) in toolCalls" :key="`${call.tool}-${index}`" class="tool-call">
-              <div class="tool-call-head"><h4>{{ call.tool || 'unknown tool' }}</h4><StatusTag :status="call.status || 'failed'" /></div>
-              <pre>{{ formatJson({ mcp_id: call.mcp_id, input: call.input, result: call.result }) }}</pre>
-            </article>
-          </div>
-          <p v-else class="muted" style="font-size: 12px">本次执行没有记录 MCP 调用。</p>
-
-          <NCollapse style="margin-top: 20px">
-            <NCollapseItem title="查看完整执行详情" name="details">
-              <pre class="prompt-block mono" style="font-size: 10px">{{ formatJson(selectedRun.details) }}</pre>
-            </NCollapseItem>
-          </NCollapse>
-        </div>
-        <div v-else class="empty-state">
-          <div>
-            <div class="empty-state-icon"><NIcon :component="Bolt" size="24" /></div>
-            <h3>等待执行任务</h3>
-            <p>左侧提交任务后，这里会显示后端响应及对应的运行记录。</p>
-          </div>
-        </div>
+        <RuntimeMetrics
+          :duration-ms="execution?.duration_ms"
+          :token-usage="execution?.token_usage"
+          :skill-count="execution?.skill_count"
+          :mcp-call-count="execution?.mcp_call_count"
+          :memory-read-count="execution?.memory_read_count"
+          :artifact-count="execution?.artifact_count"
+        />
+        <NAlert v-if="execution?.error" type="error" :title="execution.error" class="execution-result-error" />
+        <NAlert v-if="submittedTask" type="info" :bordered="false" class="execution-result-error">异步任务 {{ submittedTask.id }} 已创建，Execution 状态会由 Worker 更新。</NAlert>
+        <ResultViewer
+          :output="visibleOutput"
+          :output-json="execution?.output_json"
+          :artifacts="execution?.artifacts || []"
+          :steps="execution?.steps || []"
+          :details="execution?.details"
+          :active="isActive"
+        />
       </section>
     </div>
-
-    <section class="surface panel run-history">
-      <div class="section-heading"><div><h2>运行历史</h2><p>来自 `GET /api/agents/{id}/runs`</p></div><NIcon :component="History" class="muted" /></div>
-      <div v-if="executionStore.loading" class="loading-stack"><div v-for="index in 3" :key="index" class="skeleton-line" /></div>
-      <div v-else-if="executionStore.runs.length">
-        <div v-for="run in executionStore.runs" :key="run.id" class="history-row" :style="selectedRun?.id === run.id ? { background: '#eef4f0' } : undefined" @click="executionStore.selectRun(run)">
-          <StatusTag :status="run.status" />
-          <div class="history-input truncate">{{ truncate(run.input, 120) }}</div>
-          <div class="muted" style="font-size: 10px">{{ formatDuration(run.started_at, run.finished_at) }}</div>
-          <div class="muted" style="font-size: 10px">{{ formatDate(run.started_at) }}</div>
-        </div>
-      </div>
-      <div v-else class="empty-state empty-state-compact"><div><p>暂无运行记录。</p></div></div>
-    </section>
   </div>
 </template>

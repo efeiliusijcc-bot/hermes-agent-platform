@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { NIcon, useDialog, useMessage } from 'naive-ui'
 import { Database, Files, Plus, PlugConnected, Search } from '@vicons/tabler'
 
@@ -9,15 +9,25 @@ import { platformApi } from '@/api/platform'
 import { useResourceStore } from '@/stores/resources'
 import { formatDate } from '@/utils/format'
 import type { MCPServer } from '@/types/api'
+import type { Agent, ExecutionSummary } from '@/types/api'
+import { useRoute, useRouter } from 'vue-router'
 
 const resourceStore = useResourceStore()
 const message = useMessage()
 const dialog = useDialog()
+const route = useRoute()
+const router = useRouter()
 const query = ref('')
 const showCreate = ref(false)
 const saving = ref(false)
 const testingId = ref<string | null>(null)
 const editingId = ref<string | null>(null)
+const selectedId = ref<string | null>(null)
+const detailTab = ref<'endpoint' | 'tools' | 'agents' | 'logs'>('endpoint')
+const boundAgents = ref<Agent[]>([])
+const relatedExecutions = ref<ExecutionSummary[]>([])
+const detailLoading = ref(false)
+const selected = computed(() => resourceStore.mcpServers.find((item) => item.id === selectedId.value) || null)
 const form = reactive({ id: '', name: '', kind: 'filesystem' as 'filesystem' | 'database', endpoint: 'http://mcp-gateway:8090/mcp' })
 const filtered = computed(() => {
   const keyword = query.value.trim().toLowerCase()
@@ -65,7 +75,43 @@ function remove(server: MCPServer) {
   } })
 }
 
-onMounted(() => resourceStore.fetchAll().catch(() => undefined))
+async function openDetail(server: MCPServer) {
+  selectedId.value = server.id
+  detailTab.value = 'endpoint'
+  await router.replace({ name: 'mcp-detail', params: { id: server.id } })
+  detailLoading.value = true
+  try {
+    const agents = await platformApi.listAgents()
+    const bindings = await Promise.allSettled(agents.map((agent) => platformApi.listAgentMCPServers(agent.id)))
+    boundAgents.value = agents.filter((_agent, index) => {
+      const result = bindings[index]
+      return result?.status === 'fulfilled' && result.value.some((item) => item.id === server.id)
+    })
+    const executionResults = await Promise.allSettled(boundAgents.value.map((agent) => platformApi.listExecutions({ agent_id: agent.id, limit: 20 })))
+    relatedExecutions.value = executionResults.flatMap((result) => result.status === 'fulfilled'
+      ? result.value.items.filter((item) => item.mcp_call_count > 0) : [])
+      .sort((left, right) => new Date(right.started_at).valueOf() - new Date(left.started_at).valueOf())
+  } finally { detailLoading.value = false }
+}
+
+function closeDetail(show: boolean) {
+  if (show) return
+  selectedId.value = null
+  boundAgents.value = []
+  relatedExecutions.value = []
+  router.replace({ name: 'mcps' })
+}
+
+onMounted(async () => {
+  await resourceStore.fetchAll().catch(() => undefined)
+  const id = String(route.params.id || '')
+  const server = resourceStore.mcpServers.find((item) => item.id === id)
+  if (server) await openDetail(server)
+})
+watch(() => route.params.id, (id) => {
+  const server = resourceStore.mcpServers.find((item) => item.id === String(id || ''))
+  if (server && server.id !== selectedId.value) openDetail(server)
+})
 </script>
 
 <template>
@@ -78,13 +124,23 @@ onMounted(() => resourceStore.fetchAll().catch(() => undefined))
     <section class="surface resource-list">
       <div v-if="resourceStore.loading" class="loading-stack" style="padding: 18px"><div v-for="index in 4" :key="index" class="skeleton-line" /></div>
       <div v-else-if="filtered.length === 0" class="empty-state"><div><div class="empty-state-icon"><NIcon :component="PlugConnected" size="24" /></div><h3>暂无 MCP</h3><p>创建平台网关下的只读能力。</p></div></div>
-      <article v-for="server in filtered" v-else :key="server.id" class="resource-row">
+      <article v-for="server in filtered" v-else :key="server.id" class="resource-row resource-row-clickable" @click="openDetail(server)">
         <span class="resource-icon"><NIcon :component="server.config.kind === 'database' ? Database : Files" size="19" /></span>
         <div class="resource-main"><strong>{{ server.name }}</strong><span class="mono">{{ server.id }}</span></div>
-        <div class="resource-description truncate"><span class="mono">{{ server.endpoint }}</span><br /><span class="muted">{{ formatDate(server.updated_at) }}</span></div>
-        <div class="resource-meta resource-actions"><NTag size="small" :type="server.status === 'online' ? 'success' : server.status === 'offline' ? 'error' : 'default'" :bordered="false">{{ server.status }}</NTag><NButton size="tiny" @click="edit(server)">编辑</NButton><NButton size="tiny" :loading="testingId === server.id" @click="test(server)">测试</NButton><NButton size="tiny" type="error" text @click="remove(server)">删除</NButton></div>
+        <div class="resource-description truncate"><span class="mono">{{ server.endpoint }}</span><br /><span class="muted">Type {{ server.config.kind }} · Tools 未暴露 · {{ formatDate(server.updated_at) }}</span></div>
+        <div class="resource-meta resource-actions"><NTag size="small" :type="server.status === 'online' ? 'success' : server.status === 'offline' ? 'error' : 'default'" :bordered="false">{{ server.status }}</NTag><NTag size="small" :bordered="false">{{ server.permission }}</NTag><NButton size="tiny" @click.stop="edit(server)">编辑</NButton><NButton size="tiny" :loading="testingId === server.id" @click.stop="test(server)">测试</NButton><NButton size="tiny" type="error" text @click.stop="remove(server)">删除</NButton></div>
       </article>
     </section>
+
+    <NModal :show="selected !== null" preset="card" style="width: min(860px, 94vw)" title="MCP 详情" @update:show="closeDetail">
+      <template v-if="selected">
+        <nav class="detail-tabs modal-tabs"><button v-for="tab in [{key:'endpoint',label:'Endpoint'},{key:'tools',label:'Tools'},{key:'agents',label:'Agents'},{key:'logs',label:'Logs'}]" :key="tab.key" type="button" :class="{ active: detailTab === tab.key }" @click="detailTab = tab.key as typeof detailTab">{{ tab.label }}</button></nav>
+        <dl v-if="detailTab === 'endpoint'" class="execution-definition-list"><div><dt>ID</dt><dd class="mono">{{ selected.id }}</dd></div><div><dt>Endpoint</dt><dd class="mono">{{ selected.endpoint }}</dd></div><div><dt>Type</dt><dd>{{ selected.config.kind }}</dd></div><div><dt>Permission</dt><dd>{{ selected.permission }}</dd></div><div><dt>Status</dt><dd>{{ selected.status }}</dd></div><div><dt>Updated</dt><dd>{{ formatDate(selected.updated_at) }}</dd></div></dl>
+        <template v-else-if="detailTab === 'tools'"><NAlert type="info" :bordered="false" style="margin-bottom:14px">现有 MCP Registry API 返回能力类型，不返回远端 tools/list 结果。</NAlert><div class="unavailable-panel"><strong>{{ selected.config.kind }}</strong><span>工具清单需要后端新增受控发现接口后展示；当前权限固定为 read_only。</span></div></template>
+        <div v-else-if="detailTab === 'agents'"><div v-if="detailLoading" class="loading-stack"><div v-for="index in 3" :key="index" class="skeleton-line" /></div><div v-else-if="boundAgents.length" class="selection-list"><div v-for="agent in boundAgents" :key="agent.id"><strong>{{ agent.name }}</strong><span class="mono">{{ agent.id }}</span></div></div><div v-else class="unavailable-panel"><strong>没有 Agent 绑定此 MCP</strong><span>已按当前绑定接口逐项核对。</span></div></div>
+        <div v-else><NAlert type="info" :bordered="false" style="margin-bottom:14px">当前只能按 Execution 关联 MCP 调用；选择记录后进入 Trace Center 查看调用节点。</NAlert><div v-if="detailLoading" class="loading-stack"><div v-for="index in 3" :key="index" class="skeleton-line" /></div><div v-else-if="relatedExecutions.length" class="agent-log-list"><button v-for="item in relatedExecutions.slice(0,20)" :key="item.id" type="button" @click="router.push({name:'trace-detail',params:{id:item.id}})"><span class="mono">{{ item.id }}</span><span>{{ item.agent_name }}</span><span>{{ item.mcp_call_count }} MCP</span><time>{{ formatDate(item.started_at) }}</time></button></div><div v-else class="unavailable-panel"><strong>没有可关联的 MCP 调用记录</strong><span>Execution 只记录调用数量，当前不能精确反查到某个 MCP ID。</span></div></div>
+      </template>
+    </NModal>
 
     <NModal v-model:show="showCreate" preset="card" style="width: min(560px, 92vw)" :title="editingId ? '编辑 MCP' : '创建 MCP'">
       <NForm label-placement="top" @submit.prevent="create">

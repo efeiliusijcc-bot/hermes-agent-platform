@@ -2,11 +2,14 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.prompting import validate_prompt_template
 from app.schemas.schema_validation import normalize_schema
 
 ResponseMode = Literal["sync", "stream"]
+ModelAdapterName = Literal["hermes", "qwen", "deepseek", "gpt", "claude"]
+AgentLifecycle = Literal["active", "inactive", "archived"]
 
 
 class AgentCreate(BaseModel):
@@ -18,15 +21,36 @@ class AgentCreate(BaseModel):
     role: str = Field(min_length=1)
     system_prompt: str = Field(min_length=1)
     model_settings: dict[str, Any] = Field(default_factory=dict, alias="model_config")
-    status: Literal["draft", "active", "disabled"] = "draft"
+    model: str = Field(default="hermes-agent", min_length=1, max_length=255)
+    prompt_template: str = Field(default="{{input}}", min_length=1, max_length=100_000)
+    model_adapter: ModelAdapterName = "hermes"
+    status: AgentLifecycle = "active"
     response_mode: ResponseMode = "sync"
     input_schema: dict[str, Any] = Field(default_factory=dict)
     output_schema: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_legacy_status(cls, value: Any) -> Any:
+        # Compatibility is intentionally confined to input parsing; persisted
+        # rows always use the v1 business lifecycle.
+        return {
+            "draft": "active",
+            "testing": "active",
+            "published": "active",
+            "suspended": "inactive",
+            "disabled": "inactive",
+        }.get(value, value)
 
     @field_validator("input_schema", "output_schema")
     @classmethod
     def validate_schema(cls, value: dict[str, Any]) -> dict[str, Any]:
         return normalize_schema(value)
+
+    @model_validator(mode="after")
+    def validate_template_contract(self) -> "AgentCreate":
+        validate_prompt_template(self.prompt_template, self.input_schema)
+        return self
 
 
 class AgentSchemaUpdate(BaseModel):
@@ -43,6 +67,16 @@ class AgentResponseModeUpdate(BaseModel):
     response_mode: ResponseMode
 
 
+class AgentConfigurationUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    system_prompt: str = Field(min_length=1, max_length=100_000)
+    model: str = Field(min_length=1, max_length=255)
+    prompt_template: str = Field(min_length=1, max_length=100_000)
+    model_adapter: ModelAdapterName
+    model_settings: dict[str, Any] = Field(default_factory=dict, alias="model_config")
+
+
 class AgentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -55,10 +89,15 @@ class AgentRead(BaseModel):
         validation_alias="model_settings",
         serialization_alias="model_config",
     )
-    status: Literal["draft", "active", "disabled"]
+    model: str
+    prompt_template: str
+    model_adapter: ModelAdapterName
+    api_enabled: bool
+    status: AgentLifecycle
     response_mode: ResponseMode
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
+    current_version_id: UUID | None
     created_at: datetime
     updated_at: datetime
 
@@ -66,6 +105,8 @@ class AgentRead(BaseModel):
 class AgentRunRequest(BaseModel):
     input: str = Field(min_length=1, max_length=100_000)
     session_id: str = Field(default="default", pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+    parameters: dict[str, Any] | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
 
 
 class AgentRunResponse(BaseModel):
@@ -82,10 +123,19 @@ class ExecutionLogRead(BaseModel):
 
     id: UUID
     agent_id: str
-    status: Literal["running", "succeeded", "failed"]
+    session_id: UUID | None
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     input: str
+    input_json: dict[str, Any]
     output: str | None
+    output_json: Any | None
     error: str | None
     details: dict[str, Any]
+    response_mode: Literal["sync", "stream", "async"]
+    priority: int | None
+    duration_ms: int | None
+    token_usage: int | None
+    retry_of_execution_id: UUID | None
+    agent_version_id: UUID | None
     started_at: datetime
     finished_at: datetime | None

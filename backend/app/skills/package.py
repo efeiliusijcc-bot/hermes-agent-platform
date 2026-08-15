@@ -181,7 +181,8 @@ class SkillPackageImporter:
         raw_name = manifest.get("display_name", manifest.get("name"))
         raw_version = manifest.get("version")
         raw_description = manifest.get("description")
-        raw_entry = manifest.get("entry", "SKILL.md")
+        raw_entry_value = manifest.get("entry", "SKILL.md")
+        raw_entry = raw_entry_value.get("file") if isinstance(raw_entry_value, dict) else raw_entry_value
         if not isinstance(raw_id, str) or not SKILL_ID.fullmatch(raw_id):
             raise SkillLoadError("skill.yaml id/name must be a lowercase hyphenated identifier")
         if not isinstance(raw_name, str) or not raw_name.strip() or len(raw_name) > 255:

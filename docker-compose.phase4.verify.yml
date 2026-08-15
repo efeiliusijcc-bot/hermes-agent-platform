@@ -1,0 +1,111 @@
+name: hermes-agent-phase4-verify
+
+services:
+  phase4-data-init:
+    image: hermes-agent-phase4-verify/agent-api:v4
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        chown -R 10002:${WORKSPACE_SHARED_GID:-10003} /data/workspaces /data/artifacts &&
+        chmod 2770 /data/workspaces /data/artifacts
+    volumes:
+      - phase4-workspaces:/data/workspaces
+      - phase4-artifacts:/data/artifacts
+    network_mode: none
+    restart: "no"
+
+  frontend:
+    image: hermes-agent-phase4-verify/frontend:v4
+    ports: !override
+      - "127.0.0.1:${PHASE4_FRONTEND_PORT:-38489}:8080"
+
+  agent-api:
+    image: hermes-agent-phase4-verify/agent-api:v4
+    depends_on:
+      phase4-data-init:
+        condition: service_completed_successfully
+    ports: !override
+      - "127.0.0.1:${PHASE4_API_PORT:-38488}:8000"
+    volumes:
+      - ./skills:/app/skills
+      - phase4-workspaces:/data/workspaces
+      - phase4-artifacts:/data/artifacts
+
+  agent-worker:
+    image: hermes-agent-phase4-verify/agent-api:v4
+    depends_on:
+      phase4-data-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./skills:/app/skills:ro
+      - phase4-workspaces:/data/workspaces
+      - phase4-artifacts:/data/artifacts
+
+  model-gateway:
+    image: hermes-agent-phase4-verify/agent-api:v4
+    depends_on:
+      model-stub:
+        condition: service_healthy
+    environment:
+      MODEL_ENDPOINT: http://model-stub:8090/v1
+      MODEL_API_KEY: phase4-contract-model-key
+      MODEL_NAME: phase4-contract-model
+      MODEL_MAX_CONCURRENCY: 2
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:?MODEL_GATEWAY_API_KEY is required}
+
+  model-stub:
+    profiles: !override []
+    image: hermes-agent-phase4-verify/agent-api:v4
+
+  hermes-init:
+    volumes:
+      - phase4-hermes:/opt/data
+      - ./docker/hermes-init.py:/opt/bootstrap/hermes-init.py:ro
+
+  hermes-runtime:
+    volumes:
+      - phase4-hermes:/opt/data
+
+  mcp-gateway:
+    image: hermes-agent-phase4-verify/mcp-gateway:v4
+    volumes:
+      - phase4-mcp-files:/data/files:ro
+
+  knowledge-service:
+    image: hermes-agent-phase4-verify/knowledge-service:v4
+
+  postgres:
+    volumes:
+      - phase4-postgres:/var/lib/postgresql/data
+      - ./services/postgres/init:/docker-entrypoint-initdb.d:ro
+
+  redis:
+    volumes:
+      - phase4-redis:/data
+
+  minio:
+    volumes:
+      - phase4-minio:/data
+
+networks:
+  platform-internal:
+    name: hermes-agent-phase4-verify-internal
+  platform-edge:
+    name: hermes-agent-phase4-verify-edge
+
+volumes:
+  phase4-postgres:
+    name: hermes-agent-phase4-verify-postgres
+  phase4-redis:
+    name: hermes-agent-phase4-verify-redis
+  phase4-minio:
+    name: hermes-agent-phase4-verify-minio
+  phase4-hermes:
+    name: hermes-agent-phase4-verify-hermes
+  phase4-workspaces:
+    name: hermes-agent-phase4-verify-workspaces
+  phase4-artifacts:
+    name: hermes-agent-phase4-verify-artifacts
+  phase4-mcp-files:
+    name: hermes-agent-phase4-verify-mcp-files

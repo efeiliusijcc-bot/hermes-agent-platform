@@ -20,6 +20,7 @@ class HermesRunResult:
     output: str
     run_id: str | None
     status: str
+    token_usage: int | None = None
 
 
 class HermesClient:
@@ -34,9 +35,25 @@ class HermesClient:
         self.timeout = settings.hermes_timeout_seconds
         self.poll_interval = settings.hermes_poll_interval_seconds
 
-    async def run(self, *, prompt: str, agent_id: str, execution_id: str) -> HermesRunResult:
+    async def run(
+        self,
+        *,
+        prompt: str,
+        agent_id: str,
+        execution_id: str,
+        requested_model: str | None = None,
+        model_adapter: str = "hermes",
+        runtime_options: dict[str, Any] | None = None,
+    ) -> HermesRunResult:
         headers = self._headers()
-        payload = self._payload(prompt=prompt, agent_id=agent_id, execution_id=execution_id)
+        payload = self._payload(
+            prompt=prompt,
+            agent_id=agent_id,
+            execution_id=execution_id,
+            requested_model=requested_model,
+            model_adapter=model_adapter,
+            runtime_options=runtime_options,
+        )
         timeout = httpx.Timeout(self.timeout + 10, connect=10)
         async with httpx.AsyncClient(timeout=timeout) as client:
             created = await self._request_json(client, "POST", self.runs_url, headers=headers, json=payload)
@@ -44,7 +61,12 @@ class HermesClient:
             status = self._extract_status(created)
             run_id = self._extract_id(created)
             if immediate_output and (not run_id or status in self.successful_statuses):
-                return HermesRunResult(output=immediate_output, run_id=run_id, status=status or "completed")
+                return HermesRunResult(
+                    output=immediate_output,
+                    run_id=run_id,
+                    status=status or "completed",
+                    token_usage=self._extract_token_usage(created),
+                )
             if not run_id:
                 raise HermesRuntimeError("Hermes did not return a run id or final output")
 
@@ -61,7 +83,12 @@ class HermesClient:
                 status = self._extract_status(run)
                 output = self._extract_output(run)
                 if status in self.successful_statuses and output:
-                    return HermesRunResult(output=output, run_id=run_id, status=status)
+                    return HermesRunResult(
+                        output=output,
+                        run_id=run_id,
+                        status=status,
+                        token_usage=self._extract_token_usage(run),
+                    )
                 if status in self.terminal_statuses and status not in self.successful_statuses:
                     error = self._extract_error(run)
                     raise HermesRuntimeError(f"Hermes run ended with status {status}: {error}")
@@ -73,10 +100,20 @@ class HermesClient:
         prompt: str,
         agent_id: str,
         execution_id: str,
+        requested_model: str | None = None,
+        model_adapter: str = "hermes",
+        runtime_options: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Yield Hermes' native structured run events, including real message deltas."""
         headers = self._headers()
-        payload = self._payload(prompt=prompt, agent_id=agent_id, execution_id=execution_id)
+        payload = self._payload(
+            prompt=prompt,
+            agent_id=agent_id,
+            execution_id=execution_id,
+            requested_model=requested_model,
+            model_adapter=model_adapter,
+            runtime_options=runtime_options,
+        )
         timeout = httpx.Timeout(self.timeout + 10, connect=10)
         async with httpx.AsyncClient(timeout=timeout) as client:
             created = await self._request_json(client, "POST", self.runs_url, headers=headers, json=payload)
@@ -84,12 +121,15 @@ class HermesClient:
             immediate_output = self._extract_output(created)
             created_status = self._extract_status(created)
             if immediate_output and (not run_id or created_status in self.successful_statuses):
-                yield {
+                event: dict[str, Any] = {
                     "event": "run.completed",
                     "run_id": run_id,
                     "output": immediate_output,
                     "status": created_status or "completed",
                 }
+                if isinstance(created.get("usage"), dict):
+                    event["usage"] = created["usage"]
+                yield event
                 return
             if not run_id:
                 raise HermesRuntimeError("Hermes did not return a run id or final output")
@@ -147,12 +187,15 @@ class HermesClient:
             final = await self._request_json(client, "GET", f"{self.runs_url}/{run_id}", headers=headers)
             final_status = self._extract_status(final)
             if final_status in self.successful_statuses:
-                yield {
+                event = {
                     "event": "run.completed",
                     "run_id": run_id,
                     "output": self._extract_output(final),
                     "status": final_status,
                 }
+                if isinstance(final.get("usage"), dict):
+                    event["usage"] = final["usage"]
+                yield event
                 return
             raise HermesRuntimeError(
                 f"Hermes event stream ended with status {final_status or 'unknown'}: {self._extract_error(final)}"
@@ -161,14 +204,26 @@ class HermesClient:
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
-    def _payload(self, *, prompt: str, agent_id: str, execution_id: str) -> dict[str, Any]:
+    def _payload(
+        self,
+        *,
+        prompt: str,
+        agent_id: str,
+        execution_id: str,
+        requested_model: str | None = None,
+        model_adapter: str = "hermes",
+        runtime_options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         return {
-            "model": self.model,
+            "model": requested_model or self.model,
             "input": prompt,
             "metadata": {
                 "agent_id": agent_id,
                 "execution_id": execution_id,
                 "source": "hermes-agent-platform",
+                "requested_model": requested_model or self.model,
+                "model_adapter": model_adapter,
+                "runtime_options": runtime_options or {},
             },
         }
 
@@ -198,6 +253,17 @@ class HermesClient:
     def _extract_status(payload: dict[str, Any]) -> str:
         value = payload.get("status") or payload.get("state") or ""
         return str(value).lower()
+
+    @staticmethod
+    def _extract_token_usage(payload: dict[str, Any]) -> int | None:
+        """Read only the Runtime's explicit aggregate token observation."""
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return None
+        value = usage.get("total_tokens")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        return value
 
     @classmethod
     def _extract_output(cls, payload: dict[str, Any]) -> str:

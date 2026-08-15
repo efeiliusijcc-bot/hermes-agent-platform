@@ -1,7 +1,12 @@
-export type AgentStatus = 'draft' | 'active' | 'disabled'
-export type ExecutionStatus = 'running' | 'succeeded' | 'failed'
-export type PublicationStatus = 'draft' | 'testing' | 'published' | 'disabled'
+export type AgentLifecycleStatus = 'active' | 'inactive' | 'archived'
+export type LegacyAgentStatus = 'draft' | 'testing' | 'published' | 'suspended' | 'disabled'
+export type AgentStatus = AgentLifecycleStatus | LegacyAgentStatus
+export type ExecutionStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type TaskStatus = 'pending' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'cancelled'
+export type SessionStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 export type ResponseMode = 'sync' | 'stream'
+export type ModelAdapterName = 'hermes' | 'qwen' | 'deepseek' | 'gpt' | 'claude'
+export type LifecycleStatus = 'draft' | 'testing' | 'published' | 'deprecated' | 'disabled'
 
 export interface Agent {
   id: string
@@ -10,10 +15,15 @@ export interface Agent {
   role: string
   system_prompt: string
   model_config: Record<string, unknown>
+  model: string
+  prompt_template: string
+  model_adapter: ModelAdapterName
+  api_enabled: boolean
   status: AgentStatus
   response_mode: ResponseMode
   input_schema: Record<string, unknown>
   output_schema: Record<string, unknown>
+  current_version_id: string | null
   created_at: string
   updated_at: string
 }
@@ -25,7 +35,10 @@ export interface AgentCreatePayload {
   role: string
   system_prompt: string
   model_config: Record<string, unknown>
-  status: AgentStatus
+  model?: string
+  prompt_template?: string
+  model_adapter?: ModelAdapterName
+  status: AgentLifecycleStatus
   response_mode?: ResponseMode
   input_schema?: Record<string, unknown>
   output_schema?: Record<string, unknown>
@@ -34,6 +47,64 @@ export interface AgentCreatePayload {
 export interface AgentRunPayload {
   input: string
   session_id: string
+  parameters?: Record<string, unknown>
+  temperature?: number | null
+}
+
+export interface AgentTaskSubmitPayload extends AgentRunPayload {
+  priority: number
+  user_id?: string | null
+}
+
+export interface AgentTask {
+  id: string
+  agent_id: string
+  session_id: string
+  execution_id: string | null
+  priority: number
+  status: TaskStatus
+  attempt: number
+  max_attempts: number
+  worker_id: string | null
+  error: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface AgentSession {
+  id: string
+  agent_id: string
+  user_id: string | null
+  memory_session_id: string
+  status: SessionStatus
+  input: string
+  output: string | null
+  workspace_path: string
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface Artifact {
+  id: string
+  agent_id: string
+  session_id: string
+  filename: string
+  storage_type: string
+  storage_path: string
+  content_type: string
+  size_bytes: number
+  sha256: string
+  created_at: string
+}
+
+export interface AgentWorkspace {
+  agent_id: string
+  root: string
+  session_count: number
+  artifact_count: number
+  size_bytes: number
 }
 
 export interface AgentRunResponse {
@@ -76,13 +147,139 @@ export interface ExecutionDetails {
 export interface ExecutionLog {
   id: string
   agent_id: string
+  session_id: string | null
   status: ExecutionStatus
   input: string
+  input_json: ExecutionInput
   output: string | null
+  output_json: unknown | null
   error: string | null
   details: ExecutionDetails
+  response_mode: 'sync' | 'stream' | 'async'
+  priority: number | null
+  duration_ms: number | null
+  token_usage: number | null
+  retry_of_execution_id: string | null
+  agent_version_id: string | null
   started_at: string
   finished_at: string | null
+}
+
+export interface ExecutionInput {
+  task?: string
+  parameters?: Record<string, unknown>
+  runtime_options?: { temperature?: number }
+  [key: string]: unknown
+}
+
+export type ExecutionStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled'
+export type ExecutionStepType = 'request' | 'schema' | 'memory' | 'skill' | 'mcp' | 'knowledge' | 'model' | 'artifact' | 'runtime'
+
+export interface ExecutionStep {
+  id: string
+  execution_id: string
+  step_key: string
+  sequence: number
+  step_type: ExecutionStepType
+  step_name: string
+  status: ExecutionStepStatus
+  input_data: Record<string, unknown>
+  output_data: Record<string, unknown>
+  error: string | null
+  latency_ms: number | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+}
+
+export interface ExecutionMetrics {
+  total_executions: number
+  running: number
+  succeeded: number
+  failed: number
+  cancelled: number
+  success_rate: number | null
+}
+
+export interface ExecutionSummary {
+  id: string
+  agent_id: string
+  agent_name: string
+  session_id: string | null
+  memory_session_id: string | null
+  status: ExecutionStatus
+  task: string
+  response_mode: 'sync' | 'stream' | 'async'
+  priority: number | null
+  duration_ms: number | null
+  token_usage: number | null
+  skill_count: number
+  mcp_call_count: number
+  memory_read_count: number
+  artifact_count: number
+  trace_step_count: number
+  failed_step_count: number
+  model_call_count: number
+  retry_of_execution_id: string | null
+  agent_version_id: string | null
+  agent_version: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+export interface ExecutionList {
+  items: ExecutionSummary[]
+  total: number
+  limit: number
+  offset: number
+  metrics: ExecutionMetrics
+}
+
+export interface ExecutionDetail extends ExecutionSummary {
+  input: string
+  input_json: ExecutionInput
+  output: string | null
+  output_json: unknown | null
+  error: string | null
+  details: ExecutionDetails
+  model: string | null
+  model_adapter: string | null
+  schema_version: string | null
+  steps: ExecutionStep[]
+  artifacts: Artifact[]
+  queue_task: AgentTask | null
+}
+
+export interface TraceMetrics {
+  total_nodes: number
+  failed_nodes: number
+  skill_nodes: number
+  mcp_calls: number
+  model_calls: number
+  artifact_nodes: number
+  total_latency_ms: number
+  slowest_node_ms: number | null
+}
+
+export interface ExecutionTrace {
+  execution_id: string
+  agent_id: string
+  agent_name: string
+  agent_version_id: string | null
+  agent_version: string | null
+  session_id: string | null
+  memory_session_id: string | null
+  status: ExecutionStatus
+  model: string | null
+  model_adapter: string | null
+  token_usage: number | null
+  duration_ms: number | null
+  error: string | null
+  started_at: string
+  finished_at: string | null
+  nodes: ExecutionStep[]
+  artifacts: Artifact[]
+  metrics: TraceMetrics
 }
 
 export interface Skill {
@@ -127,21 +324,161 @@ export interface MCPServerTestResult {
   detail: string
 }
 
-export interface AgentPublication {
+export interface AgentSchemaVersion {
+  id: string
   agent_id: string
-  agent_name: string | null
-  status: PublicationStatus
-  response_mode: ResponseMode
+  version: string
+  input_schema: Record<string, unknown>
+  output_schema: Record<string, unknown>
+  status: LifecycleStatus
+  created_at: string
+  published_at: string | null
+}
+
+export interface AgentAPIVersion {
+  id: string
+  agent_id: string
+  api_version: string
+  schema_version_id: string
+  schema_version: AgentSchemaVersion
+  status: LifecycleStatus
   endpoint: string
-  api_key_prefix: string | null
+  created_at: string
+  published_at: string | null
+}
+
+export type APIClientStatus = 'active' | 'suspended' | 'revoked'
+export type APIKeyStatus = 'active' | 'revoked'
+export type AgentClientPermission = 'invoke'
+
+export interface APIClient {
+  id: string
+  name: string
+  owner: string
+  status: APIClientStatus
+  rate_limit_per_minute: number
+  key_count: number
+  agent_count: number
   call_count: number
   last_called_at: string | null
   created_at: string
   updated_at: string
 }
 
-export interface AgentPublicationSecret extends AgentPublication {
+export interface APIKey {
+  id: string
+  client_id: string
+  name: string
+  prefix: string
+  status: APIKeyStatus
+  call_count: number
+  last_used_at: string | null
+  expires_at: string | null
+  created_at: string
+  revoked_at: string | null
+}
+
+export interface APIKeySecret extends APIKey {
   api_key: string
+}
+
+export interface AgentAPIClientBinding {
+  client_id: string
+  agent_id: string
+  permission: AgentClientPermission
+  created_at: string
+}
+
+export type AgentHealthState = 'healthy' | 'degraded' | 'unhealthy' | 'unknown'
+
+export interface AgentHealthComponent {
+  status: AgentHealthState
+  detail: string
+}
+
+export interface AgentHealth {
+  agent_id: string
+  status: AgentHealthState
+  checks: Record<string, AgentHealthComponent>
+  checked_at: string
+}
+
+export interface AgentVersionSnapshot {
+  format_version?: number
+  prompt?: {
+    role?: string
+    system_prompt?: string
+    prompt_template?: string
+  }
+  model?: {
+    name?: string
+    adapter?: ModelAdapterName
+    config?: Record<string, unknown>
+  }
+  skill_ids?: string[]
+  mcp_ids?: string[]
+  schema?: {
+    version?: string | null
+    input_schema?: Record<string, unknown>
+    output_schema?: Record<string, unknown>
+  }
+  runtime?: { response_mode?: ResponseMode }
+  [key: string]: unknown
+}
+
+export interface AgentVersion {
+  id: string
+  agent_id: string
+  version: string
+  snapshot: AgentVersionSnapshot
+  status: 'development' | 'testing' | 'release_candidate' | 'published' | 'deprecated'
+  description: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+  published_at: string | null
+  deprecated_at: string | null
+}
+
+export interface AgentMetric {
+  agent_id: string
+  agent_name: string | null
+  call_count: number
+  success_count: number
+  failure_count: number
+  success_rate: number | null
+  average_latency_ms: number | null
+  token_usage: number | null
+  mcp_call_count: number
+  metric_date: string | null
+}
+
+export interface MetricsSummary {
+  agent_count: number
+  published_agent_count: number
+  call_count: number
+  success_count: number
+  failure_count: number
+  success_rate: number | null
+  error_rate: number | null
+  average_latency_ms: number | null
+  token_usage: number | null
+  mcp_call_count: number
+  updated_at: string | null
+}
+
+export interface AuditLog {
+  id: string
+  request_id: string
+  client_id: string | null
+  api_key_id: string | null
+  agent_id: string | null
+  status: 'succeeded' | 'failed' | 'rejected'
+  latency_ms: number
+  token_usage: number | null
+  mcp_call_count: number
+  error_code: string | null
+  created_at: string
 }
 
 export type AgentStreamEventName = 'start' | 'trace' | 'tool' | 'token' | 'end' | 'error' | 'keepalive'
@@ -166,6 +503,8 @@ export interface HealthStatus {
   database: string
   memory: string
   knowledge: string
+  queue: string
+  artifact_storage: string
 }
 
 export interface CreateAgentWorkflowPayload {

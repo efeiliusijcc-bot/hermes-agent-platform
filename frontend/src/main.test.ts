@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
+import { getCurrentInstance } from 'vue'
 
-vi.mock('./App.vue', () => ({ default: { template: '<div />' } }))
+let registeredComponents: string[] = []
+vi.mock('./App.vue', () => ({
+  default: {
+    setup() {
+      registeredComponents = Object.keys(getCurrentInstance()?.appContext.components || {})
+    },
+    template: '<div />',
+  },
+}))
 vi.mock('./router', () => ({ default: { install: vi.fn() } }))
 
 describe('application bootstrap', () => {
@@ -15,6 +24,9 @@ describe('application bootstrap', () => {
         String(message).includes('Failed to resolve component'),
       ),
     ).toBe(false)
+    expect(registeredComponents).toEqual(expect.arrayContaining(['NAlert', 'NButton', 'NInput']))
+    expect(registeredComponents).not.toContain('NInputNumber')
+    expect(registeredComponents).not.toContain('NDatePicker')
     expect(document.querySelector('#app > div')).not.toBeNull()
   })
 })

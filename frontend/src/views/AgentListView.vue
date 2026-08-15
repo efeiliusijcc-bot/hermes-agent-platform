@@ -2,20 +2,22 @@
 import { computed, onMounted, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import { NIcon } from 'naive-ui'
-import { Plus, Robot, Search, TestPipe } from '@vicons/tabler'
+import { Plus, Robot, Search } from '@vicons/tabler'
 import { useRouter } from 'vue-router'
 
 import PageHeader from '@/components/PageHeader.vue'
-import StatusTag from '@/components/StatusTag.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { useAgentStore } from '@/stores/agents'
-import { formatDate } from '@/utils/format'
+import AgentCard from '@/components/agent/AgentCard.vue'
+import { platformApi } from '@/api/platform'
+import type { MCPServer, Skill } from '@/types/api'
 
 const router = useRouter()
 const dialog = useDialog()
 const message = useMessage()
 const agentStore = useAgentStore()
 const query = ref('')
+const capabilityState = ref<Record<string, { skills?: Skill[] | null; mcps?: MCPServer[] | null; version?: string | null }>>({})
 
 const filteredAgents = computed(() => {
   const keyword = query.value.trim().toLowerCase()
@@ -42,7 +44,26 @@ function confirmDelete(agentId: string, agentName: string) {
   })
 }
 
-onMounted(() => agentStore.fetchAgents().catch(() => undefined))
+async function load() {
+  await agentStore.fetchAgents()
+  await Promise.all(agentStore.agents.map(async (agent) => {
+    capabilityState.value[agent.id] = {}
+    const [skills, mcps, versions] = await Promise.allSettled([
+      platformApi.listAgentSkills(agent.id),
+      platformApi.listAgentMCPServers(agent.id),
+      platformApi.listAgentVersions(agent.id),
+    ])
+    capabilityState.value[agent.id] = {
+      skills: skills.status === 'fulfilled' ? skills.value : null,
+      mcps: mcps.status === 'fulfilled' ? mcps.value : null,
+      version: versions.status === 'fulfilled'
+        ? (versions.value.find((item) => item.status === 'published')?.version || null)
+        : null,
+    }
+  }))
+}
+
+onMounted(() => load().catch(() => undefined))
 </script>
 
 <template>
@@ -76,27 +97,17 @@ onMounted(() => agentStore.fetchAgents().catch(() => undefined))
       </div>
     </div>
     <section v-else class="agent-grid">
-      <article v-for="agent in filteredAgents" :key="agent.id" class="agent-card surface">
-        <div class="agent-card-top">
-          <div>
-            <h2>{{ agent.name }}</h2>
-            <div class="agent-card-id mono">{{ agent.id }}</div>
-          </div>
-          <StatusTag :status="agent.status" />
-        </div>
-        <p class="agent-card-description">{{ agent.description || agent.role }}</p>
-        <div class="agent-card-meta">
-          <span>角色：{{ agent.role }}</span>
-          <span>创建：{{ formatDate(agent.created_at) }}</span>
-          <div class="agent-card-actions">
-            <NButton text size="small" @click="router.push({ name: 'agent-detail', params: { id: agent.id } })">详情</NButton>
-            <NButton text size="small" type="primary" :disabled="agent.status !== 'active'" @click="router.push({ name: 'agent-playground', params: { id: agent.id } })">
-              <template #icon><NIcon :component="TestPipe" /></template>测试
-            </NButton>
-            <NButton text size="small" type="error" @click="confirmDelete(agent.id, agent.name)">删除</NButton>
-          </div>
-        </div>
-      </article>
+      <AgentCard
+        v-for="agent in filteredAgents"
+        :key="agent.id"
+        :agent="agent"
+        :version="capabilityState[agent.id]?.version"
+        :skills="capabilityState[agent.id]?.skills"
+        :mcps="capabilityState[agent.id]?.mcps"
+        @view="router.push({ name: 'agent-detail', params: { id: agent.id } })"
+        @run="router.push({ name: 'agent-playground', params: { id: agent.id } })"
+        @remove="confirmDelete(agent.id, agent.name)"
+      />
     </section>
   </div>
 </template>

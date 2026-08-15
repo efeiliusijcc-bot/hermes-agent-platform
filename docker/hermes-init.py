@@ -7,17 +7,23 @@ home = Path("/opt/data")
 home.mkdir(parents=True, exist_ok=True)
 
 config = {
-    "_config_version": 12,
+    "_config_version": 33,
     "model": {
         "default": os.environ["MODEL_NAME"],
-        "provider": "deepseek",
+        # The platform's model gateway is OpenAI-compatible and owns the
+        # provider-specific credentials.  Hermes must treat it as a custom
+        # endpoint; using the DeepSeek provider rewrites every Agent-level
+        # model override to a DeepSeek canonical model.
+        "provider": "custom",
         "base_url": "http://model-gateway:8080/v1",
+        "api_key": os.environ["MODEL_GATEWAY_API_KEY"],
+        "api_mode": "chat_completions",
     },
     "terminal": {
         "backend": "local",
-        "cwd": "/workspace",
+        "cwd": "/opt/data",
         "timeout": 60,
-        "home_mode": "workspace",
+        "home_mode": "auto",
     },
     "memory": {
         "memory_enabled": False,
@@ -48,4 +54,5 @@ config = {
 
 temporary = home / "config.yaml.tmp"
 temporary.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
+temporary.chmod(0o600)
 temporary.replace(home / "config.yaml")
