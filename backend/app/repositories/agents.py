@@ -10,12 +10,16 @@ async def create_agent(session: AsyncSession, payload: AgentCreate) -> Agent:
         id=payload.id,
         name=payload.name,
         description=payload.description,
+        agent_type=payload.agent_type,
+        parent_agent_id=payload.parent_agent_id,
         role=payload.role,
         system_prompt=payload.system_prompt,
         model_settings=payload.model_settings,
         model=payload.model,
         prompt_template=payload.prompt_template,
         model_adapter=payload.model_adapter,
+        runtime_type=payload.runtime_type,
+        runtime_config=payload.runtime_config,
         api_enabled=False,
         status=payload.status,
         response_mode=payload.response_mode,
@@ -75,6 +79,9 @@ async def update_agent_configuration(
     agent.model = payload.model
     agent.prompt_template = payload.prompt_template
     agent.model_adapter = payload.model_adapter
+    if payload.runtime_type is not None:
+        agent.runtime_type = payload.runtime_type
+    agent.runtime_config = payload.runtime_config
     agent.model_settings = payload.model_settings
     await session.commit()
     await session.refresh(agent)

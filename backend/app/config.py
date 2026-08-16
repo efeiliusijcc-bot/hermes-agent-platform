@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     task_stale_seconds: int = Field(default=600, ge=30, le=86_400)
     worker_concurrency: int = Field(default=4, ge=1, le=64)
     worker_id: str = "agent-worker"
+    orchestrator_poll_seconds: float = Field(default=1.0, ge=0.1, le=30.0)
+    agent_message_stream_key: str = "hermes:agent-messages:v1"
+    agent_message_max_length: int = Field(default=10_000, ge=100, le=1_000_000)
 
     workspace_root: str = "/data/workspaces"
 
@@ -60,11 +63,24 @@ class Settings(BaseSettings):
     knowledge_search_top_k: int = Field(default=5, ge=1, le=20)
     knowledge_max_upload_bytes: int = Field(default=10_485_760, ge=1024, le=104_857_600)
 
+    source_recall_enabled: bool = False
+    source_recall_gateway_endpoint: str = "http://source-recall-gateway:8082"
+    source_recall_gateway_api_key: SecretStr | None = None
+    source_recall_timeout_seconds: int = Field(default=60, ge=5, le=300)
+    source_recall_default_lookback_days: int = Field(default=3650, ge=1, le=36_500)
+    source_recall_default_limit: int = Field(default=20, ge=1, le=20)
+    source_recall_summary_max_chars: int = Field(default=1200, ge=100, le=10_000)
+    source_recall_excerpt_max_chars: int = Field(default=2000, ge=100, le=20_000)
+
     hermes_endpoint: str = "http://hermes-runtime:8642/v1"
     hermes_api_key: SecretStr
     hermes_model: str = "hermes-agent"
     hermes_timeout_seconds: int = Field(default=180, ge=10, le=1800)
     hermes_poll_interval_seconds: float = Field(default=1.0, ge=0.1, le=30.0)
+
+    pi_runtime_endpoint: str = "http://pi-runtime:8765"
+    pi_runtime_api_key: SecretStr | None = None
+    pi_runtime_timeout_seconds: int = Field(default=180, ge=10, le=1800)
 
     skills_root: str = "/app/skills"
     skill_max_document_bytes: int = Field(default=262_144, ge=1024, le=1_048_576)

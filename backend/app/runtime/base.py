@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
+
+from app.runtime.hermes import HermesRunResult
+
+
+class RuntimeAdapterError(RuntimeError):
+    """A runtime failed before or during an Agent loop."""
+
+
+@dataclass(frozen=True)
+class RuntimeSession:
+    id: str
+    runtime_type: str
+
+
+@dataclass(frozen=True)
+class RuntimeHealth:
+    status: str
+    version: str | None = None
+    detail: str = "ok"
+
+
+@dataclass(frozen=True)
+class RuntimeContext:
+    agent_id: str
+    session_id: str
+    workspace: str
+    memory_namespace: str
+    tools: tuple[str, ...] = ()
+    skills: tuple[str, ...] = ()
+    metadata: dict[str, Any] | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "agent_id": self.agent_id,
+            "session_id": self.session_id,
+            "workspace": self.workspace,
+            "memory_namespace": self.memory_namespace,
+            "tools": list(self.tools),
+            "skills": list(self.skills),
+            "metadata": self.metadata or {},
+        }
+
+
+class RuntimeAdapter(ABC):
+    runtime_type: str
+
+    @abstractmethod
+    async def create_session(
+        self,
+        *,
+        agent_id: str,
+        execution_id: str,
+        metadata: dict[str, Any] | None = None,
+        context: RuntimeContext | None = None,
+    ) -> RuntimeSession:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def execute(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        session_id: str,
+        model: str,
+        model_adapter: str,
+        agent_id: str,
+        execution_id: str,
+        runtime_options: dict[str, Any] | None = None,
+        context: RuntimeContext | None = None,
+    ) -> HermesRunResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        session_id: str,
+        model: str,
+        model_adapter: str,
+        agent_id: str,
+        execution_id: str,
+        runtime_options: dict[str, Any] | None = None,
+        context: RuntimeContext | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def stop(self, run_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def health_check(self) -> RuntimeHealth:
+        raise NotImplementedError

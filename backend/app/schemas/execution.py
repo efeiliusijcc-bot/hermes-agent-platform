@@ -53,6 +53,9 @@ class ExecutionSummary(BaseModel):
     status: ExecutionStatus
     task: str
     response_mode: Literal["sync", "stream", "async"]
+    runtime_type: Literal["hermes", "pi"]
+    runtime_id: UUID | None
+    runtime_version: str | None
     priority: int | None
     duration_ms: int | None
     token_usage: int | None
@@ -113,6 +116,9 @@ class ExecutionTraceRead(BaseModel):
     session_id: UUID | None
     memory_session_id: str | None
     status: ExecutionStatus
+    runtime_type: Literal["hermes", "pi"]
+    runtime_id: UUID | None
+    runtime_version: str | None
     model: str | None
     model_adapter: str | None
     token_usage: int | None

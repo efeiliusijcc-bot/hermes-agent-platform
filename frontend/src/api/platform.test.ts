@@ -65,6 +65,15 @@ describe('platformApi contract', () => {
     expect(put).toHaveBeenCalledWith('/api/agents/agent-a/configuration', payload)
   })
 
+  it('uses the Runtime registry and health endpoints', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { status: 'online' } })
+    await platformApi.listRuntimes('pi')
+    await platformApi.checkRuntime('runtime a')
+    expect(get).toHaveBeenCalledWith('/api/runtimes', { params: { type: 'pi' } })
+    expect(post).toHaveBeenCalledWith('/api/runtimes/runtime%20a/health')
+  })
+
   it('uses the Phase 3 task, session and artifact endpoints', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] })
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { id: 'task-1' } })
@@ -78,6 +87,28 @@ describe('platformApi contract', () => {
     expect(get).toHaveBeenNthCalledWith(1, '/api/tasks', { params: { agent_id: 'agent-a' } })
     expect(get).toHaveBeenNthCalledWith(2, '/api/sessions', { params: { agent_id: 'agent-a' } })
     expect(get).toHaveBeenNthCalledWith(3, '/api/artifacts', { params: { agent_id: 'agent-a' } })
+  })
+
+  it('uses the Multi-Agent Team, Workflow, Run and approval endpoints', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { id: 'run-1' } })
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { id: 'team-1' } })
+
+    await platformApi.listAgentTeams()
+    await platformApi.upsertTeamMember('team a', 'agent a', { role: '分析', priority: 70 })
+    await platformApi.listWorkflows('team a')
+    await platformApi.runWorkflow('workflow a', { input: '分析行业', session_id: 'multi-1', priority: 8 })
+    await platformApi.listWorkflowRunTasks('run a')
+    await platformApi.reviewHumanTask('task a', true, '通过')
+
+    expect(get).toHaveBeenNthCalledWith(1, '/api/agent-teams')
+    expect(put).toHaveBeenCalledWith('/api/agent-teams/team%20a/members/agent%20a', { role: '分析', priority: 70 })
+    expect(get).toHaveBeenNthCalledWith(2, '/api/workflows', { params: { team_id: 'team a' } })
+    expect(post).toHaveBeenNthCalledWith(1, '/api/workflows/workflow%20a/runs', {
+      input: '分析行业', session_id: 'multi-1', priority: 8,
+    })
+    expect(get).toHaveBeenNthCalledWith(3, '/api/workflow-runs/run%20a/tasks')
+    expect(post).toHaveBeenNthCalledWith(2, '/api/tasks/task%20a/approval', { approved: true, note: '通过' })
   })
 
   it('uses execution history, independent trace detail and retry endpoints', async () => {

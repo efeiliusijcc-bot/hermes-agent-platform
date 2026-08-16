@@ -12,6 +12,7 @@ from app.api.agents import execute_agent_sync
 from app.config import get_settings
 from app.db.session import SessionFactory, engine
 from app.memory import AgentMemoryError, get_memory_store
+from app.message_bus import AgentMessageBusError, get_agent_message_bus
 from app.repositories import agents as agent_repository
 from app.repositories import orchestration as repository
 from app.repositories import production as production_repository
@@ -34,11 +35,13 @@ class AgentWorker:
     def __init__(self) -> None:
         self.queue = get_task_queue()
         self.memory = get_memory_store()
+        self.message_bus = get_agent_message_bus()
         self.stop = asyncio.Event()
 
     async def run(self) -> None:
         await self.queue.ping()
         await self.memory.ping()
+        await self.message_bus.ping()
         await self._recover()
         loops = [asyncio.create_task(self._consume(index)) for index in range(settings.worker_concurrency)]
         recovery = asyncio.create_task(self._recovery_loop())
@@ -50,6 +53,7 @@ class AgentWorker:
     async def close(self) -> None:
         await self.queue.close()
         await self.memory.close()
+        await self.message_bus.close()
         await engine.dispose()
 
     async def _consume(self, index: int) -> None:
@@ -180,6 +184,7 @@ class AgentWorker:
             task.finished_at = datetime.now(timezone.utc)
             task.worker_id = worker_id
             await session.commit()
+            await self._publish_result(session, task)
 
     async def _terminal_failure(self, task: AgentTask, session: AsyncSession, message: str) -> None:
         now = datetime.now(timezone.utc)
@@ -198,6 +203,29 @@ class AgentWorker:
                     0, int((now - execution.started_at).total_seconds() * 1000)
                 )
         await session.commit()
+        await self._publish_result(session, task)
+
+    async def _publish_result(self, session: AsyncSession, task: AgentTask) -> None:
+        if task.parent_task_id is None:
+            return
+        parent = await repository.get_task(session, task.parent_task_id)
+        if parent is None:
+            return
+        try:
+            await self.message_bus.publish(
+                from_agent=task.agent_id,
+                to_agent=parent.agent_id,
+                message_type="result",
+                payload={
+                    "status": task.status,
+                    "node_key": task.node_key,
+                    "output": task.session.output,
+                    "error": task.error,
+                },
+                task_id=str(task.id),
+            )
+        except AgentMessageBusError:
+            logger.warning("could not publish Agent result task=%s", task.id)
 
     async def _recover(self) -> None:
         async with SessionFactory() as session:

@@ -6,9 +6,10 @@ import { useRouter } from 'vue-router'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { getApiErrorMessage } from '@/api/client'
+import { platformApi } from '@/api/platform'
 import { useAgentStore } from '@/stores/agents'
 import { useResourceStore } from '@/stores/resources'
-import type { AgentCreatePayload, AgentLifecycleStatus, ModelAdapterName, ResponseMode } from '@/types/api'
+import type { Agent, AgentCreatePayload, AgentLifecycleStatus, AgentRuntime, AgentType, ModelAdapterName, ResponseMode, RuntimeType } from '@/types/api'
 
 const router = useRouter()
 const message = useMessage()
@@ -16,6 +17,8 @@ const agentStore = useAgentStore()
 const resourceStore = useResourceStore()
 const submitting = ref(false)
 const step = ref(0)
+const existingAgents = ref<Agent[]>([])
+const runtimes = ref<AgentRuntime[]>([])
 
 const steps = [
   { title: '基础信息', note: '名称、标识与职责' },
@@ -30,10 +33,14 @@ interface FormModel {
   id: string
   name: string
   description: string
+  agent_type: AgentType
+  parent_agent_id: string | null
   role: string
   system_prompt: string
   model: string
   model_adapter: ModelAdapterName
+  runtime_type: RuntimeType
+  runtime_id: string | null
   prompt_template: string
   temperature: number
   status: AgentLifecycleStatus
@@ -45,18 +52,32 @@ interface FormModel {
 }
 
 const form = reactive<FormModel>({
-  id: '', name: '', description: '', role: '', system_prompt: '',
-  model: '', model_adapter: 'hermes', prompt_template: '{{input}}', temperature: 0.1,
+  id: '', name: '', description: '', agent_type: 'worker', parent_agent_id: null, role: '', system_prompt: '',
+  model: '', model_adapter: 'hermes', runtime_type: 'hermes', runtime_id: null, prompt_template: '{{input}}', temperature: 0.1,
   status: 'active', response_mode: 'sync', skillIds: [], mcpIds: [],
   inputSchema: '{\n  "type": "object",\n  "properties": {}\n}',
   outputSchema: '{\n  "type": "object",\n  "properties": {}\n}',
 })
 
 const idPattern = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/
-const skillOptions = computed(() => resourceStore.skills.map((skill) => ({ label: `${skill.name} · v${skill.version}`, value: skill.id })))
+const skillOptions = computed(() => resourceStore.skills.map((skill) => ({
+  label: `${skill.name} · v${skill.version} · ${skill.runtime_support.join('/')}`,
+  value: skill.id,
+  disabled: !skill.runtime_support.includes(form.runtime_type),
+})))
+const runtimeOptions = computed(() => runtimes.value
+  .filter((runtime) => runtime.type === form.runtime_type && runtime.status !== 'disabled')
+  .map((runtime) => ({
+    label: `${runtime.name} · ${runtime.version} · ${runtime.status}`,
+    value: runtime.id,
+  })))
+const selectedRuntime = computed(() => runtimes.value.find((item) => item.id === form.runtime_id) || null)
 const mcpOptions = computed(() => resourceStore.mcpServers.map((server) => ({ label: `${server.name} · ${server.config.kind}`, value: server.id })))
 const selectedSkills = computed(() => resourceStore.skills.filter((item) => form.skillIds.includes(item.id)))
 const selectedMCPs = computed(() => resourceStore.mcpServers.filter((item) => form.mcpIds.includes(item.id)))
+const managerOptions = computed(() => existingAgents.value
+  .filter((agent) => agent.agent_type === 'manager' && agent.status === 'active')
+  .map((agent) => ({ label: agent.name, value: agent.id })))
 
 function parseSchema(value: string, label: string): Record<string, unknown> {
   const parsed: unknown = JSON.parse(value)
@@ -71,7 +92,13 @@ function validateStep(index = step.value): boolean {
     if (!form.role.trim()) return warn('请填写 Role；当前后端用 Role 表达职责分类')
     if (!form.system_prompt.trim()) return warn('请填写 System Prompt')
   }
-  if (index === 1 && !form.model.trim()) return warn('请填写内网可用的模型标识')
+  if (index === 1) {
+    if (!form.model.trim()) return warn('请填写内网可用的模型标识')
+    if (form.runtime_id && selectedRuntime.value?.type !== form.runtime_type) return warn('Runtime 实例与 Runtime 类型不匹配')
+  }
+  if (index === 2 && selectedSkills.value.some((skill) => !skill.runtime_support.includes(form.runtime_type))) {
+    return warn(`存在不支持 ${form.runtime_type} Runtime 的 Skill`)
+  }
   if (index === 4) {
     try { parseSchema(form.inputSchema, 'Input Schema'); parseSchema(form.outputSchema, 'Output Schema') }
     catch (error) { return warn((error as Error).message) }
@@ -104,11 +131,15 @@ async function submit() {
       id: form.id,
       name: form.name.trim(),
       description: form.description.trim() || null,
+      agent_type: form.agent_type,
+      parent_agent_id: form.parent_agent_id,
       role: form.role.trim(),
       system_prompt: form.system_prompt,
       model_config: modelConfig,
       model: form.model.trim(),
       model_adapter: form.model_adapter,
+      runtime_type: form.runtime_type,
+      runtime_config: form.runtime_id ? { runtime_id: form.runtime_id } : {},
       prompt_template: form.prompt_template,
       status: form.status,
       response_mode: form.response_mode,
@@ -126,7 +157,11 @@ async function submit() {
   }
 }
 
-onMounted(() => resourceStore.fetchAll().catch(() => undefined))
+onMounted(() => {
+  resourceStore.fetchAll().catch(() => undefined)
+  platformApi.listAgents().then((value) => { existingAgents.value = value }).catch(() => undefined)
+  platformApi.listRuntimes().then((value) => { runtimes.value = value }).catch(() => undefined)
+})
 </script>
 
 <template>
@@ -153,6 +188,8 @@ onMounted(() => resourceStore.fetchAll().catch(() => undefined))
               <NFormItem label="Agent ID" required><NInput v-model:value="form.id" maxlength="64" placeholder="knowledge-analyst" /></NFormItem>
               <NFormItem label="名称" required><NInput v-model:value="form.name" maxlength="255" placeholder="知识分析 Agent" /></NFormItem>
               <NFormItem class="span-2" label="描述"><NInput v-model:value="form.description" type="textarea" :rows="3" placeholder="说明该 Agent 负责的业务任务" /></NFormItem>
+              <NFormItem label="Agent 类型"><NSelect v-model:value="form.agent_type" :options="[{label:'Manager Agent',value:'manager'},{label:'Worker Agent',value:'worker'}]" /></NFormItem>
+              <NFormItem label="上级 Manager"><NSelect v-model:value="form.parent_agent_id" clearable :options="managerOptions" placeholder="可选，用于父子关系" /></NFormItem>
               <NFormItem label="Role / 职责分类" required><NInput v-model:value="form.role" placeholder="企业知识分析" /></NFormItem>
               <NFormItem label="初始状态"><NSelect v-model:value="form.status" :options="[{label:'Active',value:'active'},{label:'Inactive',value:'inactive'}]" /></NFormItem>
             </div>
@@ -164,6 +201,8 @@ onMounted(() => resourceStore.fetchAll().catch(() => undefined))
             <div class="form-grid">
               <NFormItem label="模型标识" required><NInput v-model:value="form.model" placeholder="内网模型名称" /></NFormItem>
               <NFormItem label="Provider / Adapter"><NSelect v-model:value="form.model_adapter" :options="[{label:'Hermes',value:'hermes'},{label:'Qwen',value:'qwen'},{label:'DeepSeek',value:'deepseek'},{label:'GPT / OpenAI',value:'gpt'},{label:'Claude',value:'claude'}]" /></NFormItem>
+              <NFormItem label="Agent Runtime"><NSelect v-model:value="form.runtime_type" :options="[{label:'Hermes Runtime',value:'hermes'},{label:'Pi Runtime',value:'pi'}]" /></NFormItem>
+              <NFormItem label="Runtime 实例"><NSelect v-model:value="form.runtime_id" clearable :options="runtimeOptions" placeholder="未选择时使用环境变量默认端点" /></NFormItem>
               <NFormItem label="默认响应模式"><NSelect v-model:value="form.response_mode" :options="[{label:'Sync JSON',value:'sync'},{label:'SSE Stream',value:'stream'}]" /></NFormItem>
               <NFormItem label="Temperature"><NSlider v-model:value="form.temperature" :min="0" :max="2" :step="0.1" /></NFormItem>
             </div>
@@ -194,8 +233,8 @@ onMounted(() => resourceStore.fetchAll().catch(() => undefined))
 
           <template v-else>
             <div class="review-grid">
-              <section><h3>Agent</h3><dl><div><dt>ID</dt><dd class="mono">{{ form.id }}</dd></div><div><dt>名称</dt><dd>{{ form.name }}</dd></div><div><dt>Role</dt><dd>{{ form.role }}</dd></div><div><dt>状态</dt><dd>{{ form.status }}</dd></div></dl></section>
-              <section><h3>Runtime</h3><dl><div><dt>Model</dt><dd class="mono">{{ form.model }}</dd></div><div><dt>Adapter</dt><dd>{{ form.model_adapter }}</dd></div><div><dt>响应</dt><dd>{{ form.response_mode }}</dd></div><div><dt>Temperature</dt><dd>{{ form.temperature }}</dd></div></dl></section>
+              <section><h3>Agent</h3><dl><div><dt>ID</dt><dd class="mono">{{ form.id }}</dd></div><div><dt>名称</dt><dd>{{ form.name }}</dd></div><div><dt>类型</dt><dd>{{ form.agent_type }}</dd></div><div><dt>Role</dt><dd>{{ form.role }}</dd></div><div><dt>状态</dt><dd>{{ form.status }}</dd></div></dl></section>
+              <section><h3>Runtime</h3><dl><div><dt>Runtime</dt><dd>{{ form.runtime_type }}</dd></div><div><dt>实例</dt><dd>{{ selectedRuntime?.name || '环境变量默认端点' }}</dd></div><div><dt>版本</dt><dd>{{ selectedRuntime?.version || '--' }}</dd></div><div><dt>状态</dt><dd>{{ selectedRuntime?.status || '未注册' }}</dd></div><div><dt>Model</dt><dd class="mono">{{ form.model }}</dd></div><div><dt>Adapter</dt><dd>{{ form.model_adapter }}</dd></div><div><dt>响应</dt><dd>{{ form.response_mode }}</dd></div><div><dt>Temperature</dt><dd>{{ form.temperature }}</dd></div></dl></section>
               <section><h3>Capabilities</h3><dl><div><dt>Skills</dt><dd>{{ form.skillIds.length }}</dd></div><div><dt>MCP</dt><dd>{{ form.mcpIds.length }}</dd></div><div><dt>Input Schema</dt><dd>已配置</dd></div><div><dt>Output Schema</dt><dd>已配置</dd></div></dl></section>
             </div>
             <NAlert type="warning" :bordered="false">Agent 创建与 Skill/MCP 绑定不是同一后端事务；发生部分失败时会保留 Agent，并明确报告失败项。</NAlert>
@@ -214,6 +253,8 @@ onMounted(() => resourceStore.fetchAll().catch(() => undefined))
         <div class="summary-list">
           <div class="summary-row"><span>ID</span><strong class="mono">{{ form.id || '待填写' }}</strong></div>
           <div class="summary-row"><span>名称</span><strong>{{ form.name || '待填写' }}</strong></div>
+          <div class="summary-row"><span>类型</span><strong>{{ form.agent_type }}</strong></div>
+          <div class="summary-row"><span>Runtime</span><strong>{{ form.runtime_type }}</strong></div>
           <div class="summary-row"><span>模型</span><strong class="mono">{{ form.model || '待填写' }}</strong></div>
           <div class="summary-row"><span>响应</span><strong>{{ form.response_mode }}</strong></div>
           <div class="summary-row"><span>Skill</span><strong>{{ form.skillIds.length }} 个</strong></div>

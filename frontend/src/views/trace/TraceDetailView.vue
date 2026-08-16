@@ -96,6 +96,9 @@ onBeforeUnmount(() => {
           <div class="section-heading"><div><h2>执行上下文</h2><p>Trace 与 Execution 的关联信息</p></div></div>
           <dl class="execution-definition-list">
             <div><dt>Session</dt><dd class="mono">{{ trace.memory_session_id || trace.session_id || '--' }}</dd></div>
+            <div><dt>Runtime</dt><dd class="mono">{{ trace.runtime_type }}</dd></div>
+            <div><dt>Runtime Version</dt><dd class="mono">{{ trace.runtime_version || '--' }}</dd></div>
+            <div><dt>Runtime ID</dt><dd class="mono">{{ trace.runtime_id || '环境变量默认端点' }}</dd></div>
             <div><dt>Agent Version</dt><dd class="mono">{{ trace.agent_version || trace.agent_version_id || '--' }}</dd></div>
             <div><dt>Model</dt><dd class="mono">{{ trace.model || '--' }}</dd></div>
             <div><dt>Adapter</dt><dd>{{ trace.model_adapter || '--' }}</dd></div>

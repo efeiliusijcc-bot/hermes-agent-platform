@@ -10,6 +10,7 @@ import type {
   KnowledgeSource,
   MCPServer,
   ModelAdapterName,
+  RuntimeType,
   Skill,
 } from '@/types/api'
 
@@ -155,6 +156,8 @@ export const useAgentStore = defineStore('agents', () => {
       model: string
       prompt_template: string
       model_adapter: ModelAdapterName
+      runtime_type?: RuntimeType
+      runtime_config?: Record<string, unknown>
       model_config: Record<string, unknown>
     }) {
       currentAgent.value = await platformApi.updateAgentConfiguration(agentId, payload)

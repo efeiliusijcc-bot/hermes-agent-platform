@@ -246,6 +246,7 @@ async def record_step(
     input_data: dict[str, Any] | None = None,
     output_data: dict[str, Any] | None = None,
     error: str | None = None,
+    latency_ms: int | None = None,
 ) -> ExecutionStep:
     step = await start_step(
         session,
@@ -256,9 +257,13 @@ async def record_step(
         step_name=step_name,
         input_data=input_data,
     )
-    return await finish_step(
+    finished = await finish_step(
         session, step, status=status, output_data=output_data, error=error
     )
+    if latency_ms is not None:
+        finished.latency_ms = max(0, latency_ms)
+        await session.commit()
+    return finished
 
 
 async def fail_running_steps(session: AsyncSession, execution_id: UUID, error: str) -> None:

@@ -163,6 +163,9 @@ onBeforeUnmount(() => {
           <div class="section-heading"><div><h2>运行信息</h2><p>Execution 生命周期元数据</p></div></div>
           <dl class="execution-definition-list">
             <div><dt>状态</dt><dd><StatusTag :status="execution.status" /></dd></div>
+            <div><dt>Runtime</dt><dd class="mono">{{ execution.runtime_type }}</dd></div>
+            <div><dt>Runtime 版本</dt><dd class="mono">{{ execution.runtime_version || '--' }}</dd></div>
+            <div><dt>Runtime ID</dt><dd class="mono">{{ execution.runtime_id || '环境变量默认端点' }}</dd></div>
             <div><dt>模式</dt><dd>{{ execution.response_mode }}</dd></div>
             <div><dt>Session</dt><dd class="mono">{{ execution.memory_session_id || execution.session_id || '--' }}</dd></div>
             <div><dt>模型</dt><dd class="mono">{{ execution.model || '--' }}</dd></div>

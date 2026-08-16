@@ -29,6 +29,7 @@ class ImportedSkill:
     version: str
     path: str
     manifest: dict[str, Any]
+    runtime_support: tuple[str, ...]
     package_sha256: str
 
 
@@ -57,8 +58,10 @@ class SkillPackageImporter:
             self._extract(archive_path, extract_root)
             package_root = self._package_root(extract_root)
             manifest = self._read_manifest(package_root)
-            skill_id, name, description, version, entry = self._validate_manifest(manifest)
-            self._normalize_runtime_files(package_root, skill_id, name, description, version, entry, manifest)
+            skill_id, name, description, version, entry, runtime_support = self._validate_manifest(manifest)
+            self._normalize_runtime_files(
+                package_root, skill_id, name, description, version, entry, manifest, runtime_support
+            )
 
             destination = self.root / skill_id
             if destination.exists():
@@ -79,6 +82,7 @@ class SkillPackageImporter:
             version=version,
             path=skill_id,
             manifest=manifest,
+            runtime_support=runtime_support,
             package_sha256=package_sha256,
         )
 
@@ -176,13 +180,16 @@ class SkillPackageImporter:
         return manifest
 
     @staticmethod
-    def _validate_manifest(manifest: dict[str, Any]) -> tuple[str, str, str | None, str, str]:
+    def _validate_manifest(
+        manifest: dict[str, Any],
+    ) -> tuple[str, str, str | None, str, str, tuple[str, ...]]:
         raw_id = manifest.get("id", manifest.get("name"))
         raw_name = manifest.get("display_name", manifest.get("name"))
         raw_version = manifest.get("version")
         raw_description = manifest.get("description")
         raw_entry_value = manifest.get("entry", "SKILL.md")
         raw_entry = raw_entry_value.get("file") if isinstance(raw_entry_value, dict) else raw_entry_value
+        raw_runtime_support = manifest.get("runtime_support", ["hermes"])
         if not isinstance(raw_id, str) or not SKILL_ID.fullmatch(raw_id):
             raise SkillLoadError("skill.yaml id/name must be a lowercase hyphenated identifier")
         if not isinstance(raw_name, str) or not raw_name.strip() or len(raw_name) > 255:
@@ -193,7 +200,14 @@ class SkillPackageImporter:
             raise SkillLoadError("skill.yaml description must be a string")
         if raw_entry != "SKILL.md":
             raise SkillLoadError("first-stage Skill entry must be SKILL.md")
-        return raw_id, raw_name.strip(), raw_description, raw_version, raw_entry
+        if (
+            not isinstance(raw_runtime_support, list)
+            or not raw_runtime_support
+            or any(item not in {"hermes", "pi"} for item in raw_runtime_support)
+        ):
+            raise SkillLoadError("skill.yaml runtime_support must contain hermes and/or pi")
+        runtime_support = tuple(dict.fromkeys(str(item) for item in raw_runtime_support))
+        return raw_id, raw_name.strip(), raw_description, raw_version, raw_entry, runtime_support
 
     @staticmethod
     def _normalize_runtime_files(
@@ -204,6 +218,7 @@ class SkillPackageImporter:
         version: str,
         entry: str,
         manifest: dict[str, Any],
+        runtime_support: tuple[str, ...],
     ) -> None:
         if not (package_root / entry).is_file():
             raise SkillLoadError(f"Skill ZIP entry does not exist: {entry}")
@@ -227,6 +242,7 @@ class SkillPackageImporter:
                 "version": version,
                 "entry": entry,
                 "tools": manifest.get("tools", []),
+                "runtime_support": list(runtime_support),
             }
         )
         config_path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")

@@ -21,15 +21,16 @@ class HermesRunResult:
     run_id: str | None
     status: str
     token_usage: int | None = None
+    trace: tuple[dict[str, Any], ...] = ()
 
 
 class HermesClient:
     terminal_statuses = {"completed", "succeeded", "failed", "cancelled", "canceled", "expired"}
     successful_statuses = {"completed", "succeeded"}
 
-    def __init__(self) -> None:
+    def __init__(self, *, endpoint: str | None = None) -> None:
         settings = get_settings()
-        self.runs_url = f"{settings.hermes_endpoint.rstrip('/')}/runs"
+        self.runs_url = f"{(endpoint or settings.hermes_endpoint).rstrip('/')}/runs"
         self.api_key = settings.hermes_api_key.get_secret_value()
         self.model = settings.hermes_model
         self.timeout = settings.hermes_timeout_seconds

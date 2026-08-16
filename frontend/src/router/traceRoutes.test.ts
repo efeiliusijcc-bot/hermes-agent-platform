@@ -16,4 +16,9 @@ describe('execution and trace routes', () => {
     expect(traceDetail?.path).toBe('/trace/:id')
     expect(executions?.components?.default).not.toBe(traces?.components?.default)
   })
+
+  it('registers the Multi-Agent orchestration workspace', () => {
+    const orchestration = router.getRoutes().find((route) => route.name === 'multi-agent')
+    expect(orchestration?.path).toBe('/orchestration')
+  })
 })

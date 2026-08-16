@@ -57,6 +57,7 @@ async def submit_task(
             ),
         },
         agent_version_id=agent.current_version_id,
+        runtime_type=agent.runtime_type,
     )
     try:
         await queue.enqueue(task.id, task.priority)

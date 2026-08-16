@@ -1,16 +1,18 @@
 # Hermes Agent Platform
 
-The platform now includes the Phase 10 Agent Schema / public API contract, the Phase 3 Agent isolation / concurrency runtime, Phase 3.1 Schema and storage abstractions, and the Phase 4 production Agent runtime. See `docs/phase2-registry-publication.md`, `docs/phase3-agent-isolation-concurrency.md`, `docs/phase3.1-schema-storage.md`, and `docs/phase4-production-agent-runtime.md`.
+The platform now includes the Agent Schema / public API contract, Agent isolation and concurrency, production lifecycle, and Phase 5 Multi-Agent orchestration. See `docs/phase2-registry-publication.md`, `docs/phase3-agent-isolation-concurrency.md`, `docs/phase4-production-agent-runtime.md`, and `docs/phase5-multi-agent-orchestration.md`.
 
 Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台以 Hermes Agent Runtime 为执行核心，通过外部 OpenAI Compatible 模型服务完成推理，并组合 Agent、Skill、MCP、Knowledge 与 Memory 构建可配置、可隔离的 AI 工作单元。
 
 ## 当前阶段
 
-当前仓库已完成 **Phase 10：Agent Schema 与 API Gateway**、Phase 3 隔离并发、Phase 3.1 Schema/Storage，以及 Phase 4 生产 Agent Runtime。除 `knowledge-analyst` 多源分析和离线恢复能力外，平台支持版本化 Input/Output Schema、API Version 固定绑定、Prompt Template、Model Adapter、API Client/Key、生命周期、发布/回滚、审计/指标、健康门禁、Sync JSON、原生 SSE Stream、异步队列、MinIO Artifact 和 Redis/PostgreSQL/pgvector Memory。
+当前仓库已完成 Agent Schema/API Gateway、隔离并发、Schema/Storage、生产 Agent Runtime，以及 Multi-Agent Team/Workflow 编排。除既有能力外，平台支持 Manager/Worker 关系、任务树、Workflow DAG、人工审批、Redis Stream 通信、独立 Orchestrator、并行 Worker 执行、Manager 结果聚合，以及 Hermes/Pi Runtime Adapter。
 
-管理控制台 MVP 已按现有 FastAPI 契约实现，包含运行总览、Agent 创建/详情/删除、Skill/MCP 展示、能力绑定、Playground、Sync/SSE 模式选择、实时 Trace 和执行日志查看。SSE 直接转发 Hermes Runtime 原生增量事件，不使用伪流式切分。
+管理控制台已按 FastAPI 契约实现，包含运行总览、Agent 创建/详情/删除、Skill/MCP 展示、能力绑定、Playground、Multi-Agent Team/Workflow、Sync/SSE 模式选择、实时 Trace 和执行日志查看。SSE 直接转发 Runtime 原生增量事件，不使用伪流式切分。
 
 Hermes API Server 的原生 terminal、文件、浏览器、内置 Skill、委派等工具集已关闭，仅启用 `mcp-gateway`。这保证 Agent 不能绕过平台绑定直接使用 Hermes 本地工具。
+
+外部信源召回通过独立的 `source-recall-gateway` 受控接入：Agent Worker 与 Hermes Runtime 仍只加入 internal 网络，不能直接访问公网；只有网关保存上游密钥并将裁剪后的召回结果注入 Prompt。配置与验收边界见 [docs/source-recall-gateway.md](docs/source-recall-gateway.md)。
 
 `model-stub` 只属于自动化测试 profile，用于验证 OpenAI 协议、Hermes 调度和日志闭环，不是模型实现，也不能作为真实模型验收证据。生产部署不得启用该 profile。
 
@@ -57,7 +59,7 @@ scripts/    开发、校验和部署脚本
 
 ## 设计依据
 
-项目唯一架构依据是 [docs/hermes_agent_offline_platform_detailed_design.md](docs/hermes_agent_offline_platform_detailed_design.md)。如实现与文档发生架构冲突，应停止开发并先确认设计变更。
+基础离线架构依据是 [docs/hermes_agent_offline_platform_detailed_design.md](docs/hermes_agent_offline_platform_detailed_design.md)；Multi-Agent 增量设计与实现契约见 [docs/phase5-multi-agent-orchestration.md](docs/phase5-multi-agent-orchestration.md)。如实现与设计发生架构冲突，应停止开发并先确认设计变更。
 
 Phase 6 的权限边界、Memory 命名空间和 116 验收步骤见 [docs/phase6-agent-isolation.md](docs/phase6-agent-isolation.md)。
 
@@ -74,6 +76,8 @@ Phase 3 的 Agent/Session/Workspace/Artifact 隔离、Task Queue、Worker Pool�
 Phase 3.1 的 Schema/API 版本生命周期、Artifact Storage Provider、Memory Provider 和 116 独立验收证据见 [docs/phase3.1-schema-storage.md](docs/phase3.1-schema-storage.md)。
 
 Phase 4 的生产生命周期、Client/Key 鉴权、限流、审计、指标、健康门禁、版本回滚及 116 独立验收证据见 [docs/phase4-production-agent-runtime.md](docs/phase4-production-agent-runtime.md)。控制面管理员认证尚未定义，因此管理接口只允许放在可信内网或由外层可信网关保护，不能直接暴露公网。
+
+Phase 5 的 Agent Team、Workflow DAG、Runtime Adapter、Redis Agent Message、独立 Orchestrator 和人工审批见 [docs/phase5-multi-agent-orchestration.md](docs/phase5-multi-agent-orchestration.md)。Pi Runtime 注册、HTTP 契约、上下文注入、Skill 兼容和真实验收步骤见 [docs/pi-runtime-adapter.md](docs/pi-runtime-adapter.md)。
 
 ## 校验
 

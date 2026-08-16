@@ -4,9 +4,9 @@ import { computed } from 'vue'
 const props = defineProps<{ status: string }>()
 
 const type = computed(() => {
-  if (['active', 'published', 'healthy', 'succeeded', 'ok'].includes(props.status)) return 'success'
-  if (['running', 'testing', 'release_candidate'].includes(props.status)) return 'info'
-  if (['failed', 'disabled', 'inactive', 'unhealthy', 'archived', 'revoked'].includes(props.status)) return 'error'
+  if (['active', 'published', 'healthy', 'succeeded', 'ok', 'online'].includes(props.status)) return 'success'
+  if (['running', 'testing', 'release_candidate', 'manager'].includes(props.status)) return 'info'
+  if (['failed', 'disabled', 'inactive', 'unhealthy', 'archived', 'revoked', 'offline'].includes(props.status)) return 'error'
   return 'warning'
 })
 
@@ -37,9 +37,15 @@ const label = computed(() => {
     queued: '排队中',
     pending: '等待中',
     retrying: '重试中',
+    waiting_child: '等待子任务',
+    human_review: '待人工审批',
+    manager: 'Manager',
+    worker: 'Worker',
     skipped: '已跳过',
     cancelled: '已取消',
     ok: '正常',
+    online: '在线',
+    offline: '离线',
   }
   return labels[props.status] || props.status
 })

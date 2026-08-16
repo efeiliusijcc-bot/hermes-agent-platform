@@ -32,7 +32,7 @@ const emit = defineEmits<{ select: [executionId: string] }>()
       @click="emit('select', item.id)"
     >
       <span class="execution-id-cell"><strong class="mono">{{ item.id }}</strong><small>{{ item.task }}</small></span>
-      <span class="execution-id-cell"><strong>{{ item.agent_name }}</strong><small class="mono">{{ item.agent_id }}</small></span>
+      <span class="execution-id-cell"><strong>{{ item.agent_name }}</strong><small class="mono">{{ item.agent_id }} · {{ item.runtime_type }}{{ item.runtime_version ? `/${item.runtime_version}` : '' }}</small></span>
       <span class="mono">{{ item.agent_version || item.agent_version_id || '--' }}</span>
       <span class="mono">{{ item.memory_session_id || item.session_id || '--' }}</span>
       <span><StatusTag :status="item.status" /></span>

@@ -57,6 +57,24 @@ def test_imports_phase2_manifest_and_generates_runtime_config(tmp_path) -> None:
     installed = tmp_path / "skills" / "knowledge-analysis"
     assert (installed / "SKILL.md").is_file()
     assert "id: knowledge-analysis" in (installed / "config.yaml").read_text()
+    assert imported.runtime_support == ("hermes",)
+
+
+def test_imports_explicit_pi_compatible_skill(tmp_path) -> None:
+    imported = SkillPackageImporter().import_zip(
+        package(
+            {
+                "pi-report/skill.yaml": (
+                    "name: pi-report\nversion: 1.0.0\nentry: SKILL.md\n"
+                    "runtime_support:\n  - hermes\n  - pi\n"
+                ),
+                "pi-report/SKILL.md": "# Pi Report\n\nGenerate a report.",
+            }
+        )
+    )
+    assert imported.runtime_support == ("hermes", "pi")
+    config = (tmp_path / "skills" / "pi-report" / "config.yaml").read_text()
+    assert "runtime_support:" in config and "- pi" in config
 
 
 def test_imports_structured_entry_manifest(tmp_path) -> None:

@@ -19,6 +19,7 @@ import {
 import type {
   AgentHealth,
   AgentLifecycleStatus,
+  AgentRuntime,
   AgentSession,
   AgentTask,
   AgentVersion,
@@ -26,6 +27,7 @@ import type {
   Artifact,
   ExecutionSummary,
   ModelAdapterName,
+  RuntimeType,
 } from '@/types/api'
 import { platformApi } from '@/api/platform'
 
@@ -46,6 +48,10 @@ const systemPromptText = ref('')
 const promptTemplateText = ref('{{input}}')
 const modelText = ref('hermes-agent')
 const modelAdapter = ref<ModelAdapterName>('hermes')
+const runtimeType = ref<RuntimeType>('hermes')
+const runtimeConfigText = ref('{}')
+const runtimes = ref<AgentRuntime[]>([])
+const runtimeChecking = ref(false)
 const modelConfigText = ref('{}')
 const phase3Loading = ref(false)
 const sessions = ref<AgentSession[]>([])
@@ -78,6 +84,10 @@ const detailTabs = [
 
 const currentVersion = computed(() => versions.value.find((item) => item.status === 'published') || null)
 const lastExecution = computed(() => executions.value[0] || null)
+const selectedRuntime = computed(() => {
+  const runtimeId = agentStore.currentAgent?.runtime_config?.runtime_id
+  return runtimes.value.find((item) => item.id === runtimeId) || null
+})
 const successRate = computed(() => {
   if (!executions.value.length) return '--'
   const completed = executions.value.filter((item) => ['succeeded', 'failed'].includes(item.status))
@@ -113,7 +123,11 @@ const lifecycleOptions = computed(() => {
   }))
 })
 
-const skillOptions = computed(() => resourceStore.skills.map((item) => ({ label: `${item.name} (${item.id})`, value: item.id })))
+const skillOptions = computed(() => resourceStore.skills.map((item) => ({
+  label: `${item.name} (${item.id}) · ${item.runtime_support.join('/')}`,
+  value: item.id,
+  disabled: !item.runtime_support.includes(agentStore.currentAgent?.runtime_type || 'hermes'),
+})))
 const mcpOptions = computed(() => resourceStore.mcpServers.map((item) => ({ label: `${item.name} (${item.config.kind})`, value: item.id })))
 const knowledgeOptions = computed(() => resourceStore.knowledgeSources.map((item) => ({ label: `${item.name} (${item.status})`, value: item.id })))
 
@@ -127,6 +141,7 @@ async function load() {
   await Promise.all([
     agentStore.fetchAgentDetail(agentId.value),
     resourceStore.fetchAll(),
+    platformApi.listRuntimes().then((value) => { runtimes.value = value }),
   ]).catch(() => undefined)
   if (agentStore.currentAgent) {
     inputSchemaText.value = JSON.stringify(agentStore.currentAgent.input_schema || {}, null, 2)
@@ -135,6 +150,8 @@ async function load() {
     promptTemplateText.value = agentStore.currentAgent.prompt_template
     modelText.value = agentStore.currentAgent.model
     modelAdapter.value = agentStore.currentAgent.model_adapter
+    runtimeType.value = agentStore.currentAgent.runtime_type
+    runtimeConfigText.value = JSON.stringify(agentStore.currentAgent.runtime_config || {}, null, 2)
     modelConfigText.value = JSON.stringify(agentStore.currentAgent.model_config || {}, null, 2)
   }
   phase3Loading.value = true
@@ -309,10 +326,27 @@ async function saveConfiguration() {
       model: modelText.value,
       prompt_template: promptTemplateText.value,
       model_adapter: modelAdapter.value,
+      runtime_type: runtimeType.value,
+      runtime_config: JSON.parse(runtimeConfigText.value) as Record<string, unknown>,
       model_config: JSON.parse(modelConfigText.value) as Record<string, unknown>,
     })
     message.success('Prompt 与模型配置已保存')
   } catch (error) { message.error(getApiErrorMessage(error), { duration: 7000 }) } finally { configurationSaving.value = false }
+}
+
+async function checkSelectedRuntime() {
+  if (!selectedRuntime.value) return
+  runtimeChecking.value = true
+  try {
+    const healthResult = await platformApi.checkRuntime(selectedRuntime.value.id)
+    runtimes.value = await platformApi.listRuntimes()
+    if (healthResult.status === 'online') message.success(`Runtime 在线，延迟 ${healthResult.latency_ms}ms`)
+    else message.error(healthResult.detail, { duration: 7000 })
+  } catch (error) {
+    message.error(getApiErrorMessage(error), { duration: 7000 })
+  } finally {
+    runtimeChecking.value = false
+  }
 }
 
 async function saveSchema() {
@@ -419,6 +453,11 @@ onMounted(load)
           <dl class="definition-list" style="margin: 20px 0 0">
             <div class="definition-item"><dt>Agent ID</dt><dd class="mono">{{ agentStore.currentAgent.id }}</dd></div>
             <div class="definition-item"><dt>角色</dt><dd>{{ agentStore.currentAgent.role }}</dd></div>
+            <div class="definition-item"><dt>Agent 类型</dt><dd>{{ agentStore.currentAgent.agent_type === 'manager' ? 'Manager' : 'Worker' }}</dd></div>
+            <div class="definition-item"><dt>Runtime</dt><dd class="mono">{{ agentStore.currentAgent.runtime_type }}</dd></div>
+            <div class="definition-item"><dt>Runtime Version</dt><dd class="mono">{{ selectedRuntime?.version || '--' }}</dd></div>
+            <div class="definition-item"><dt>Runtime Status</dt><dd><StatusTag :status="selectedRuntime?.status || 'unknown'" /></dd></div>
+            <div class="definition-item"><dt>上级 Agent</dt><dd class="mono">{{ agentStore.currentAgent.parent_agent_id || '--' }}</dd></div>
             <div class="definition-item"><dt>模型</dt><dd class="mono">{{ agentStore.currentAgent.model }}</dd></div>
             <div class="definition-item"><dt>Adapter</dt><dd class="mono">{{ agentStore.currentAgent.model_adapter }}</dd></div>
             <div class="definition-item"><dt>Current Version</dt><dd class="mono">{{ currentVersion?.version || '未发布' }}</dd></div>
@@ -448,7 +487,13 @@ onMounted(load)
           <div class="form-grid">
             <NFormItem label="模型"><NInput v-model:value="modelText" :disabled="configurationLocked" /></NFormItem>
             <NFormItem label="Model Adapter"><NSelect v-model:value="modelAdapter" :disabled="configurationLocked" :options="[{label:'Hermes',value:'hermes'},{label:'Qwen',value:'qwen'},{label:'DeepSeek',value:'deepseek'},{label:'GPT / OpenAI',value:'gpt'},{label:'Claude',value:'claude'}]" /></NFormItem>
+            <NFormItem label="Agent Runtime"><NSelect v-model:value="runtimeType" :disabled="configurationLocked" :options="[{label:'Hermes Runtime',value:'hermes'},{label:'Pi Runtime',value:'pi'}]" /></NFormItem>
             <NFormItem class="span-2" label="Model Config JSON"><NInput v-model:value="modelConfigText" type="textarea" :rows="4" class="mono" :disabled="configurationLocked" /></NFormItem>
+            <NFormItem class="span-2" label="Runtime Config JSON"><NInput v-model:value="runtimeConfigText" type="textarea" :rows="4" class="mono" :disabled="configurationLocked" placeholder='{"runtime_id":"..."}' /></NFormItem>
+          </div>
+          <div class="lifecycle-controls" style="margin-bottom: 14px">
+            <span>{{ selectedRuntime ? `${selectedRuntime.name} · ${selectedRuntime.endpoint}` : '未绑定注册表实例，将使用环境变量默认端点' }}</span>
+            <NButton secondary :loading="runtimeChecking" :disabled="!selectedRuntime" @click="checkSelectedRuntime">检查 Runtime</NButton>
           </div>
           <NFormItem label="System Prompt"><NInput v-model:value="systemPromptText" type="textarea" :rows="7" :disabled="configurationLocked" /></NFormItem>
           <NFormItem label="Prompt Template"><NInput v-model:value="promptTemplateText" type="textarea" :rows="7" class="mono" :disabled="configurationLocked" /></NFormItem>

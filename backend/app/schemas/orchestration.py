@@ -9,7 +9,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 SessionStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
-TaskStatus = Literal["pending", "running", "retrying", "succeeded", "failed", "cancelled"]
+TaskStatus = Literal[
+    "pending",
+    "running",
+    "waiting_child",
+    "human_review",
+    "retrying",
+    "succeeded",
+    "failed",
+    "cancelled",
+]
 
 
 class TaskSubmitRequest(BaseModel):
@@ -28,6 +37,8 @@ class SessionRead(BaseModel):
     agent_id: str
     user_id: str | None
     memory_session_id: str
+    runtime_type: Literal["hermes", "pi"]
+    runtime_session_id: str | None
     status: SessionStatus
     input: str
     output: str | None
@@ -41,6 +52,14 @@ class TaskRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    parent_task_id: UUID | None
+    workflow_id: UUID | None
+    workflow_run_id: UUID | None
+    node_key: str | None
+    node_type: str
+    depends_on: list[str]
+    input_data: dict[str, Any]
+    output_data: dict[str, Any]
     agent_id: str
     session_id: UUID
     execution_id: UUID | None

@@ -24,12 +24,22 @@ async def create_task(
     input_json: dict[str, object] | None = None,
     retry_of_execution_id: UUID | None = None,
     agent_version_id: UUID | None = None,
+    runtime_type: str = "hermes",
+    parent_task_id: UUID | None = None,
+    workflow_id: UUID | None = None,
+    workflow_run_id: UUID | None = None,
+    node_key: str | None = None,
+    node_type: str = "agent",
+    depends_on: list[str] | None = None,
+    task_input_data: dict[str, object] | None = None,
+    initial_status: str = "pending",
 ) -> AgentTask:
     agent_session = AgentSession(
         id=internal_session_id,
         agent_id=agent_id,
         user_id=user_id,
         memory_session_id=memory_session_id,
+        runtime_type=runtime_type,
         status="queued",
         input=input_text,
         workspace_path=workspace_path,
@@ -43,6 +53,7 @@ async def create_task(
         input=input_text,
         input_json=input_json or {"task": input_text, "parameters": {}},
         response_mode="async",
+        runtime_type=runtime_type,
         priority=priority,
         retry_of_execution_id=retry_of_execution_id,
         agent_version_id=agent_version_id,
@@ -53,11 +64,18 @@ async def create_task(
     session.add(execution)
     await session.flush()
     task = AgentTask(
+        parent_task_id=parent_task_id,
+        workflow_id=workflow_id,
+        workflow_run_id=workflow_run_id,
+        node_key=node_key,
+        node_type=node_type,
+        depends_on=depends_on or [],
+        input_data=task_input_data or {},
         agent_id=agent_id,
         session=agent_session,
         execution_id=execution_id,
         priority=priority,
-        status="pending",
+        status=initial_status,
         max_attempts=max_attempts,
     )
     session.add(task)
@@ -78,6 +96,8 @@ async def list_tasks(
     *,
     agent_id: str | None = None,
     status: str | None = None,
+    workflow_run_id: UUID | None = None,
+    parent_task_id: UUID | None = None,
     limit: int = 100,
 ) -> list[AgentTask]:
     statement = select(AgentTask)
@@ -85,6 +105,10 @@ async def list_tasks(
         statement = statement.where(AgentTask.agent_id == agent_id)
     if status:
         statement = statement.where(AgentTask.status == status)
+    if workflow_run_id is not None:
+        statement = statement.where(AgentTask.workflow_run_id == workflow_run_id)
+    if parent_task_id is not None:
+        statement = statement.where(AgentTask.parent_task_id == parent_task_id)
     values = await session.scalars(statement.order_by(AgentTask.created_at.desc()).limit(limit))
     return list(values.unique())
 
@@ -159,3 +183,13 @@ async def stale_running_tasks(session: AsyncSession, stale_seconds: int) -> list
         select(AgentTask).where(AgentTask.status == "running", AgentTask.started_at < cutoff)
     )
     return list(values)
+
+
+async def list_run_tasks(session: AsyncSession, workflow_run_id: UUID) -> list[AgentTask]:
+    values = await session.scalars(
+        select(AgentTask)
+        .options(selectinload(AgentTask.session))
+        .where(AgentTask.workflow_run_id == workflow_run_id)
+        .order_by(AgentTask.created_at, AgentTask.id)
+    )
+    return list(values.unique())

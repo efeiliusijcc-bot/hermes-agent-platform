@@ -42,6 +42,8 @@ services:
         condition: service_healthy
       knowledge-service:
         condition: service_healthy
+      source-recall-gateway:
+        condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -60,6 +62,8 @@ services:
       TASK_MAX_ATTEMPTS: ${TASK_MAX_ATTEMPTS:-3}
       TASK_RETRY_DELAY_SECONDS: ${TASK_RETRY_DELAY_SECONDS:-1}
       TASK_STALE_SECONDS: ${TASK_STALE_SECONDS:-600}
+      AGENT_MESSAGE_STREAM_KEY: ${AGENT_MESSAGE_STREAM_KEY:-hermes:agent-messages:v1}
+      AGENT_MESSAGE_MAX_LENGTH: ${AGENT_MESSAGE_MAX_LENGTH:-10000}
       WORKSPACE_ROOT: /data/workspaces
       ARTIFACT_STORAGE_PROVIDER: ${ARTIFACT_STORAGE_PROVIDER:-minio}
       ARTIFACT_LOCAL_ROOT: /data/artifacts
@@ -79,6 +83,9 @@ services:
       HERMES_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
       HERMES_MODEL: hermes-agent
       HERMES_TIMEOUT_SECONDS: ${HERMES_TIMEOUT_SECONDS:-180}
+      PI_RUNTIME_ENDPOINT: ${PI_RUNTIME_ENDPOINT:-http://pi-runtime:8765}
+      PI_RUNTIME_API_KEY: ${PI_RUNTIME_API_KEY:-}
+      PI_RUNTIME_TIMEOUT_SECONDS: ${PI_RUNTIME_TIMEOUT_SECONDS:-180}
       SKILLS_ROOT: /app/skills
       SKILL_MAX_DOCUMENT_BYTES: ${SKILL_MAX_DOCUMENT_BYTES:-262144}
       SKILL_MAX_UPLOAD_BYTES: ${SKILL_MAX_UPLOAD_BYTES:-10485760}
@@ -90,6 +97,14 @@ services:
       KNOWLEDGE_SERVICE_TIMEOUT_SECONDS: ${KNOWLEDGE_SERVICE_TIMEOUT_SECONDS:-60}
       KNOWLEDGE_SEARCH_TOP_K: ${KNOWLEDGE_SEARCH_TOP_K:-5}
       KNOWLEDGE_MAX_UPLOAD_BYTES: ${KNOWLEDGE_MAX_UPLOAD_BYTES:-10485760}
+      SOURCE_RECALL_ENABLED: ${SOURCE_RECALL_ENABLED:-false}
+      SOURCE_RECALL_GATEWAY_ENDPOINT: http://source-recall-gateway:8082
+      SOURCE_RECALL_GATEWAY_API_KEY: ${SOURCE_RECALL_GATEWAY_API_KEY:-}
+      SOURCE_RECALL_TIMEOUT_SECONDS: ${SOURCE_RECALL_TIMEOUT_SECONDS:-60}
+      SOURCE_RECALL_DEFAULT_LOOKBACK_DAYS: ${SOURCE_RECALL_DEFAULT_LOOKBACK_DAYS:-3650}
+      SOURCE_RECALL_DEFAULT_LIMIT: ${SOURCE_RECALL_DEFAULT_LIMIT:-20}
+      SOURCE_RECALL_SUMMARY_MAX_CHARS: ${SOURCE_RECALL_SUMMARY_MAX_CHARS:-1200}
+      SOURCE_RECALL_EXCERPT_MAX_CHARS: ${SOURCE_RECALL_EXCERPT_MAX_CHARS:-2000}
     volumes:
       - ./skills:/app/skills
       - ./data/hermes-workspace:/data/workspaces
@@ -131,6 +146,8 @@ services:
         condition: service_healthy
       knowledge-service:
         condition: service_healthy
+      source-recall-gateway:
+        condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -149,6 +166,8 @@ services:
       TASK_MAX_ATTEMPTS: ${TASK_MAX_ATTEMPTS:-3}
       TASK_RETRY_DELAY_SECONDS: ${TASK_RETRY_DELAY_SECONDS:-1}
       TASK_STALE_SECONDS: ${TASK_STALE_SECONDS:-600}
+      AGENT_MESSAGE_STREAM_KEY: ${AGENT_MESSAGE_STREAM_KEY:-hermes:agent-messages:v1}
+      AGENT_MESSAGE_MAX_LENGTH: ${AGENT_MESSAGE_MAX_LENGTH:-10000}
       WORKER_ID: ${WORKER_ID:-agent-worker}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
       WORKSPACE_ROOT: /data/workspaces
@@ -170,6 +189,9 @@ services:
       HERMES_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
       HERMES_MODEL: hermes-agent
       HERMES_TIMEOUT_SECONDS: ${HERMES_TIMEOUT_SECONDS:-180}
+      PI_RUNTIME_ENDPOINT: ${PI_RUNTIME_ENDPOINT:-http://pi-runtime:8765}
+      PI_RUNTIME_API_KEY: ${PI_RUNTIME_API_KEY:-}
+      PI_RUNTIME_TIMEOUT_SECONDS: ${PI_RUNTIME_TIMEOUT_SECONDS:-180}
       SKILLS_ROOT: /app/skills
       SKILL_MAX_DOCUMENT_BYTES: ${SKILL_MAX_DOCUMENT_BYTES:-262144}
       SKILL_MAX_UPLOAD_BYTES: ${SKILL_MAX_UPLOAD_BYTES:-10485760}
@@ -181,6 +203,14 @@ services:
       KNOWLEDGE_SERVICE_TIMEOUT_SECONDS: ${KNOWLEDGE_SERVICE_TIMEOUT_SECONDS:-60}
       KNOWLEDGE_SEARCH_TOP_K: ${KNOWLEDGE_SEARCH_TOP_K:-5}
       KNOWLEDGE_MAX_UPLOAD_BYTES: ${KNOWLEDGE_MAX_UPLOAD_BYTES:-10485760}
+      SOURCE_RECALL_ENABLED: ${SOURCE_RECALL_ENABLED:-false}
+      SOURCE_RECALL_GATEWAY_ENDPOINT: http://source-recall-gateway:8082
+      SOURCE_RECALL_GATEWAY_API_KEY: ${SOURCE_RECALL_GATEWAY_API_KEY:-}
+      SOURCE_RECALL_TIMEOUT_SECONDS: ${SOURCE_RECALL_TIMEOUT_SECONDS:-60}
+      SOURCE_RECALL_DEFAULT_LOOKBACK_DAYS: ${SOURCE_RECALL_DEFAULT_LOOKBACK_DAYS:-3650}
+      SOURCE_RECALL_DEFAULT_LIMIT: ${SOURCE_RECALL_DEFAULT_LIMIT:-20}
+      SOURCE_RECALL_SUMMARY_MAX_CHARS: ${SOURCE_RECALL_SUMMARY_MAX_CHARS:-1200}
+      SOURCE_RECALL_EXCERPT_MAX_CHARS: ${SOURCE_RECALL_EXCERPT_MAX_CHARS:-2000}
     volumes:
       - ./skills:/app/skills:ro
       - ./data/hermes-workspace:/data/workspaces
@@ -199,6 +229,87 @@ services:
       start_period: 10s
     networks:
       - platform-internal
+
+  hermes-orchestrator:
+    image: hermes-agent-platform/agent-api:phase7
+    restart: unless-stopped
+    entrypoint: ["python", "-m", "app.orchestrator_worker"]
+    depends_on:
+      agent-api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-5}
+      TASK_QUEUE_KEY: ${TASK_QUEUE_KEY:-hermes:agent-tasks:v1}
+      ORCHESTRATOR_POLL_SECONDS: ${ORCHESTRATOR_POLL_SECONDS:-1}
+      AGENT_MESSAGE_STREAM_KEY: ${AGENT_MESSAGE_STREAM_KEY:-hermes:agent-messages:v1}
+      AGENT_MESSAGE_MAX_LENGTH: ${AGENT_MESSAGE_MAX_LENGTH:-10000}
+      WORKSPACE_ROOT: /data/workspaces
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      HERMES_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
+      MCP_GATEWAY_SIGNING_KEY: ${MCP_GATEWAY_SIGNING_KEY:?MCP_GATEWAY_SIGNING_KEY is required}
+      PI_RUNTIME_ENDPOINT: ${PI_RUNTIME_ENDPOINT:-http://pi-runtime:8765}
+      PI_RUNTIME_API_KEY: ${PI_RUNTIME_API_KEY:-}
+      PI_RUNTIME_TIMEOUT_SECONDS: ${PI_RUNTIME_TIMEOUT_SECONDS:-180}
+      SOURCE_RECALL_ENABLED: ${SOURCE_RECALL_ENABLED:-false}
+      SOURCE_RECALL_GATEWAY_ENDPOINT: http://source-recall-gateway:8082
+      SOURCE_RECALL_GATEWAY_API_KEY: ${SOURCE_RECALL_GATEWAY_API_KEY:-}
+      SOURCE_RECALL_TIMEOUT_SECONDS: ${SOURCE_RECALL_TIMEOUT_SECONDS:-60}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from pathlib import Path; assert Path('/proc/1/cmdline').exists()"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - platform-internal
+
+  source-recall-gateway:
+    image: hermes-agent-platform/agent-api:phase7
+    restart: unless-stopped
+    entrypoint: ["uvicorn", "app.source_recall_gateway:app", "--host", "0.0.0.0", "--port", "8082"]
+    environment:
+      SOURCE_RECALL_UPSTREAM_ENDPOINT: ${SOURCE_RECALL_UPSTREAM_ENDPOINT:-}
+      SOURCE_RECALL_UPSTREAM_API_KEY: ${SOURCE_RECALL_UPSTREAM_API_KEY:-}
+      SOURCE_RECALL_GATEWAY_API_KEY: ${SOURCE_RECALL_GATEWAY_API_KEY:-}
+      SOURCE_RECALL_UPSTREAM_TIMEOUT_SECONDS: ${SOURCE_RECALL_UPSTREAM_TIMEOUT_SECONDS:-60}
+      SOURCE_RECALL_UPSTREAM_MAX_RETRIES: ${SOURCE_RECALL_UPSTREAM_MAX_RETRIES:-1}
+      SOURCE_RECALL_UPSTREAM_RETRY_DELAY_SECONDS: ${SOURCE_RECALL_UPSTREAM_RETRY_DELAY_SECONDS:-0.5}
+      SOURCE_RECALL_MAX_LOOKBACK_DAYS: ${SOURCE_RECALL_MAX_LOOKBACK_DAYS:-3650}
+      SOURCE_RECALL_MAX_LIMIT: ${SOURCE_RECALL_MAX_LIMIT:-20}
+    expose:
+      - "8082"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=2)"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    networks:
+      - platform-internal
+      - platform-edge
 
   model-gateway:
     image: hermes-agent-platform/agent-api:phase7

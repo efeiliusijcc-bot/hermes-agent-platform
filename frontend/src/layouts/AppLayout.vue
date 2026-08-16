@@ -8,6 +8,7 @@ import {
   Archive,
   ChartBar,
   Hierarchy,
+  GitBranch,
   Activity,
   ChevronLeft,
   ChevronRight,
@@ -41,6 +42,7 @@ const menuOptions: MenuOption[] = [
   { label: 'AGENT', key: 'agent-group', type: 'group', children: [
     { label: renderLink('Agent 列表', 'agents'), key: 'agents', icon: renderIcon(Robot) },
     { label: renderLink('创建 Agent', 'agent-create'), key: 'agent-create', icon: renderIcon(Plus) },
+    { label: renderLink('多 Agent 编排', 'multi-agent'), key: 'multi-agent', icon: renderIcon(GitBranch) },
   ] },
   { label: '执行', key: 'execution-group', type: 'group', children: [
     { label: renderLink('执行历史', 'executions'), key: 'executions', icon: renderIcon(ListCheck) },

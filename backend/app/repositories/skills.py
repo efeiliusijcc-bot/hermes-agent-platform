@@ -15,6 +15,7 @@ async def create_skill(session: AsyncSession, payload: SkillCreate) -> Skill:
         name=payload.name,
         description=payload.description,
         path=payload.path,
+        runtime_support=list(dict.fromkeys(payload.runtime_support)),
     )
     session.add(skill)
     await session.commit()
@@ -30,6 +31,7 @@ async def register_imported_skill(session: AsyncSession, imported: "ImportedSkil
         path=imported.path,
         version=imported.version,
         manifest=imported.manifest,
+        runtime_support=list(imported.runtime_support),
         package_sha256=imported.package_sha256,
     )
     session.add(skill)

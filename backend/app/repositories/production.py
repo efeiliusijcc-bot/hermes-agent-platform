@@ -31,6 +31,7 @@ from app.db.models import (
 )
 from app.prompting import validate_prompt_template
 from app.schemas.schema_validation import normalize_schema
+from app.schemas.agent import validate_runtime_config
 
 
 @dataclass(frozen=True)
@@ -593,7 +594,11 @@ async def build_agent_snapshot(session: AsyncSession, agent: Agent) -> dict[str,
             "version": api_binding.api_version if api_binding else "v1",
             "status": api_binding.status if api_binding else None,
         },
-        "runtime": {"response_mode": agent.response_mode},
+        "runtime": {
+            "response_mode": agent.response_mode,
+            "runtime_type": getattr(agent, "runtime_type", "hermes"),
+            "runtime_config": getattr(agent, "runtime_config", {}) or {},
+        },
     }
 
 
@@ -725,6 +730,11 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> None:
         raise ValueError("Agent Version model adapter is invalid")
     if runtime.get("response_mode") not in {"sync", "stream"}:
         raise ValueError("Agent Version response_mode is invalid")
+    if runtime.get("runtime_type", "hermes") not in {"hermes", "pi"}:
+        raise ValueError("Agent Version runtime_type is invalid")
+    if not isinstance(runtime.get("runtime_config", {}), dict):
+        raise ValueError("Agent Version runtime_config is invalid")
+    validate_runtime_config(runtime.get("runtime_config", {}))
     schema = snapshot["schema"]
     input_schema = schema.get("input_schema") if isinstance(schema.get("input_schema"), dict) else {}
     output_schema = schema.get("output_schema") if isinstance(schema.get("output_schema"), dict) else {}
@@ -776,6 +786,16 @@ async def build_version_runtime_agent(
             runtime.get("response_mode")
             if runtime.get("response_mode") in {"sync", "stream"}
             else "sync"
+        ),
+        runtime_type=(
+            runtime.get("runtime_type")
+            if runtime.get("runtime_type") in {"hermes", "pi"}
+            else getattr(agent, "runtime_type", "hermes")
+        ),
+        runtime_config=(
+            runtime.get("runtime_config")
+            if isinstance(runtime.get("runtime_config"), dict)
+            else getattr(agent, "runtime_config", {})
         ),
         input_schema=input_schema,
         output_schema=output_schema,
@@ -981,6 +1001,10 @@ async def restore_agent_version(
     agent.output_schema = schema.get("output_schema") if isinstance(schema.get("output_schema"), dict) else {}
     if runtime.get("response_mode") in {"sync", "stream"}:
         agent.response_mode = runtime["response_mode"]
+    if runtime.get("runtime_type") in {"hermes", "pi"}:
+        agent.runtime_type = runtime["runtime_type"]
+    if isinstance(runtime.get("runtime_config"), dict):
+        agent.runtime_config = runtime["runtime_config"]
 
     await session.execute(delete(agent_skill).where(agent_skill.c.agent_id == agent.id))
     await session.execute(delete(agent_mcp).where(agent_mcp.c.agent_id == agent.id))

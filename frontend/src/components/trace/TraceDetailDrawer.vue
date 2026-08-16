@@ -60,7 +60,14 @@ const completionTokens = computed(() => objectValue(props.node?.output_data).com
           <div><dt>Latency</dt><dd>{{ formatDurationMs(node.latency_ms) }}</dd></div>
         </dl>
 
-        <dl v-else-if="node.step_type === 'model' || node.step_key.startsWith('hermes_runtime')" class="trace-node-definition">
+        <dl v-else-if="node.step_type === 'runtime'" class="trace-node-definition">
+          <div><dt>Runtime</dt><dd class="mono">{{ trace?.runtime_type || '--' }}</dd></div>
+          <div><dt>Runtime Version</dt><dd class="mono">{{ trace?.runtime_version || '--' }}</dd></div>
+          <div><dt>Runtime ID</dt><dd class="mono">{{ trace?.runtime_id || '环境变量默认端点' }}</dd></div>
+          <div><dt>Latency</dt><dd>{{ formatDurationMs(node.latency_ms) }}</dd></div>
+        </dl>
+
+        <dl v-else-if="node.step_type === 'model' || node.step_key.startsWith('hermes_runtime') || node.step_key.startsWith('pi_runtime')" class="trace-node-definition">
           <div><dt>Model</dt><dd class="mono">{{ trace?.model || '--' }}</dd></div>
           <div><dt>Adapter</dt><dd>{{ trace?.model_adapter || '--' }}</dd></div>
           <div><dt>Prompt Tokens</dt><dd>{{ promptTokens === null ? '当前 Trace 未记录' : formatCount(Number(promptTokens)) }}</dd></div>

@@ -2,22 +2,29 @@ export type AgentLifecycleStatus = 'active' | 'inactive' | 'archived'
 export type LegacyAgentStatus = 'draft' | 'testing' | 'published' | 'suspended' | 'disabled'
 export type AgentStatus = AgentLifecycleStatus | LegacyAgentStatus
 export type ExecutionStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
-export type TaskStatus = 'pending' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'cancelled'
+export type TaskStatus = 'pending' | 'running' | 'waiting_child' | 'human_review' | 'retrying' | 'succeeded' | 'failed' | 'cancelled'
 export type SessionStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 export type ResponseMode = 'sync' | 'stream'
 export type ModelAdapterName = 'hermes' | 'qwen' | 'deepseek' | 'gpt' | 'claude'
+export type AgentType = 'manager' | 'worker'
+export type RuntimeType = 'hermes' | 'pi'
+export type RuntimeStatus = 'unknown' | 'online' | 'offline' | 'disabled'
 export type LifecycleStatus = 'draft' | 'testing' | 'published' | 'deprecated' | 'disabled'
 
 export interface Agent {
   id: string
   name: string
   description: string | null
+  agent_type: AgentType
+  parent_agent_id: string | null
   role: string
   system_prompt: string
   model_config: Record<string, unknown>
   model: string
   prompt_template: string
   model_adapter: ModelAdapterName
+  runtime_type: RuntimeType
+  runtime_config: Record<string, unknown>
   api_enabled: boolean
   status: AgentStatus
   response_mode: ResponseMode
@@ -32,12 +39,16 @@ export interface AgentCreatePayload {
   id: string
   name: string
   description: string | null
+  agent_type?: AgentType
+  parent_agent_id?: string | null
   role: string
   system_prompt: string
   model_config: Record<string, unknown>
   model?: string
   prompt_template?: string
   model_adapter?: ModelAdapterName
+  runtime_type?: RuntimeType
+  runtime_config?: Record<string, unknown>
   status: AgentLifecycleStatus
   response_mode?: ResponseMode
   input_schema?: Record<string, unknown>
@@ -58,6 +69,14 @@ export interface AgentTaskSubmitPayload extends AgentRunPayload {
 
 export interface AgentTask {
   id: string
+  parent_task_id: string | null
+  workflow_id: string | null
+  workflow_run_id: string | null
+  node_key: string | null
+  node_type: string
+  depends_on: string[]
+  input_data: Record<string, unknown>
+  output_data: Record<string, unknown>
   agent_id: string
   session_id: string
   execution_id: string | null
@@ -77,6 +96,8 @@ export interface AgentSession {
   agent_id: string
   user_id: string | null
   memory_session_id: string
+  runtime_type: RuntimeType
+  runtime_session_id: string | null
   status: SessionStatus
   input: string
   output: string | null
@@ -107,6 +128,82 @@ export interface AgentWorkspace {
   size_bytes: number
 }
 
+export type AgentTeamStatus = 'active' | 'inactive' | 'archived'
+export type WorkflowStatus = 'draft' | 'active' | 'inactive' | 'archived'
+export type WorkflowRunStatus = 'pending' | 'running' | 'human_review' | 'succeeded' | 'failed' | 'cancelled'
+export type WorkflowNodeType = 'agent' | 'tool' | 'skill' | 'condition' | 'human_approval'
+
+export interface AgentTeamMember {
+  agent_id: string
+  agent_name: string
+  agent_type: AgentType
+  runtime_type: RuntimeType
+  role: string
+  priority: number
+}
+
+export interface AgentTeam {
+  id: string
+  name: string
+  description: string | null
+  owner_agent_id: string
+  status: AgentTeamStatus
+  members: AgentTeamMember[]
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkflowNode {
+  key: string
+  type: WorkflowNodeType
+  name: string
+  agent_id: string | null
+  depends_on: string[]
+  config: Record<string, unknown>
+}
+
+export interface Workflow {
+  id: string
+  team_id: string
+  name: string
+  description: string | null
+  status: WorkflowStatus
+  nodes: WorkflowNode[]
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkflowRun {
+  id: string
+  workflow_id: string | null
+  team_id: string
+  status: WorkflowRunStatus
+  input: string
+  output: string | null
+  error: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface MultiAgentRunPayload {
+  input: string
+  session_id: string
+  priority: number
+  user_id?: string | null
+  parameters?: Record<string, unknown>
+}
+
+export interface AgentMessage {
+  id: string
+  from_agent: string
+  to_agent: string
+  message_type: 'task' | 'result' | 'event' | 'error'
+  payload: Record<string, unknown>
+  task_id: string | null
+  created_at: string
+}
+
 export interface AgentRunResponse {
   execution_id: string
   agent_id: string
@@ -114,6 +211,30 @@ export interface AgentRunResponse {
   status: 'succeeded'
   output: string
   hermes_run_id: string | null
+  runtime: RuntimeType
+  runtime_run_id: string | null
+}
+
+export interface AgentRuntime {
+  id: string
+  name: string
+  type: RuntimeType
+  version: string
+  endpoint: string
+  config: Record<string, unknown>
+  status: RuntimeStatus
+  last_health_at: string | null
+  last_error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeHealth {
+  id: string
+  status: 'online' | 'offline'
+  version: string | null
+  latency_ms: number
+  detail: string
 }
 
 export interface MCPCall {
@@ -141,6 +262,10 @@ export interface ExecutionDetails {
   }
   hermes_run_id?: string | null
   hermes_status?: string
+  runtime_type?: RuntimeType
+  runtime_run_id?: string | null
+  runtime_status?: string
+  runtime_version?: string | null
   [key: string]: unknown
 }
 
@@ -159,6 +284,9 @@ export interface ExecutionLog {
   priority: number | null
   duration_ms: number | null
   token_usage: number | null
+  runtime_type: RuntimeType
+  runtime_id: string | null
+  runtime_version: string | null
   retry_of_execution_id: string | null
   agent_version_id: string | null
   started_at: string
@@ -210,6 +338,9 @@ export interface ExecutionSummary {
   status: ExecutionStatus
   task: string
   response_mode: 'sync' | 'stream' | 'async'
+  runtime_type: RuntimeType
+  runtime_id: string | null
+  runtime_version: string | null
   priority: number | null
   duration_ms: number | null
   token_usage: number | null
@@ -270,6 +401,9 @@ export interface ExecutionTrace {
   session_id: string | null
   memory_session_id: string | null
   status: ExecutionStatus
+  runtime_type: RuntimeType
+  runtime_id: string | null
+  runtime_version: string | null
   model: string | null
   model_adapter: string | null
   token_usage: number | null
@@ -289,6 +423,7 @@ export interface Skill {
   path: string
   version: string
   manifest: Record<string, unknown>
+  runtime_support: RuntimeType[]
   package_sha256: string | null
   created_at: string
   updated_at: string
@@ -422,7 +557,7 @@ export interface AgentVersionSnapshot {
     input_schema?: Record<string, unknown>
     output_schema?: Record<string, unknown>
   }
-  runtime?: { response_mode?: ResponseMode }
+  runtime?: { response_mode?: ResponseMode; runtime_type?: RuntimeType }
   [key: string]: unknown
 }
 
@@ -504,6 +639,7 @@ export interface HealthStatus {
   memory: string
   knowledge: string
   queue: string
+  agent_message_bus: string
   artifact_storage: string
 }
 

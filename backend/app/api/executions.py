@@ -158,6 +158,7 @@ async def retry_execution(
         internal_session_id=internal_session_id,
         retry_of_execution_id=source.id,
         agent_version_id=source.agent_version_id,
+        runtime_type=getattr(source.agent, "runtime_type", "hermes"),
     )
     try:
         await queue.enqueue(task.id, task.priority)
@@ -194,6 +195,9 @@ def _summary(execution: ExecutionLog) -> ExecutionSummary:
         status=execution.status,
         task=task,
         response_mode=execution.response_mode,
+        runtime_type=getattr(execution, "runtime_type", "hermes"),
+        runtime_id=getattr(execution, "runtime_id", None),
+        runtime_version=getattr(execution, "runtime_version", None),
         priority=execution.priority,
         duration_ms=execution.duration_ms,
         token_usage=execution.token_usage,
@@ -238,6 +242,9 @@ def _trace(execution: ExecutionLog) -> ExecutionTraceRead:
         session_id=execution.session_id,
         memory_session_id=(execution.session.memory_session_id if execution.session else None),
         status=execution.status,
+        runtime_type=getattr(execution, "runtime_type", "hermes"),
+        runtime_id=getattr(execution, "runtime_id", None),
+        runtime_version=getattr(execution, "runtime_version", None),
         model=_text(details.get("model")),
         model_adapter=_text(details.get("model_adapter")),
         token_usage=execution.token_usage,
@@ -269,9 +276,9 @@ def _is_mcp_call(step: object) -> bool:
 def _is_model_call(step: object) -> bool:
     step_key = str(getattr(step, "step_key", ""))
     step_name = str(getattr(step, "step_name", ""))
-    return step_key.startswith("hermes_runtime") or (
-        getattr(step, "step_type", None) == "model" and "call" in step_name.lower()
-    )
+    return getattr(step, "step_type", None) == "runtime" or step_key.startswith(
+        ("hermes_runtime", "pi_runtime")
+    ) or (getattr(step, "step_type", None) == "model" and "call" in step_name.lower())
 
 
 def _text(value: object) -> str | None:

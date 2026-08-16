@@ -1,10 +1,14 @@
 import { apiClient } from './client'
 import type {
   Agent,
+  AgentRuntime,
   AgentSession,
   AgentTask,
   AgentTaskSubmitPayload,
   AgentWorkspace,
+  AgentTeam,
+  AgentTeamStatus,
+  AgentMessage,
   Artifact,
   AgentCreatePayload,
   AgentRunPayload,
@@ -34,9 +38,16 @@ import type {
   MCPServerCreatePayload,
   MCPServerTestResult,
   ResponseMode,
+  RuntimeHealth,
+  RuntimeType,
   ModelAdapterName,
   MetricsSummary,
+  MultiAgentRunPayload,
   Skill,
+  Workflow,
+  WorkflowNode,
+  WorkflowRun,
+  WorkflowStatus,
 } from '@/types/api'
 
 export const platformApi = {
@@ -52,6 +63,20 @@ export const platformApi = {
 
   async getAgent(agentId: string): Promise<Agent> {
     const { data } = await apiClient.get<Agent>(`/api/agents/${encodeURIComponent(agentId)}`)
+    return data
+  },
+
+  async listRuntimes(type?: RuntimeType): Promise<AgentRuntime[]> {
+    const { data } = await apiClient.get<AgentRuntime[]>('/api/runtimes', {
+      params: { type },
+    })
+    return data
+  },
+
+  async checkRuntime(runtimeId: string): Promise<RuntimeHealth> {
+    const { data } = await apiClient.post<RuntimeHealth>(
+      `/api/runtimes/${encodeURIComponent(runtimeId)}/health`,
+    )
     return data
   },
 
@@ -244,6 +269,130 @@ export const platformApi = {
     await apiClient.delete(`/api/tasks/${encodeURIComponent(taskId)}`)
   },
 
+  async listAgentTeams(): Promise<AgentTeam[]> {
+    const { data } = await apiClient.get<AgentTeam[]>('/api/agent-teams')
+    return data
+  },
+
+  async createAgentTeam(payload: {
+    name: string
+    description?: string | null
+    owner_agent_id: string
+    status?: AgentTeamStatus
+  }): Promise<AgentTeam> {
+    const { data } = await apiClient.post<AgentTeam>('/api/agent-teams', payload)
+    return data
+  },
+
+  async updateAgentTeam(
+    teamId: string,
+    payload: { name?: string; description?: string | null; status?: AgentTeamStatus },
+  ): Promise<AgentTeam> {
+    const { data } = await apiClient.patch<AgentTeam>(
+      `/api/agent-teams/${encodeURIComponent(teamId)}`,
+      payload,
+    )
+    return data
+  },
+
+  async deleteAgentTeam(teamId: string): Promise<void> {
+    await apiClient.delete(`/api/agent-teams/${encodeURIComponent(teamId)}`)
+  },
+
+  async upsertTeamMember(
+    teamId: string,
+    agentId: string,
+    payload: { role: string; priority: number },
+  ): Promise<AgentTeam> {
+    const { data } = await apiClient.put<AgentTeam>(
+      `/api/agent-teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(agentId)}`,
+      payload,
+    )
+    return data
+  },
+
+  async removeTeamMember(teamId: string, agentId: string): Promise<void> {
+    await apiClient.delete(
+      `/api/agent-teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(agentId)}`,
+    )
+  },
+
+  async listWorkflows(teamId?: string): Promise<Workflow[]> {
+    const { data } = await apiClient.get<Workflow[]>('/api/workflows', {
+      params: { team_id: teamId },
+    })
+    return data
+  },
+
+  async createWorkflow(payload: {
+    team_id: string
+    name: string
+    description?: string | null
+    status?: WorkflowStatus
+    nodes: WorkflowNode[]
+  }): Promise<Workflow> {
+    const { data } = await apiClient.post<Workflow>('/api/workflows', payload)
+    return data
+  },
+
+  async updateWorkflow(
+    workflowId: string,
+    payload: { name?: string; description?: string | null; status?: WorkflowStatus; nodes?: WorkflowNode[] },
+  ): Promise<Workflow> {
+    const { data } = await apiClient.patch<Workflow>(
+      `/api/workflows/${encodeURIComponent(workflowId)}`,
+      payload,
+    )
+    return data
+  },
+
+  async runAgentTeam(teamId: string, payload: MultiAgentRunPayload): Promise<WorkflowRun> {
+    const { data } = await apiClient.post<WorkflowRun>(
+      `/api/agent-teams/${encodeURIComponent(teamId)}/runs`,
+      payload,
+    )
+    return data
+  },
+
+  async runWorkflow(workflowId: string, payload: MultiAgentRunPayload): Promise<WorkflowRun> {
+    const { data } = await apiClient.post<WorkflowRun>(
+      `/api/workflows/${encodeURIComponent(workflowId)}/runs`,
+      payload,
+    )
+    return data
+  },
+
+  async listWorkflowRuns(params: { team_id?: string; workflow_id?: string } = {}): Promise<WorkflowRun[]> {
+    const { data } = await apiClient.get<WorkflowRun[]>('/api/workflow-runs', { params })
+    return data
+  },
+
+  async listWorkflowRunTasks(runId: string): Promise<AgentTask[]> {
+    const { data } = await apiClient.get<AgentTask[]>(
+      `/api/workflow-runs/${encodeURIComponent(runId)}/tasks`,
+    )
+    return data
+  },
+
+  async cancelWorkflowRun(runId: string): Promise<void> {
+    await apiClient.delete(`/api/workflow-runs/${encodeURIComponent(runId)}`)
+  },
+
+  async reviewHumanTask(taskId: string, approved: boolean, note?: string): Promise<AgentTask> {
+    const { data } = await apiClient.post<AgentTask>(
+      `/api/tasks/${encodeURIComponent(taskId)}/approval`,
+      { approved, note },
+    )
+    return data
+  },
+
+  async listAgentMessages(toAgent?: string): Promise<AgentMessage[]> {
+    const { data } = await apiClient.get<AgentMessage[]>('/api/agent-messages', {
+      params: { to_agent: toAgent },
+    })
+    return data
+  },
+
   async listSessions(agentId?: string): Promise<AgentSession[]> {
     const { data } = await apiClient.get<AgentSession[]>('/api/sessions', { params: { agent_id: agentId } })
     return data
@@ -354,6 +503,8 @@ export const platformApi = {
       model: string
       prompt_template: string
       model_adapter: ModelAdapterName
+      runtime_type?: 'hermes' | 'pi'
+      runtime_config?: Record<string, unknown>
       model_config: Record<string, unknown>
     },
   ): Promise<Agent> {
