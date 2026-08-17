@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -20,6 +21,17 @@ from app.runtime.capabilities import normalize_capability_profile
 
 class OrchestratorError(RuntimeError):
     pass
+
+
+def _orchestration_memory_session_id(
+    client_session_id: str,
+    run_id: UUID,
+    node_key: str,
+) -> str:
+    """Build a stable runtime-safe memory namespace for one orchestration node."""
+
+    digest = sha256(f"{client_session_id}:{run_id}:{node_key}".encode("utf-8")).hexdigest()
+    return f"ma-{run_id.hex}-{digest[:24]}"
 
 
 class AgentOrchestrator:
@@ -265,7 +277,11 @@ class AgentOrchestrator:
             session,
             agent_id=agent.id,
             input_text=task_input,
-            memory_session_id=f"{payload.session_id}:{run.id}:{node_key}",
+            memory_session_id=_orchestration_memory_session_id(
+                payload.session_id,
+                run.id,
+                node_key,
+            ),
             user_id=payload.user_id,
             priority=payload.priority,
             max_attempts=self.settings.task_max_attempts,

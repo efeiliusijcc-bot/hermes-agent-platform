@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import configure_mappers
 
+from app import worker as worker_module
 from app.db.models import Agent, AgentRuntime, ExecutionLog, Skill
 from app.api import executions as executions_api
 from app.api.agents import _complete_execution, _render_mcp_prompt
@@ -266,6 +267,64 @@ async def test_worker_cancellation_keeps_task_and_session_cancelled() -> None:
     assert task.finished_at is finished_at
     assert task.session.finished_at is finished_at
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_converges_request_validation_failure_to_terminal_state(monkeypatch) -> None:
+    task_id = uuid4()
+    orchestration_session = SimpleNamespace(
+        status="queued",
+        input="analyze supplied files",
+        memory_session_id="invalid:runtime:session",
+        started_at=None,
+        finished_at=None,
+    )
+    task = SimpleNamespace(
+        id=task_id,
+        agent_id="worker-agent",
+        status="pending",
+        attempt=0,
+        max_attempts=1,
+        priority=5,
+        worker_id=None,
+        started_at=None,
+        finished_at=None,
+        error=None,
+        execution_id=None,
+        parent_task_id=None,
+        session=orchestration_session,
+    )
+
+    class FakeSession:
+        commit = AsyncMock()
+        rollback = AsyncMock()
+        refresh = AsyncMock()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, model, identity):
+            return None
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(worker_module, "SessionFactory", lambda: fake_session)
+    monkeypatch.setattr(worker_module.repository, "get_task", AsyncMock(return_value=task))
+    monkeypatch.setattr(
+        worker_module.agent_repository,
+        "get_agent",
+        AsyncMock(return_value=SimpleNamespace(id="worker-agent", status="active")),
+    )
+    worker = AgentWorker.__new__(AgentWorker)
+    worker._publish_result = AsyncMock()
+
+    await worker._execute(task_id, "worker-1")
+
+    assert task.status == orchestration_session.status == "failed"
+    assert "session_id" in task.error
+    fake_session.rollback.assert_awaited_once()
 
 
 def test_pi_prompt_never_exposes_the_per_execution_mcp_token() -> None:

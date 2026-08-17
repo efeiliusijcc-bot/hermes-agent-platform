@@ -116,29 +116,31 @@ class AgentWorker:
                     runtime_options.get("temperature"), (int, float)
                 ):
                     temperature = float(runtime_options["temperature"])
-            request = AgentRunRequest(
-                input=task.session.input,
-                session_id=task.session.memory_session_id,
-                parameters=parameters,
-                temperature=temperature,
-            )
-            runtime_agent = agent
-            schema_runtime = None
-            if execution is not None and execution.agent_version_id is not None:
-                version = await production_repository.get_agent_version_by_id(
-                    session, agent.id, execution.agent_version_id
-                )
-                if version is None:
-                    await self._terminal_failure(task, session, "Agent Version is unavailable")
-                    return
-                try:
-                    runtime_agent, schema_runtime = await production_repository.build_version_runtime_agent(
-                        session, agent, version
-                    )
-                except ValueError as exc:
-                    await self._terminal_failure(task, session, str(exc))
-                    return
             try:
+                request = AgentRunRequest(
+                    input=task.session.input,
+                    session_id=task.session.memory_session_id,
+                    parameters=parameters,
+                    temperature=temperature,
+                )
+                runtime_agent = agent
+                schema_runtime = None
+                if execution is not None and execution.agent_version_id is not None:
+                    version = await production_repository.get_agent_version_by_id(
+                        session, agent.id, execution.agent_version_id
+                    )
+                    if version is None:
+                        await self._terminal_failure(task, session, "Agent Version is unavailable")
+                        return
+                    try:
+                        runtime_agent, schema_runtime = (
+                            await production_repository.build_version_runtime_agent(
+                                session, agent, version
+                            )
+                        )
+                    except ValueError as exc:
+                        await self._terminal_failure(task, session, str(exc))
+                        return
                 await execute_agent_sync(
                     runtime_agent,
                     request,

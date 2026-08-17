@@ -10,7 +10,7 @@ from sqlalchemy.orm import configure_mappers
 
 from app.db.models import Agent, AgentTask, AgentTeam, Workflow, WorkflowRun
 from app.main import app
-from app.orchestrator import AgentOrchestrator
+from app.orchestrator import AgentOrchestrator, _orchestration_memory_session_id
 from app.runtime import get_runtime_adapter, supported_runtime_types
 from app.schemas.agent import AgentCreate
 from app.schemas.multi_agent import WorkflowCreate
@@ -130,6 +130,21 @@ def test_manager_aggregation_prompt_preserves_agent_provenance() -> None:
     assert "原始任务：analyze energy" in prompt
     assert "market-agent" in prompt and "market result" in prompt
     assert "competition-agent" in prompt and "competition result" in prompt
+
+
+def test_orchestration_memory_session_ids_are_runtime_safe_and_node_isolated() -> None:
+    run_id = uuid4()
+
+    first = _orchestration_memory_session_id("console:session", run_id, "worker/材料分析")
+    second = _orchestration_memory_session_id("console:session", run_id, "manager")
+
+    assert len(first) <= 128
+    assert first.startswith(f"ma-{run_id.hex}-")
+    assert all(
+        character.isascii() and (character.isalnum() or character in "._-")
+        for character in first
+    )
+    assert first != second
 
 
 def test_multi_agent_control_plane_routes_are_registered() -> None:
