@@ -31,6 +31,9 @@ def test_hermes_initializer_uses_current_stateless_runtime_config() -> None:
     assert '"_config_version": 33' in initializer
     assert '"cwd": "/opt/data"' in initializer
     assert '"home_mode": "auto"' in initializer
+    assert 'pwd.getpwnam("hermes")' in initializer
+    assert "os.chown(home, hermes_user.pw_uid, hermes_user.pw_gid)" in initializer
+    assert "os.chown(temporary, hermes_user.pw_uid, hermes_user.pw_gid)" in initializer
 
 
 def test_worker_task_claim_locks_only_task_row_not_eager_session_join() -> None:

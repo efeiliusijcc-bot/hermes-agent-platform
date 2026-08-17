@@ -1,10 +1,14 @@
 import os
+import pwd
 from pathlib import Path
 
 import yaml
 
 home = Path("/opt/data")
 home.mkdir(parents=True, exist_ok=True)
+hermes_user = pwd.getpwnam("hermes")
+home.chmod(0o700)
+os.chown(home, hermes_user.pw_uid, hermes_user.pw_gid)
 
 config = {
     "_config_version": 33,
@@ -55,4 +59,5 @@ config = {
 temporary = home / "config.yaml.tmp"
 temporary.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
 temporary.chmod(0o600)
+os.chown(temporary, hermes_user.pw_uid, hermes_user.pw_gid)
 temporary.replace(home / "config.yaml")
