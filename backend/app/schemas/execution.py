@@ -134,3 +134,10 @@ class ExecutionTraceRead(BaseModel):
 class ExecutionRetryRequest(BaseModel):
     session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
     priority: int | None = Field(default=None, ge=0, le=9)
+
+
+class ExecutionStopRead(BaseModel):
+    execution_id: UUID
+    status: Literal["cancelled"]
+    runtime_type: Literal["hermes", "pi"]
+    runtime_run_id: str

@@ -1,6 +1,13 @@
 from typing import Any
 
-from app.runtime.base import RuntimeAdapter, RuntimeAdapterError, RuntimeContext, RuntimeHealth, RuntimeSession
+from app.runtime.base import (
+    RuntimeAdapter,
+    RuntimeAdapterError,
+    RuntimeCancelledError,
+    RuntimeContext,
+    RuntimeHealth,
+    RuntimeSession,
+)
 from app.runtime.hermes import HermesClient, HermesRunResult
 
 
@@ -26,6 +33,7 @@ __all__ = [
     "HermesRunResult",
     "RuntimeAdapter",
     "RuntimeAdapterError",
+    "RuntimeCancelledError",
     "RuntimeContext",
     "RuntimeHealth",
     "RuntimeSession",

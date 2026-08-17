@@ -23,6 +23,8 @@ from app.knowledge import KnowledgeServiceClient
 from app.task_queue import get_task_queue
 from app.storage import get_artifact_storage
 from app.message_bus import get_agent_message_bus
+from app.repositories import runtimes as runtime_repository
+from app.runtime import RuntimeAdapterError, get_runtime_adapter
 
 settings = get_settings()
 logging.basicConfig(
@@ -36,6 +38,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     async with SessionFactory() as session:
         await session.execute(text("SELECT 1"))
+        if settings.runtime_auto_register:
+            await _register_builtin_runtimes(session)
     memory_store = get_memory_store()
     await memory_store.ping()
     task_queue = get_task_queue()
@@ -53,6 +57,48 @@ async def lifespan(_: FastAPI):
         await task_queue.close()
         await message_bus.close()
         await engine.dispose()
+
+
+async def _register_builtin_runtimes(session) -> None:
+    specifications = (
+        (
+            "Hermes Runtime",
+            "hermes",
+            settings.hermes_runtime_version,
+            settings.hermes_endpoint,
+            {"health_path": "/health"},
+        ),
+        (
+            "Pi Runtime",
+            "pi",
+            settings.pi_runtime_version,
+            settings.pi_runtime_endpoint,
+            {"health_path": "/health"},
+        ),
+    )
+    for name, runtime_type, version, endpoint, config in specifications:
+        value = await runtime_repository.ensure_runtime(
+            session,
+            name=name,
+            runtime_type=runtime_type,
+            version=version,
+            endpoint=endpoint,
+            config=config,
+        )
+        if value.status == "disabled":
+            continue
+        try:
+            health = await get_runtime_adapter(
+                runtime_type,
+                endpoint=endpoint,
+                version=version,
+                config=config,
+            ).health_check()
+            await runtime_repository.record_health(session, value, online=True)
+            logger.info("Runtime registered: %s version=%s", name, health.version or version)
+        except RuntimeAdapterError as exc:
+            await runtime_repository.record_health(session, value, online=False, error=str(exc))
+            logger.warning("Runtime registered but offline: %s", name)
 
 
 app = FastAPI(title=settings.app_name, version="0.3.1", lifespan=lifespan)

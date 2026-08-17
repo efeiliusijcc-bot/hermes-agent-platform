@@ -21,4 +21,9 @@ describe('execution and trace routes', () => {
     const orchestration = router.getRoutes().find((route) => route.name === 'multi-agent')
     expect(orchestration?.path).toBe('/orchestration')
   })
+
+  it('registers the Runtime management page', () => {
+    const runtimes = router.getRoutes().find((route) => route.name === 'runtimes')
+    expect(runtimes?.path).toBe('/runtimes')
+  })
 })

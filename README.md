@@ -1,12 +1,12 @@
 # Hermes Agent Platform
 
-The platform now includes the Agent Schema / public API contract, Agent isolation and concurrency, production lifecycle, and Phase 5 Multi-Agent orchestration. See `docs/phase2-registry-publication.md`, `docs/phase3-agent-isolation-concurrency.md`, `docs/phase4-production-agent-runtime.md`, and `docs/phase5-multi-agent-orchestration.md`.
+The platform now includes the Agent Schema / public API contract, Agent isolation and concurrency, production lifecycle, Multi-Agent orchestration, and the independently deployed official Pi Runtime. See `docs/phase2-registry-publication.md`, `docs/phase3-agent-isolation-concurrency.md`, `docs/phase4-production-agent-runtime.md`, `docs/phase5-multi-agent-orchestration.md`, and `docs/phase5-pi-runtime-deployment.md`.
 
 Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台以 Hermes Agent Runtime 为执行核心，通过外部 OpenAI Compatible 模型服务完成推理，并组合 Agent、Skill、MCP、Knowledge 与 Memory 构建可配置、可隔离的 AI 工作单元。
 
 ## 当前阶段
 
-当前仓库已完成 Agent Schema/API Gateway、隔离并发、Schema/Storage、生产 Agent Runtime，以及 Multi-Agent Team/Workflow 编排。除既有能力外，平台支持 Manager/Worker 关系、任务树、Workflow DAG、人工审批、Redis Stream 通信、独立 Orchestrator、并行 Worker 执行、Manager 结果聚合，以及 Hermes/Pi Runtime Adapter。
+当前仓库已完成 Agent Schema/API Gateway、隔离并发、Schema/Storage、生产 Agent Runtime，以及 Multi-Agent Team/Workflow 编排。除既有能力外，平台支持 Manager/Worker 关系、任务树、Workflow DAG、人工审批、Redis Stream 通信、独立 Orchestrator、并行 Worker 执行、Manager 结果聚合，并已部署基于官方 `@earendil-works/pi-agent-core 0.84.2` 的独立 Pi Runtime 服务。
 
 管理控制台已按 FastAPI 契约实现，包含运行总览、Agent 创建/详情/删除、Skill/MCP 展示、能力绑定、Playground、Multi-Agent Team/Workflow、Sync/SSE 模式选择、实时 Trace 和执行日志查看。SSE 直接转发 Runtime 原生增量事件，不使用伪流式切分。
 
@@ -77,7 +77,7 @@ Phase 3.1 的 Schema/API 版本生命周期、Artifact Storage Provider、Memory
 
 Phase 4 的生产生命周期、Client/Key 鉴权、限流、审计、指标、健康门禁、版本回滚及 116 独立验收证据见 [docs/phase4-production-agent-runtime.md](docs/phase4-production-agent-runtime.md)。控制面管理员认证尚未定义，因此管理接口只允许放在可信内网或由外层可信网关保护，不能直接暴露公网。
 
-Phase 5 的 Agent Team、Workflow DAG、Runtime Adapter、Redis Agent Message、独立 Orchestrator 和人工审批见 [docs/phase5-multi-agent-orchestration.md](docs/phase5-multi-agent-orchestration.md)。Pi Runtime 注册、HTTP 契约、上下文注入、Skill 兼容和真实验收步骤见 [docs/pi-runtime-adapter.md](docs/pi-runtime-adapter.md)。
+Phase 5 的 Agent Team、Workflow DAG、Runtime Adapter、Redis Agent Message、独立 Orchestrator 和人工审批见 [docs/phase5-multi-agent-orchestration.md](docs/phase5-multi-agent-orchestration.md)。Pi Runtime 适配契约见 [docs/pi-runtime-adapter.md](docs/pi-runtime-adapter.md)；真实服务部署、独立网络、Stop、离线镜像和 116 端到端验收见 [docs/phase5-pi-runtime-deployment.md](docs/phase5-pi-runtime-deployment.md)。
 
 ## 校验
 

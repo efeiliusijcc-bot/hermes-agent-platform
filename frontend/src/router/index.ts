@@ -14,6 +14,7 @@ const router = createRouter({
         { path: 'agents/new', name: 'agent-create', component: () => import('@/views/AgentCreateView.vue'), meta: { title: '创建 Agent' } },
         { path: 'agents/:id', name: 'agent-detail', component: () => import('@/views/AgentDetailView.vue'), meta: { title: 'Agent 详情' } },
         { path: 'orchestration', name: 'multi-agent', component: () => import('@/views/MultiAgentView.vue'), meta: { title: '多 Agent 编排' } },
+        { path: 'runtimes', name: 'runtimes', component: () => import('@/views/RuntimeListView.vue'), meta: { title: 'Runtime 管理' } },
         {
           path: 'agents/:id/run',
           alias: ['agents/:id/execute', 'agents/:id/playground'],

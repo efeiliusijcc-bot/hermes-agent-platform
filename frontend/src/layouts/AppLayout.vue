@@ -16,6 +16,7 @@ import {
   PlugConnected,
   Robot,
   ListCheck,
+  Server,
   Plus,
   Settings,
 } from '@vicons/tabler'
@@ -54,6 +55,7 @@ const menuOptions: MenuOption[] = [
     { label: renderLink('Artifacts', 'artifacts'), key: 'artifacts', icon: renderIcon(Archive) },
   ] },
   { label: '平台', key: 'platform-group', type: 'group', children: [
+    { label: renderLink('运行时管理', 'runtimes'), key: 'runtimes', icon: renderIcon(Server) },
     { label: renderLink('API Center', 'apis'), key: 'apis', icon: renderIcon(Api) },
     { label: renderLink('Operations', 'operations'), key: 'operations', icon: renderIcon(ChartBar) },
     { label: renderLink('Settings', 'settings'), key: 'settings', icon: renderIcon(Settings) },

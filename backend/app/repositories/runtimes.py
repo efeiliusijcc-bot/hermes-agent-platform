@@ -19,6 +19,37 @@ async def create_runtime(session: AsyncSession, payload: RuntimeCreate) -> Agent
     return value
 
 
+async def ensure_runtime(
+    session: AsyncSession,
+    *,
+    name: str,
+    runtime_type: str,
+    version: str,
+    endpoint: str,
+    config: dict[str, Any] | None = None,
+) -> AgentRuntime:
+    value = await session.scalar(select(AgentRuntime).where(AgentRuntime.name == name))
+    if value is None:
+        value = AgentRuntime(
+            name=name,
+            type=runtime_type,
+            version=version,
+            endpoint=endpoint,
+            config=config or {},
+            status="unknown",
+        )
+        session.add(value)
+    elif value.type != runtime_type:
+        raise ValueError(f"Runtime registry name {name} belongs to a different type")
+    else:
+        value.version = version
+        value.endpoint = endpoint
+        value.config = config or {}
+    await session.commit()
+    await session.refresh(value)
+    return value
+
+
 async def get_runtime(session: AsyncSession, runtime_id: UUID) -> AgentRuntime | None:
     return await session.get(AgentRuntime, runtime_id)
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -12,6 +12,8 @@ from app.db.models import ExecutionLog
 from app.db.session import get_session
 from app.repositories import executions as repository
 from app.repositories import orchestration as orchestration_repository
+from app.repositories import runtimes as runtime_repository
+from app.runtime import RuntimeAdapterError, get_runtime_adapter
 from app.schemas.execution import (
     ExecutionDetail,
     ExecutionListRead,
@@ -19,6 +21,7 @@ from app.schemas.execution import (
     ExecutionRetryRequest,
     ExecutionStepRead,
     ExecutionSummary,
+    ExecutionStopRead,
     ExecutionTraceRead,
     TraceMetrics,
 )
@@ -176,6 +179,63 @@ async def retry_execution(
             detail="task queue unavailable",
         ) from exc
     return TaskRead.model_validate(task)
+
+
+@router.post("/{execution_id}/stop", response_model=ExecutionStopRead)
+async def stop_execution(
+    execution_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> ExecutionStopRead:
+    execution = await repository.get_execution(session, execution_id)
+    if execution is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="execution not found")
+    if execution.status != "running":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="only running executions can be stopped")
+    runtime_type = getattr(execution, "runtime_type", "hermes")
+    runtime_record = (
+        await runtime_repository.get_runtime(session, execution.runtime_id)
+        if execution.runtime_id is not None
+        else await runtime_repository.resolve_runtime(
+            session,
+            runtime_type=runtime_type,
+            runtime_config=getattr(execution.agent, "runtime_config", {}) or {},
+        )
+    )
+    details = execution.details if isinstance(execution.details, dict) else {}
+    runtime_run_id = str(details.get("runtime_run_id") or execution.id)
+    try:
+        await get_runtime_adapter(
+            runtime_type,
+            endpoint=runtime_record.endpoint if runtime_record is not None else None,
+            version=runtime_record.version if runtime_record is not None else None,
+            config=runtime_record.config if runtime_record is not None else {},
+        ).stop(runtime_run_id)
+    except RuntimeAdapterError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Runtime stop failed") from exc
+
+    finished_at = datetime.now(timezone.utc)
+    execution.status = "cancelled"
+    execution.error = None
+    execution.finished_at = finished_at
+    execution.duration_ms = max(
+        0, int((finished_at - execution.started_at).total_seconds() * 1000)
+    )
+    if execution.session is not None:
+        execution.session.status = "cancelled"
+        execution.session.finished_at = finished_at
+    task = await repository.get_task_for_execution(session, execution.id)
+    if task is not None and task.status in {"pending", "retrying", "running"}:
+        task.status = "cancelled"
+        task.error = None
+        task.finished_at = finished_at
+    await session.commit()
+    await repository.cancel_running_steps(session, execution.id)
+    return ExecutionStopRead(
+        execution_id=execution.id,
+        status="cancelled",
+        runtime_type=runtime_type,
+        runtime_run_id=runtime_run_id,
+    )
 
 
 def _summary(execution: ExecutionLog) -> ExecutionSummary:

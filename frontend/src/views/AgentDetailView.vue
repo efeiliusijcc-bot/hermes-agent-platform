@@ -86,7 +86,10 @@ const currentVersion = computed(() => versions.value.find((item) => item.status 
 const lastExecution = computed(() => executions.value[0] || null)
 const selectedRuntime = computed(() => {
   const runtimeId = agentStore.currentAgent?.runtime_config?.runtime_id
-  return runtimes.value.find((item) => item.id === runtimeId) || null
+  const configured = runtimes.value.find((item) => item.id === runtimeId)
+  if (configured) return configured
+  const matching = runtimes.value.filter((item) => item.type === agentStore.currentAgent?.runtime_type)
+  return matching.length === 1 ? matching[0] : null
 })
 const successRate = computed(() => {
   if (!executions.value.length) return '--'

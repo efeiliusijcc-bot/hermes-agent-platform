@@ -1,19 +1,28 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import configure_mappers
 
 from app.db.models import Agent, AgentRuntime, ExecutionLog, Skill
-from app.main import app
-from app.runtime.base import RuntimeContext
+from app.api import executions as executions_api
+from app.api.agents import _complete_execution, _render_mcp_prompt
+from app.main import _register_builtin_runtimes, app
+from app.runtime.base import RuntimeCancelledError, RuntimeContext, RuntimeHealth
+from app.runtime.hermes import HermesRunResult
 from app.runtime.pi import PiRuntimeAdapter
 from app.schemas.agent import AgentCreate
 from app.schemas.runtime import RuntimeCreate, RuntimeUpdate
+from app.worker import AgentWorker, _is_runtime_cancellation
 
 
 def test_pi_runtime_migration_and_control_plane_contract() -> None:
@@ -36,6 +45,25 @@ def test_pi_runtime_migration_and_control_plane_contract() -> None:
     paths = {route.path for route in app.routes}
     assert "/api/runtimes" in paths
     assert "/api/runtimes/{runtime_id}/health" in paths
+    assert "/api/executions/{execution_id}/stop" in paths
+
+
+def test_phase5_deploys_the_official_pi_core_as_an_internal_service() -> None:
+    package = json.loads(Path("services/pi-runtime/package.json").read_text())
+    compose = Path("docker-compose.yml").read_text()
+    dockerfile = Path("services/pi-runtime/Dockerfile").read_text()
+    assert package["dependencies"]["@earendil-works/pi-agent-core"] == "0.84.2"
+    assert package["dependencies"]["@earendil-works/pi-ai"] == "0.84.2"
+    assert "pi-runtime:" in compose
+    assert "hermes-agent-platform/pi-runtime:phase5" in compose
+    assert "MODEL_GATEWAY_ENDPOINT: http://model-gateway:8080/v1" in compose
+    assert "MCP_GATEWAY_ENDPOINT: http://mcp-gateway:8090/mcp" in compose
+    pi_service = compose.split("\n  pi-runtime:\n", 1)[1].split("\n  mcp-gateway:\n", 1)[0]
+    assert "ports:" not in pi_service
+    assert "- pi-runtime-internal" in pi_service
+    assert "- platform-internal" not in pi_service
+    assert "read_only: true" in pi_service
+    assert "node:22.22-alpine" in dockerfile
 
 
 @pytest.mark.parametrize(
@@ -190,3 +218,158 @@ async def test_pi_stream_normalizes_common_event_names() -> None:
         "run.completed",
     ]
     assert events[-1]["output"] == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_pi_adapter_recognizes_explicit_runtime_cancellation() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"run_id": "execution-1", "status": "cancelled"})
+
+    adapter = PiRuntimeAdapter(
+        endpoint="http://pi-runtime:8765", transport=httpx.MockTransport(handler)
+    )
+    with pytest.raises(RuntimeCancelledError, match="cancelled"):
+        await adapter.execute(
+            [{"role": "user", "content": "cancel me"}],
+            session_id="pi-session",
+            model="internal-model",
+            model_adapter="qwen",
+            agent_id="pi-agent",
+            execution_id="execution-1",
+        )
+
+
+def test_worker_recognizes_only_the_runtime_cancellation_conflict() -> None:
+    assert _is_runtime_cancellation(
+        HTTPException(status_code=409, detail="Agent Runtime execution cancelled")
+    )
+    assert not _is_runtime_cancellation(HTTPException(status_code=409, detail="other conflict"))
+    assert not _is_runtime_cancellation(RuntimeError("Agent Runtime execution cancelled"))
+
+
+@pytest.mark.asyncio
+async def test_worker_cancellation_keeps_task_and_session_cancelled() -> None:
+    finished_at = datetime.now(timezone.utc)
+    task = SimpleNamespace(
+        status="running",
+        error="old failure",
+        finished_at=finished_at,
+        session=SimpleNamespace(status="running", finished_at=finished_at),
+    )
+    session = SimpleNamespace(commit=AsyncMock())
+    worker = AgentWorker.__new__(AgentWorker)
+
+    await worker._cancel_task(task, session)
+
+    assert task.status == task.session.status == "cancelled"
+    assert task.error is None
+    assert task.finished_at is finished_at
+    assert task.session.finished_at is finished_at
+    session.commit.assert_awaited_once()
+
+
+def test_pi_prompt_never_exposes_the_per_execution_mcp_token() -> None:
+    secret = "mcp2.execution.signature"
+    capabilities = {
+        "filesystem": {"mcp_id": "filesystem-mcp", "permission": "read_only"}
+    }
+    pi_prompt = _render_mcp_prompt(capabilities, secret, runtime_type="pi")
+    hermes_prompt = _render_mcp_prompt(capabilities, secret, runtime_type="hermes")
+    assert secret not in pi_prompt
+    assert "injects the per-execution credential" in pi_prompt
+    assert secret in hermes_prompt
+
+
+@pytest.mark.asyncio
+async def test_completed_result_cannot_overwrite_a_concurrent_cancellation() -> None:
+    execution = SimpleNamespace(status="cancelled")
+    context = SimpleNamespace(execution=execution)
+    session = SimpleNamespace(refresh=AsyncMock())
+    with pytest.raises(RuntimeCancelledError, match="cancelled"):
+        await _complete_execution(
+            context,
+            HermesRunResult(output="too late", run_id="run-1", status="completed"),
+            session,
+        )
+
+
+@pytest.mark.asyncio
+async def test_stop_endpoint_cancels_execution_session_task_and_trace(monkeypatch) -> None:
+    execution_id = uuid4()
+    runtime_id = uuid4()
+    platform_session = SimpleNamespace(status="running", finished_at=None)
+    task = SimpleNamespace(status="running", error="old", finished_at=None)
+    execution = SimpleNamespace(
+        id=execution_id,
+        status="running",
+        runtime_type="pi",
+        runtime_id=None,
+        details={"runtime_run_id": str(execution_id)},
+        started_at=datetime.now(timezone.utc),
+        finished_at=None,
+        duration_ms=None,
+        error="old",
+        session=platform_session,
+        agent=SimpleNamespace(runtime_config={}),
+    )
+    runtime = SimpleNamespace(
+        id=runtime_id,
+        endpoint="http://pi-runtime:8765",
+        version="0.84.2",
+        config={},
+    )
+    adapter = SimpleNamespace(stop=AsyncMock())
+    session = SimpleNamespace(commit=AsyncMock())
+    cancel_steps = AsyncMock()
+    monkeypatch.setattr(
+        executions_api.repository, "get_execution", AsyncMock(return_value=execution)
+    )
+    monkeypatch.setattr(
+        executions_api.repository, "get_task_for_execution", AsyncMock(return_value=task)
+    )
+    monkeypatch.setattr(executions_api.repository, "cancel_running_steps", cancel_steps)
+    monkeypatch.setattr(
+        executions_api.runtime_repository, "resolve_runtime", AsyncMock(return_value=runtime)
+    )
+    monkeypatch.setattr(executions_api, "get_runtime_adapter", lambda *args, **kwargs: adapter)
+
+    result = await executions_api.stop_execution(execution_id, session)
+
+    adapter.stop.assert_awaited_once_with(str(execution_id))
+    assert result.status == "cancelled" and result.runtime_type == "pi"
+    assert execution.status == platform_session.status == task.status == "cancelled"
+    assert execution.error is None and task.error is None
+    cancel_steps.assert_awaited_once_with(session, execution_id)
+
+
+@pytest.mark.asyncio
+async def test_builtin_runtime_registration_checks_hermes_and_pi_health(monkeypatch) -> None:
+    runtimes = [
+        SimpleNamespace(status="unknown", id=uuid4()),
+        SimpleNamespace(status="unknown", id=uuid4()),
+    ]
+    ensure = AsyncMock(side_effect=runtimes)
+    record = AsyncMock()
+    adapters = {
+        "hermes": SimpleNamespace(
+            health_check=AsyncMock(return_value=RuntimeHealth(status="online", version="0.20.0"))
+        ),
+        "pi": SimpleNamespace(
+            health_check=AsyncMock(return_value=RuntimeHealth(status="online", version="0.84.2"))
+        ),
+    }
+    from app import main as main_module
+
+    monkeypatch.setattr(main_module.runtime_repository, "ensure_runtime", ensure)
+    monkeypatch.setattr(main_module.runtime_repository, "record_health", record)
+    monkeypatch.setattr(
+        main_module,
+        "get_runtime_adapter",
+        lambda runtime_type, **kwargs: adapters[runtime_type],
+    )
+
+    await _register_builtin_runtimes(SimpleNamespace())
+
+    assert [call.kwargs["runtime_type"] for call in ensure.await_args_list] == ["hermes", "pi"]
+    assert [call.kwargs["version"] for call in ensure.await_args_list] == ["0.20.0", "0.84.2"]
+    assert record.await_count == 2

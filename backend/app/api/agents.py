@@ -29,7 +29,13 @@ from app.repositories import knowledge as knowledge_repository
 from app.repositories import skills as skill_repository
 from app.repositories import runtimes as runtime_repository
 from app.runtime.hermes import HermesClient, HermesRunResult, HermesRuntimeError
-from app.runtime import RuntimeAdapter, RuntimeAdapterError, RuntimeContext, get_runtime_adapter
+from app.runtime import (
+    RuntimeAdapter,
+    RuntimeAdapterError,
+    RuntimeCancelledError,
+    RuntimeContext,
+    get_runtime_adapter,
+)
 from app.schemas.agent import (
     AgentCreate,
     AgentConfigurationUpdate,
@@ -302,6 +308,11 @@ async def _execution_runtime(
             "runtime_id": str(runtime_record.id) if runtime_record is not None else None,
             "runtime_version": runtime_record.version if runtime_record is not None else None,
         }
+    if runtime_type == "pi":
+        context.execution.details = {
+            **(context.execution.details or {}),
+            "runtime_run_id": str(context.execution.id),
+        }
     context.execution.runtime_type = runtime_type
     context.execution.runtime_id = runtime_record.id if runtime_record is not None else None
     context.execution.runtime_version = runtime_record.version if runtime_record is not None else None
@@ -393,6 +404,12 @@ async def execute_agent_sync(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Agent memory is unavailable",
         ) from exc
+    except RuntimeCancelledError as exc:
+        await _cancel_execution(context.execution, session)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent Runtime execution cancelled",
+        ) from exc
     except (HermesRuntimeError, RuntimeAdapterError) as exc:
         await _fail_execution(context.execution, session, exc)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Agent Runtime execution failed") from exc
@@ -407,6 +424,12 @@ async def execute_agent_sync(
             artifact_storage=artifact_storage,
             output_json=output_value,
         )
+    except RuntimeCancelledError as exc:
+        await _cancel_execution(context.execution, session)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent Runtime execution cancelled",
+        ) from exc
     except ArtifactStorageError as exc:
         await _fail_execution(context.execution, session, exc)
         raise HTTPException(
@@ -460,7 +483,9 @@ async def stream_prepared_agent(
             run_id = str(event.get("run_id")) if event.get("run_id") else run_id
             if event_type == "message.delta" and isinstance(event.get("delta"), str):
                 output_parts.append(event["delta"])
-            if event_type in {"run.failed", "run.cancelled", "run.canceled"}:
+            if event_type in {"run.cancelled", "run.canceled"}:
+                raise RuntimeCancelledError(str(event.get("error") or "Pi Runtime execution cancelled"))
+            if event_type == "run.failed":
                 raise HermesRuntimeError(str(event.get("error") or f"Hermes {event_type}"))
             if event_type == "run.completed":
                 output = str(event.get("output") or "".join(output_parts))
@@ -514,6 +539,9 @@ async def stream_prepared_agent(
     except (AgentMemoryError, ArtifactStorageError) as exc:
         await _fail_execution(context.execution, session, exc)
         raise
+    except RuntimeCancelledError:
+        await _cancel_execution(context.execution, session)
+        raise
     except (HermesRuntimeError, RuntimeAdapterError) as exc:
         await _fail_execution(context.execution, session, exc)
         raise
@@ -543,6 +571,8 @@ async def _internal_sse_events(
                 if mapped is not None:
                     yield _sse(mapped[0], mapped[1])
             yield _sse("end", {"event": "end", "status": "success", "execution_id": str(context.execution.id)})
+        except RuntimeCancelledError:
+            yield _sse("end", {"event": "end", "status": "cancelled", "execution_id": str(context.execution.id)})
         except (AgentMemoryError, ArtifactStorageError, HermesRuntimeError, RuntimeAdapterError, ValueError) as exc:
             yield _sse("error", {"event": "error", "status": "failed", "message": str(exc)})
 
@@ -843,7 +873,11 @@ async def _prepare_agent_execution(
         mcp_token = issue_mcp_access_token(
             execution_id=str(execution.id),
         )
-        mcp_prompt = _render_mcp_prompt(mcp_capabilities, mcp_token)
+        mcp_prompt = _render_mcp_prompt(
+            mcp_capabilities,
+            mcp_token,
+            runtime_type=getattr(agent, "runtime_type", "hermes"),
+        )
         knowledge_prompt = _render_knowledge_prompt(
             knowledge_hits,
             source_recall_result=source_recall_result,
@@ -956,7 +990,9 @@ async def _complete_execution(
     artifact_storage: ArtifactStorage | None = None,
     output_json: Any | None = None,
 ) -> None:
-    await session.refresh(context.execution, attribute_names=["details"])
+    await session.refresh(context.execution, attribute_names=["details", "status"])
+    if context.execution.status == "cancelled":
+        raise RuntimeCancelledError("Agent Runtime execution was cancelled")
     details = context.execution.details
     mcp_calls = details.get("mcp_calls", []) if isinstance(details, dict) else []
     context.execution.status = "succeeded"
@@ -1095,6 +1131,10 @@ def _execution_artifact_payloads(
 
 
 async def _fail_execution(execution: ExecutionLog, session: AsyncSession, exc: Exception) -> None:
+    await session.refresh(execution)
+    if execution.status == "cancelled":
+        await execution_repository.cancel_running_steps(session, execution.id)
+        return
     execution.status = "failed"
     execution.error = str(exc)[:2000]
     execution.finished_at = datetime.now(timezone.utc)
@@ -1109,6 +1149,24 @@ async def _fail_execution(execution: ExecutionLog, session: AsyncSession, exc: E
             orchestration_session.finished_at = execution.finished_at
     await session.commit()
     await execution_repository.fail_running_steps(session, execution.id, str(exc))
+
+
+async def _cancel_execution(execution: ExecutionLog, session: AsyncSession) -> None:
+    await session.refresh(execution)
+    finished_at = datetime.now(timezone.utc)
+    execution.status = "cancelled"
+    execution.error = None
+    execution.finished_at = finished_at
+    execution.duration_ms = max(
+        0, int((finished_at - execution.started_at).total_seconds() * 1000)
+    )
+    if execution.session_id:
+        orchestration_session = await session.get(AgentSession, execution.session_id)
+        if orchestration_session is not None:
+            orchestration_session.status = "cancelled"
+            orchestration_session.finished_at = finished_at
+    await session.commit()
+    await execution_repository.cancel_running_steps(session, execution.id)
 
 
 def _input_values(payload: AgentRunRequest) -> dict[str, Any]:
@@ -1385,7 +1443,12 @@ async def unbind_agent_knowledge_source(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _render_mcp_prompt(capabilities: dict[str, Any], access_token: str) -> str:
+def _render_mcp_prompt(
+    capabilities: dict[str, Any],
+    access_token: str,
+    *,
+    runtime_type: str = "hermes",
+) -> str:
     if not capabilities:
         return "No MCP tools are authorized for this run. Do not call MCP tools."
     lines = [
@@ -1394,9 +1457,19 @@ def _render_mcp_prompt(capabilities: dict[str, Any], access_token: str) -> str:
             f"- {kind}: registry id {value['mcp_id']}; permission={value['permission']}"
             for kind, value in sorted(capabilities.items())
         ),
-        "Every MCP tool call requires the exact access_token below. Pass it unchanged and never print it:",
-        access_token,
     ]
+    if runtime_type == "pi":
+        lines.append(
+            "The Pi Runtime injects the per-execution credential after model tool selection. "
+            "Never request, provide, or print an access_token argument."
+        )
+    else:
+        lines.extend(
+            [
+                "Every MCP tool call requires the exact access_token below. Pass it unchanged and never print it:",
+                access_token,
+            ]
+        )
     return "\n".join(lines)
 
 

@@ -80,6 +80,19 @@ export const platformApi = {
     return data
   },
 
+  async createRuntime(payload: Omit<AgentRuntime, 'id' | 'last_health_at' | 'last_error' | 'created_at' | 'updated_at'>): Promise<AgentRuntime> {
+    const { data } = await apiClient.post<AgentRuntime>('/api/runtimes', payload)
+    return data
+  },
+
+  async updateRuntime(runtimeId: string, payload: Partial<Pick<AgentRuntime, 'name' | 'version' | 'endpoint' | 'config' | 'status'>>): Promise<AgentRuntime> {
+    const { data } = await apiClient.patch<AgentRuntime>(
+      `/api/runtimes/${encodeURIComponent(runtimeId)}`,
+      payload,
+    )
+    return data
+  },
+
   async createAgent(payload: AgentCreatePayload): Promise<Agent> {
     const { data } = await apiClient.post<Agent>('/api/agents', payload)
     return data

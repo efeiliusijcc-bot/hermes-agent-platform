@@ -10,12 +10,24 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-if grep -q '^MCP_GATEWAY_SIGNING_KEY=.' "$ENV_FILE"; then
-  echo "MCP gateway signing key is already configured"
-  exit 0
+umask 077
+chmod 0600 "$ENV_FILE"
+
+generated=0
+if ! grep -q '^MCP_GATEWAY_SIGNING_KEY=.' "$ENV_FILE"; then
+  signing_key=$(openssl rand -hex 32)
+  printf '\nMCP_GATEWAY_SIGNING_KEY=%s\n' "$signing_key" >>"$ENV_FILE"
+  echo "MCP gateway signing key was generated without printing its value"
+  generated=1
 fi
 
-umask 077
-signing_key=$(openssl rand -hex 32)
-printf '\nMCP_GATEWAY_SIGNING_KEY=%s\n' "$signing_key" >>"$ENV_FILE"
-echo "MCP gateway signing key was generated without printing its value"
+if ! grep -q '^PI_RUNTIME_API_KEY=.' "$ENV_FILE"; then
+  runtime_key=$(openssl rand -base64 48 | tr -d '\n')
+  printf '\nPI_RUNTIME_API_KEY=%s\n' "$runtime_key" >>"$ENV_FILE"
+  echo "Pi Runtime API key was generated without printing its value"
+  generated=1
+fi
+
+if [ "$generated" -eq 0 ]; then
+  echo "Runtime secrets are already configured"
+fi

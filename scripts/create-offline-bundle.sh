@@ -136,6 +136,8 @@ created_at_utc=$CREATED_AT
 source_compose_project=$PROJECT_NAME
 hermes_release=v0.20.0
 hermes_image=nousresearch/hermes-agent:v2026.8.3@sha256:16788311e2fa3035456bdc1bafb8ec2b1777db64ebf020af9bb7eb73c3712c9e
+pi_core_release=0.84.2
+pi_runtime_image=hermes-agent-platform/pi-runtime:phase5
 data_format=postgres-custom-dump,redis-rdb-and-logical,minio-object-mirror,bind-directory-copy
 EOF
 

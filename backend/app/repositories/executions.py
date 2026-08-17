@@ -283,6 +283,23 @@ async def fail_running_steps(session: AsyncSession, execution_id: UUID, error: s
     await session.commit()
 
 
+async def cancel_running_steps(session: AsyncSession, execution_id: UUID) -> None:
+    values = await session.scalars(
+        select(ExecutionStep).where(
+            ExecutionStep.execution_id == execution_id,
+            ExecutionStep.status == "running",
+        )
+    )
+    now = datetime.now(timezone.utc)
+    for step in values:
+        step.status = "cancelled"
+        step.error = None
+        step.finished_at = now
+        if step.started_at:
+            step.latency_ms = max(0, int((now - step.started_at).total_seconds() * 1000))
+    await session.commit()
+
+
 async def link_artifact(session: AsyncSession, execution_id: UUID, artifact_id: UUID) -> None:
     await session.execute(
         insert(execution_artifact)

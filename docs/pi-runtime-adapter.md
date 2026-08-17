@@ -2,7 +2,7 @@
 
 ## 范围
 
-平台只实现 Pi Runtime Adapter 和治理控制面，不复制、不修改 Pi Harness 源码。Pi Runtime 必须作为独立服务部署，并向 Agent API 提供 HTTP 接口。
+平台不复制、不修改 Pi Harness 源码。Phase 5 已通过独立 `pi-runtime` 服务部署官方 `@earendil-works/pi-agent-core 0.84.2`，并向 Agent API 提供 HTTP 接口。部署、安全和离线交付边界见 [phase5-pi-runtime-deployment.md](phase5-pi-runtime-deployment.md)。
 
 本阶段新增：
 
@@ -100,12 +100,12 @@ runtime_support:
 
 ## 真实验收
 
-准备好独立 Pi Runtime 后执行：
+部署独立 Pi Runtime 后执行：
 
 ```bash
 API_URL=http://127.0.0.1:8080 \
 PI_RUNTIME_TEST_ENDPOINT=http://pi-runtime:8765 \
-PI_RUNTIME_TEST_VERSION=0.20.0 \
+PI_RUNTIME_TEST_VERSION=0.84.2 \
 PI_RUNTIME_TEST_MODEL=内网模型名 \
 sh tests/pi_runtime_adapter.sh
 ```

@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+from urllib.parse import urljoin
 
 from app.model_adapters import get_model_adapter
 from app.config import get_settings
@@ -111,7 +112,7 @@ class HermesRuntimeAdapter(RuntimeAdapter):
         health_path = str(self.config.get("health_path") or "/health")
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(f"{self.endpoint}{health_path}")
+                response = await client.get(urljoin(f"{self.endpoint}/", health_path))
                 response.raise_for_status()
                 payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:

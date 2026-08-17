@@ -158,6 +158,20 @@ class AgentWorker:
                 task = await repository.get_task(session, task_id, lock=True)
                 if task is None:
                     return
+                await session.refresh(
+                    task,
+                    attribute_names=[
+                        "status",
+                        "attempt",
+                        "max_attempts",
+                        "execution_id",
+                        "session",
+                    ],
+                )
+                if task.status == "cancelled" or _is_runtime_cancellation(exc):
+                    if task.status != "cancelled":
+                        await self._cancel_task(task, session)
+                    return
                 message = _error_message(exc)
                 if task.attempt < task.max_attempts:
                     task.status = "retrying"
@@ -179,12 +193,23 @@ class AgentWorker:
                 await self._terminal_failure(task, session, message)
                 return
             await session.refresh(task, attribute_names=["session"])
+            if task.status == "cancelled":
+                return
             task.status = "succeeded"
             task.error = None
             task.finished_at = datetime.now(timezone.utc)
             task.worker_id = worker_id
             await session.commit()
             await self._publish_result(session, task)
+
+    async def _cancel_task(self, task: AgentTask, session: AsyncSession) -> None:
+        finished_at = datetime.now(timezone.utc)
+        task.status = "cancelled"
+        task.error = None
+        task.finished_at = task.finished_at or finished_at
+        task.session.status = "cancelled"
+        task.session.finished_at = task.session.finished_at or task.finished_at
+        await session.commit()
 
     async def _terminal_failure(self, task: AgentTask, session: AsyncSession, message: str) -> None:
         now = datetime.now(timezone.utc)
@@ -276,6 +301,14 @@ def _error_message(exc: Exception) -> str:
     if isinstance(exc, HTTPException):
         return str(exc.detail)
     return str(exc)
+
+
+def _is_runtime_cancellation(exc: Exception) -> bool:
+    return (
+        isinstance(exc, HTTPException)
+        and exc.status_code == 409
+        and exc.detail == "Agent Runtime execution cancelled"
+    )
 
 
 async def main() -> None:

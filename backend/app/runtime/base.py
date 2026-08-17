@@ -12,6 +12,10 @@ class RuntimeAdapterError(RuntimeError):
     """A runtime failed before or during an Agent loop."""
 
 
+class RuntimeCancelledError(RuntimeAdapterError):
+    """A runtime run was cancelled by an explicit stop request."""
+
+
 @dataclass(frozen=True)
 class RuntimeSession:
     id: str

@@ -77,10 +77,13 @@ class Settings(BaseSettings):
     hermes_model: str = "hermes-agent"
     hermes_timeout_seconds: int = Field(default=180, ge=10, le=1800)
     hermes_poll_interval_seconds: float = Field(default=1.0, ge=0.1, le=30.0)
+    hermes_runtime_version: str = "0.20.0"
 
     pi_runtime_endpoint: str = "http://pi-runtime:8765"
     pi_runtime_api_key: SecretStr | None = None
     pi_runtime_timeout_seconds: int = Field(default=180, ge=10, le=1800)
+    pi_runtime_version: str = "0.84.2"
+    runtime_auto_register: bool = True
 
     skills_root: str = "/app/skills"
     skill_max_document_bytes: int = Field(default=262_144, ge=1024, le=1_048_576)

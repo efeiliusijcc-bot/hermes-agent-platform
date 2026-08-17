@@ -68,10 +68,19 @@ describe('platformApi contract', () => {
   it('uses the Runtime registry and health endpoints', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] })
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { status: 'online' } })
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: {} })
+    const runtime = {
+      name: 'Pi Runtime', type: 'pi' as const, version: '0.84.2',
+      endpoint: 'http://pi-runtime:8765', config: {}, status: 'unknown' as const,
+    }
     await platformApi.listRuntimes('pi')
     await platformApi.checkRuntime('runtime a')
+    await platformApi.createRuntime(runtime)
+    await platformApi.updateRuntime('runtime a', { status: 'disabled' })
     expect(get).toHaveBeenCalledWith('/api/runtimes', { params: { type: 'pi' } })
     expect(post).toHaveBeenCalledWith('/api/runtimes/runtime%20a/health')
+    expect(post).toHaveBeenCalledWith('/api/runtimes', runtime)
+    expect(patch).toHaveBeenCalledWith('/api/runtimes/runtime%20a', { status: 'disabled' })
   })
 
   it('uses the Phase 3 task, session and artifact endpoints', async () => {

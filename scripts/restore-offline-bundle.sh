@@ -8,6 +8,7 @@ TARGET_API_PORT=${OFFLINE_AGENT_API_PORT:-18088}
 TARGET_FRONTEND_PORT=${OFFLINE_FRONTEND_PORT:-18089}
 TARGET_INTERNAL_NETWORK=${OFFLINE_INTERNAL_NETWORK_NAME:-hermes-agent-platform-internal}
 TARGET_EDGE_NETWORK=${OFFLINE_EDGE_NETWORK_NAME:-hermes-agent-platform-edge}
+TARGET_PI_RUNTIME_NETWORK=${OFFLINE_PI_RUNTIME_NETWORK_NAME:-hermes-agent-platform-pi-runtime}
 
 test -f "$PROJECT_ROOT/.env" || {
   echo "Offline bundle is missing .env" >&2
@@ -38,9 +39,11 @@ set +a
 HERMES_COMPOSE_PROJECT_NAME=$PROJECT_NAME
 HERMES_INTERNAL_NETWORK_NAME=$TARGET_INTERNAL_NETWORK
 HERMES_EDGE_NETWORK_NAME=$TARGET_EDGE_NETWORK
+HERMES_PI_RUNTIME_NETWORK_NAME=$TARGET_PI_RUNTIME_NETWORK
 AGENT_API_PORT=$TARGET_API_PORT
 FRONTEND_PORT=$TARGET_FRONTEND_PORT
-export HERMES_COMPOSE_PROJECT_NAME HERMES_INTERNAL_NETWORK_NAME HERMES_EDGE_NETWORK_NAME AGENT_API_PORT FRONTEND_PORT
+export HERMES_COMPOSE_PROJECT_NAME HERMES_INTERNAL_NETWORK_NAME HERMES_EDGE_NETWORK_NAME
+export HERMES_PI_RUNTIME_NETWORK_NAME AGENT_API_PORT FRONTEND_PORT
 
 COMPOSE="docker compose -p $PROJECT_NAME -f $PROJECT_ROOT/docker-compose.yml"
 
@@ -59,11 +62,11 @@ done
 "$PROJECT_ROOT/scripts/prepare-data-dirs.sh" >/dev/null
 
 $COMPOSE config --quiet
-$COMPOSE up -d --wait postgres redis minio
+$COMPOSE up -d --wait --pull never postgres redis minio
 
 REDIS_KEYS_FILE="$PROJECT_ROOT/offline-data/redis/keys.json"
 chmod 0444 "$REDIS_KEYS_FILE"
-if ! $COMPOSE run --rm --no-deps \
+if ! $COMPOSE run --rm --no-deps --pull never \
   -v "$REDIS_KEYS_FILE:/restore/keys.json:ro" \
   --entrypoint python agent-api - <<'PY'
 import base64
@@ -120,8 +123,8 @@ $COMPOSE exec -T postgres pg_restore \
   --no-privileges \
   --exit-on-error < "$PROJECT_ROOT/offline-data/postgres.dump"
 
-$COMPOSE run --rm --no-deps minio-init >/dev/null
-$COMPOSE run --rm --no-deps \
+$COMPOSE run --rm --no-deps --pull never minio-init >/dev/null
+$COMPOSE run --rm --no-deps --pull never \
   -v "$PROJECT_ROOT/offline-data/minio:/import:ro" \
   --entrypoint /bin/sh minio-init -ec '
     mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
@@ -129,10 +132,18 @@ $COMPOSE run --rm --no-deps \
     mc mirror --overwrite /import/knowledge local/knowledge >/dev/null
   '
 
-$COMPOSE up -d --wait agent-api frontend
+$COMPOSE up -d --wait --pull never agent-api agent-worker hermes-orchestrator frontend
 curl -fsS "http://127.0.0.1:$TARGET_API_PORT/health" >/dev/null
 curl -fsS "http://127.0.0.1:$TARGET_FRONTEND_PORT/frontend-health" >/dev/null
 curl -fsS "http://127.0.0.1:$TARGET_FRONTEND_PORT/health" >/dev/null
+$COMPOSE exec -T agent-api python - <<'PY'
+import json
+import urllib.request
+
+with urllib.request.urlopen("http://127.0.0.1:8000/api/runtimes", timeout=10) as response:
+    values = json.load(response)
+assert any(value["type"] == "pi" and value["status"] == "online" for value in values), values
+PY
 
 echo "Offline restore completed for Compose project $PROJECT_NAME"
 echo "Frontend: http://127.0.0.1:$TARGET_FRONTEND_PORT"

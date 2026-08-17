@@ -5,11 +5,13 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+from fastapi import status
 
 from app.config import get_settings
 from app.runtime.base import (
     RuntimeAdapter,
     RuntimeAdapterError,
+    RuntimeCancelledError,
     RuntimeContext,
     RuntimeHealth,
     RuntimeSession,
@@ -159,7 +161,12 @@ class PiRuntimeAdapter(RuntimeAdapter):
             raise RuntimeAdapterError(f"Pi Runtime stream failed: {exc}") from exc
 
     async def stop(self, run_id: str) -> None:
-        await self._request("POST", f"/runs/{run_id}/stop")
+        try:
+            await self._request("POST", f"/stop/{run_id}")
+        except RuntimeAdapterError as exc:
+            if "404" not in str(exc):
+                raise
+            await self._request("POST", f"/runs/{run_id}/stop")
 
     async def health_check(self) -> RuntimeHealth:
         health_path = str(self.config.get("health_path") or "/health")
@@ -186,10 +193,18 @@ class PiRuntimeAdapter(RuntimeAdapter):
                 response = await client.request(
                     method, f"{self.endpoint}{path}", headers=self._headers(), **kwargs
                 )
+                if response.status_code == status.HTTP_409_CONFLICT:
+                    cancelled = response.json()
+                    if isinstance(cancelled, dict) and cancelled.get("status") == "cancelled":
+                        raise RuntimeCancelledError("Pi Runtime execution was cancelled")
                 response.raise_for_status()
                 payload = response.json()
+        except RuntimeCancelledError:
+            raise
         except (httpx.HTTPError, ValueError) as exc:
-            raise RuntimeAdapterError(f"Pi Runtime request failed: {exc}") from exc
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            suffix = f" ({status_code})" if status_code else ""
+            raise RuntimeAdapterError(f"Pi Runtime request failed{suffix}: {exc}") from exc
         if not isinstance(payload, dict):
             raise RuntimeAdapterError("Pi Runtime returned a non-object response")
         return payload
