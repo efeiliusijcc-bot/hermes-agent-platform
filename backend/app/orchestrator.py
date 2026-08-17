@@ -34,6 +34,18 @@ def _orchestration_memory_session_id(
     return f"ma-{run_id.hex}-{digest[:24]}"
 
 
+def _manager_execution_input(
+    existing: dict[str, Any] | None,
+    *,
+    task: str,
+    run_id: UUID,
+) -> dict[str, Any]:
+    value = dict(existing) if isinstance(existing, dict) else {}
+    value["task"] = task
+    value["orchestration_run_id"] = str(run_id)
+    return value
+
+
 class AgentOrchestrator:
     def __init__(self, queue: TaskQueue, message_bus: AgentMessageBus) -> None:
         self.queue = queue
@@ -222,11 +234,11 @@ class AgentOrchestrator:
                     execution = await session.get(ExecutionLog, root.execution_id)
                     if execution is not None:
                         execution.input = root.session.input
-                        execution.input_json = {
-                            "task": root.session.input,
-                            "parameters": {},
-                            "orchestration_run_id": str(run.id),
-                        }
+                        execution.input_json = _manager_execution_input(
+                            execution.input_json,
+                            task=root.session.input,
+                            run_id=run.id,
+                        )
                 root.status = "pending"
                 await session.commit()
                 await self.queue.enqueue(root.id, root.priority)

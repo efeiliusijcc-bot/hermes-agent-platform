@@ -77,6 +77,20 @@ def test_skill_config_enables_bounded_source_recall() -> None:
     assert _source_recall_options(skills) == {"lookback_days": 36_500, "limit": 20}
 
 
+@pytest.mark.parametrize(
+    "override",
+    [False, {"enabled": False}],
+)
+def test_run_parameters_can_disable_skill_source_recall(override: object) -> None:
+    skills = [
+        SimpleNamespace(
+            config={"source_recall": {"enabled": True, "lookback_days": 30, "limit": 5}}
+        )
+    ]
+
+    assert _source_recall_options(skills, parameters={"source_recall": override}) is None
+
+
 def test_source_recall_prompt_is_truncated_and_marks_fallback() -> None:
     result = SourceRecallResult.model_validate(
         {

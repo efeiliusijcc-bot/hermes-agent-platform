@@ -10,7 +10,11 @@ from sqlalchemy.orm import configure_mappers
 
 from app.db.models import Agent, AgentTask, AgentTeam, Workflow, WorkflowRun
 from app.main import app
-from app.orchestrator import AgentOrchestrator, _orchestration_memory_session_id
+from app.orchestrator import (
+    AgentOrchestrator,
+    _manager_execution_input,
+    _orchestration_memory_session_id,
+)
 from app.runtime import get_runtime_adapter, supported_runtime_types
 from app.schemas.agent import AgentCreate
 from app.schemas.multi_agent import WorkflowCreate
@@ -145,6 +149,27 @@ def test_orchestration_memory_session_ids_are_runtime_safe_and_node_isolated() -
         for character in first
     )
     assert first != second
+
+
+def test_manager_handoff_preserves_run_parameters_and_runtime_options() -> None:
+    run_id = uuid4()
+    result = _manager_execution_input(
+        {
+            "task": "worker task",
+            "parameters": {"source_recall": {"enabled": False}, "report_type": "HB报"},
+            "runtime_options": {"temperature": 0.2},
+        },
+        task="manager aggregation task",
+        run_id=run_id,
+    )
+
+    assert result["task"] == "manager aggregation task"
+    assert result["parameters"] == {
+        "source_recall": {"enabled": False},
+        "report_type": "HB报",
+    }
+    assert result["runtime_options"] == {"temperature": 0.2}
+    assert result["orchestration_run_id"] == str(run_id)
 
 
 def test_multi_agent_control_plane_routes_are_registered() -> None:

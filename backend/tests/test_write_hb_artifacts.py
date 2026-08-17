@@ -11,14 +11,21 @@ def test_plain_output_keeps_legacy_result_filename() -> None:
 
 
 def test_structured_report_creates_json_and_markdown_artifacts() -> None:
-    raw = '{"status":"completed","report_markdown":"# Report"}'
+    raw = 'Model preamble\n{"status":"completed","report_markdown":"# Report"}'
     result = HermesRunResult(output=raw, run_id="run-2", status="completed")
+    parsed = {"status": "completed", "report_markdown": "# Report"}
 
     assert _execution_artifact_payloads(
         result,
-        {"status": "completed", "report_markdown": "# Report"},
+        parsed,
     ) == [
-        ("result.json", raw.encode(), "application/json; charset=utf-8", "json", "platform"),
+        (
+            "result.json",
+            b'{\n  "status": "completed",\n  "report_markdown": "# Report"\n}',
+            "application/json; charset=utf-8",
+            "json",
+            "platform",
+        ),
         ("report.md", b"# Report", "text/markdown; charset=utf-8", "markdown", "platform"),
     ]
 

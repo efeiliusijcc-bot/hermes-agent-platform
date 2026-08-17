@@ -401,11 +401,7 @@ async def execute_agent_sync(
             output_data={"run_id": result.run_id, "status": result.status},
         )
         await _record_runtime_trace(context, result, session)
-        output_value = _validate_output(
-            schema_version.output_schema if schema_version else agent.output_schema,
-            result.output,
-            output_validator,
-        )
+        output_value = _validate_output(context.output_schema, result.output, output_validator)
         await execution_repository.record_step(
             session,
             context.execution.id,
@@ -417,8 +413,8 @@ async def execute_agent_sync(
             sequence=context.trace_attempt * 1000 + 800,
             step_type="schema",
             step_name="Output Schema Validate",
-            status="succeeded" if (schema_version.output_schema if schema_version else agent.output_schema) else "skipped",
-            output_data={"validated": bool(schema_version.output_schema if schema_version else agent.output_schema)},
+            status="succeeded" if context.output_schema else "skipped",
+            output_data={"validated": bool(context.output_schema)},
         )
         await memory_store.append_turn(agent.id, payload.session_id, payload.input, result.output)
     except AgentMemoryError as exc:
@@ -860,6 +856,8 @@ async def _prepare_agent_execution(
             output_data={"message_count": len(memory_messages)},
         )
         loaded_skills = SkillLoader().load_many(agent.skills)
+        if not output_schema:
+            output_schema = _skill_output_schema(loaded_skills)
         incompatible_skills = [
             skill.id
             for skill in agent.skills
@@ -938,7 +936,7 @@ async def _prepare_agent_execution(
         source_recall_result: SourceRecallResult | None = None
         source_recall_error: str | None = None
         source_recall_summary: dict[str, Any] = {"enabled": False}
-        source_recall_options = _source_recall_options(loaded_skills)
+        source_recall_options = _source_recall_options(loaded_skills, parameters=input_values)
         if source_recall_options is not None:
             topic = str(input_values.get("topic") or payload.input).strip()
             try:
@@ -1244,10 +1242,15 @@ def _execution_artifact_payloads(
         else "text/plain; charset=utf-8"
     )
     primary_artifact_type = "json" if output_json is not None else "text"
+    primary_content = (
+        json.dumps(output_json, ensure_ascii=False, indent=2).encode("utf-8")
+        if output_json is not None
+        else result.output.encode("utf-8")
+    )
     payloads = [
         (
             primary_filename,
-            result.output.encode("utf-8"),
+            primary_content,
             primary_type,
             primary_artifact_type,
             "platform",
@@ -1643,7 +1646,27 @@ def _render_knowledge_prompt(
     )
 
 
-def _source_recall_options(skills: list[Any]) -> dict[str, int] | None:
+def _skill_output_schema(skills: list[Any]) -> dict[str, Any]:
+    schemas = [skill.output_schema for skill in skills if skill.output_schema]
+    if not schemas:
+        return {}
+    first = schemas[0]
+    if any(schema != first for schema in schemas[1:]):
+        raise SkillLoadError(
+            "multiple bound Skills define different output schemas; configure the Agent output schema"
+        )
+    return first
+
+
+def _source_recall_options(
+    skills: list[Any],
+    *,
+    parameters: dict[str, Any] | None = None,
+) -> dict[str, int] | None:
+    if isinstance(parameters, dict):
+        override = parameters.get("source_recall")
+        if override is False or (isinstance(override, dict) and override.get("enabled") is False):
+            return None
     settings = get_settings()
     for skill in skills:
         value = skill.config.get("source_recall")
