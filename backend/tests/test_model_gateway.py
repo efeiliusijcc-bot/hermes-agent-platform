@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 
 import httpx
 import pytest
-from fastapi import Request
+from fastapi import HTTPException, Request
 import asyncio
 
 from app import model_gateway
@@ -15,7 +19,14 @@ class FakeClient:
     def __init__(self) -> None:
         self.payload: dict[str, object] = {}
 
-    async def post(self, url: str, *, headers: dict[str, str], json: dict[str, object]) -> httpx.Response:
+    async def post(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+        timeout: httpx.Timeout,
+    ) -> httpx.Response:
         self.payload = json
         return httpx.Response(200, json={"model": json["model"], "choices": []})
 
@@ -38,7 +49,13 @@ def request_with(payload: bytes, client: FakeClient) -> Request:
             "state": type(
                 "State",
                 (),
-                {"client": client, "model_capacity": asyncio.Semaphore(5), "model_active": 0, "model_peak": 0},
+                {
+                    "client": client,
+                    "model_capacity": asyncio.Semaphore(5),
+                    "model_active": 0,
+                    "model_peak": 0,
+                    "registry_session_factory": None,
+                },
             )()
         },
     )()
@@ -46,11 +63,29 @@ def request_with(payload: bytes, client: FakeClient) -> Request:
 
 
 @pytest.mark.asyncio
-async def test_model_gateway_preserves_explicit_agent_model(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_model_gateway_routes_alias_to_registered_upstream_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = FakeClient()
     monkeypatch.setattr(model_gateway, "authorize", lambda value: None)
-    await model_gateway.chat_completions(request_with(b'{"model":"qwen-32b","messages":[]}', client))
-    assert client.payload["model"] == "qwen-32b"
+
+    async def resolve(_request: Request, model_id: str | None) -> model_gateway.ResolvedModel:
+        assert model_id == "report-model"
+        return model_gateway.ResolvedModel(
+            alias="report-model",
+            provider="qwen",
+            endpoint="http://model.test/v1/chat/completions",
+            upstream_model="qwen-32b-instruct",
+            api_key="secret-not-returned",
+            timeout_seconds=30,
+            max_retries=0,
+        )
+
+    monkeypatch.setattr(model_gateway, "_resolve_model", resolve)
+    await model_gateway.chat_completions(
+        request_with(b'{"model":"report-model","messages":[]}', client)
+    )
+    assert client.payload["model"] == "qwen-32b-instruct"
 
 
 @pytest.mark.asyncio
@@ -59,6 +94,43 @@ async def test_model_gateway_uses_platform_default_when_model_is_absent(monkeypa
     monkeypatch.setattr(model_gateway, "authorize", lambda value: None)
     await model_gateway.chat_completions(request_with(b'{"messages":[]}', client))
     assert client.payload["model"] == model_gateway.settings.model_name
+
+
+@pytest.mark.asyncio
+async def test_model_gateway_rejects_unknown_alias_without_sending_upstream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient()
+    monkeypatch.setattr(model_gateway, "authorize", lambda value: None)
+    with pytest.raises(HTTPException) as error:
+        await model_gateway.chat_completions(
+            request_with(b'{"model":"missing-model","messages":[]}', client)
+        )
+    assert error.value.status_code == 404
+    assert client.payload == {}
+
+
+def test_model_gateway_imports_with_its_minimal_service_environment() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(backend_root),
+        "MODEL_ENDPOINT": "http://model.test/v1",
+        "MODEL_API_KEY": "test-model-key",
+        "MODEL_NAME": "test-model",
+        "MODEL_GATEWAY_API_KEY": "test-gateway-key",
+        "POSTGRES_PASSWORD": "test-postgres-key",
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.model_gateway"],
+        cwd=backend_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_contract_stub_can_distinguish_phase3_concurrent_agents() -> None:

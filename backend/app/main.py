@@ -9,6 +9,7 @@ from app.api.executions import router as executions_router
 from app.api.knowledge_sources import router as knowledge_sources_router
 from app.api.mcp_servers import router as mcp_servers_router
 from app.api.memory import router as memory_router
+from app.api.model_registrations import router as model_registrations_router
 from app.api.multi_agent import router as multi_agent_router
 from app.api.orchestration import router as orchestration_router
 from app.api.publications import management_router as publications_router, public_router, versioned_public_router
@@ -23,6 +24,8 @@ from app.knowledge import KnowledgeServiceClient
 from app.task_queue import get_task_queue
 from app.storage import get_artifact_storage
 from app.message_bus import get_agent_message_bus
+from app.model_secrets import ModelSecretCipher
+from app.repositories import model_registrations as model_repository
 from app.repositories import runtimes as runtime_repository
 from app.runtime import RuntimeAdapterError, get_runtime_adapter
 
@@ -38,6 +41,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     async with SessionFactory() as session:
         await session.execute(text("SELECT 1"))
+        await _register_legacy_model(session)
         if settings.runtime_auto_register:
             await _register_builtin_runtimes(session)
     memory_store = get_memory_store()
@@ -101,12 +105,40 @@ async def _register_builtin_runtimes(session) -> None:
             logger.warning("Runtime registered but offline: %s", name)
 
 
-app = FastAPI(title=settings.app_name, version="0.3.1", lifespan=lifespan)
+async def _register_legacy_model(session) -> None:
+    if not (
+        settings.model_endpoint
+        and settings.model_name
+        and settings.model_registry_encryption_key is not None
+    ):
+        logger.warning("Model registry bootstrap skipped because legacy model settings are incomplete")
+        return
+    values = await model_repository.ensure_legacy_models(
+        session,
+        model_id=settings.model_name,
+        base_url=settings.model_endpoint,
+        upstream_model=settings.model_name,
+        api_key=(
+            settings.model_api_key.get_secret_value()
+            if settings.model_api_key is not None
+            else ""
+        ),
+        cipher=ModelSecretCipher(settings.model_registry_encryption_key.get_secret_value()),
+    )
+    if values:
+        logger.info(
+            "Legacy model configurations registered: %s",
+            ", ".join(value.id for value in values),
+        )
+
+
+app = FastAPI(title=settings.app_name, version="0.4.0", lifespan=lifespan)
 app.include_router(agents_router)
 app.include_router(executions_router)
 app.include_router(knowledge_sources_router)
 app.include_router(mcp_servers_router)
 app.include_router(memory_router)
+app.include_router(model_registrations_router)
 app.include_router(publications_router)
 app.include_router(public_router)
 app.include_router(versioned_public_router)

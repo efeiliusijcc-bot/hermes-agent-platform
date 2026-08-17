@@ -83,6 +83,34 @@ describe('platformApi contract', () => {
     expect(patch).toHaveBeenCalledWith('/api/runtimes/runtime%20a', { status: 'disabled' })
   })
 
+  it('uses the model registry and protects mutations with the management key', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} })
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: {} })
+    const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: {} })
+    const payload = {
+      id: 'report-model', display_name: '报告模型', provider: 'qwen' as const,
+      adapter: 'qwen' as const, base_url: 'http://model.internal/v1',
+      upstream_model: 'qwen-32b', api_key: 'upstream-secret', is_enabled: true,
+      is_default: true, timeout_seconds: 180, max_retries: 2,
+    }
+    const headers = { 'X-Model-Management-Key': 'management-secret' }
+
+    await platformApi.listModels(true)
+    await platformApi.createModel(payload, 'management-secret')
+    await platformApi.updateModel('report model', { upstream_model: 'qwen-72b' }, 'management-secret')
+    await platformApi.setDefaultModel('report model', 'management-secret')
+    await platformApi.testModel('report model', 'management-secret')
+    await platformApi.deleteModel('report model', 'management-secret')
+
+    expect(get).toHaveBeenCalledWith('/api/models', { params: { enabled_only: true } })
+    expect(post).toHaveBeenNthCalledWith(1, '/api/models', payload, { headers })
+    expect(patch).toHaveBeenCalledWith('/api/models/report%20model', { upstream_model: 'qwen-72b' }, { headers })
+    expect(post).toHaveBeenNthCalledWith(2, '/api/models/report%20model/default', undefined, { headers })
+    expect(post).toHaveBeenNthCalledWith(3, '/api/models/report%20model/test', undefined, { headers })
+    expect(remove).toHaveBeenCalledWith('/api/models/report%20model', { headers })
+  })
+
   it('uses the Phase 3 task, session and artifact endpoints', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] })
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { id: 'task-1' } })

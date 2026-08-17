@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     source_recall_summary_max_chars: int = Field(default=1200, ge=100, le=10_000)
     source_recall_excerpt_max_chars: int = Field(default=2000, ge=100, le=20_000)
 
+    model_endpoint: str | None = None
+    model_api_key: SecretStr | None = None
+    model_name: str | None = None
+    model_registry_encryption_key: SecretStr | None = None
+    model_management_api_key: SecretStr | None = None
+
     hermes_endpoint: str = "http://hermes-runtime:8642/v1"
     hermes_api_key: SecretStr
     hermes_model: str = "hermes-agent"

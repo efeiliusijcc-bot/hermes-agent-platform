@@ -843,3 +843,43 @@ class AgentVersion(Base):
     executions: Mapped[list[ExecutionLog]] = relationship(
         back_populates="agent_version", foreign_keys="ExecutionLog.agent_version_id"
     )
+
+
+class ModelRegistration(Base):
+    __tablename__ = "model_registrations"
+    __table_args__ = (
+        CheckConstraint(
+            "adapter IN ('hermes', 'qwen', 'deepseek', 'gpt', 'claude')",
+            name="ck_model_registrations_adapter",
+        ),
+        CheckConstraint(
+            "status IN ('unknown', 'online', 'offline')",
+            name="ck_model_registrations_status",
+        ),
+        CheckConstraint("timeout_seconds BETWEEN 5 AND 1800", name="ck_model_registrations_timeout"),
+        CheckConstraint("max_retries BETWEEN 0 AND 5", name="ck_model_registrations_retries"),
+        CheckConstraint("NOT is_default OR is_enabled", name="ck_model_registrations_default_enabled"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="custom")
+    adapter: Mapped[str] = mapped_column(String(32), nullable=False, default="hermes")
+    base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    upstream_model: Mapped[str] = mapped_column(String(255), nullable=False)
+    api_key_ciphertext: Mapped[str | None] = mapped_column(Text)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=180)
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    last_health_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    @property
+    def api_key_configured(self) -> bool:
+        return bool(self.api_key_ciphertext)

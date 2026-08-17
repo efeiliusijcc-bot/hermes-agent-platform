@@ -7,6 +7,7 @@
 - 当前平台源码、Compose、Skill、Demo 配置和运维脚本；
 - Compose 引用的全部 Docker 镜像，统一保存在 `images.tar`；
 - 运行 `.env` 配置；
+- 模型注册表、加密后的模型 API Key，以及能够解密这些密文的 `MODEL_REGISTRY_ENCRYPTION_KEY`；
 - PostgreSQL custom-format 逻辑备份；
 - Redis RDB 与支持 TTL 的逻辑键快照；
 - MinIO `artifacts`、`knowledge` 两个 bucket 的对象镜像；
@@ -15,6 +16,8 @@
 - 所有内部文件的 `SHA256SUMS` 与镜像清单。
 
 离线包包含模型、数据库、Redis 和 MinIO 密钥，必须按敏感配置文件管理。脚本以 `0600` 创建归档和校验文件，不得上传到公开制品库或提交到 Git。
+
+模型注册表密文和 `MODEL_REGISTRY_ENCRYPTION_KEY` 必须成对迁移。恢复后不要直接生成新的主密钥，否则已有模型 API Key 无法解密；如交付包不允许携带源主密钥，则恢复后必须在模型管理页面逐项重新录入模型 API Key。
 
 ## 2. 在源节点导出
 

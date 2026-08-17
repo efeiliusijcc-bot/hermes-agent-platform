@@ -13,7 +13,7 @@ onMounted(() => systemStore.fetchHealth().catch(() => undefined))
 
 <template>
   <div>
-    <PageHeader title="平台设置" description="当前版本以部署配置为准，本页只读展示运行边界，不在浏览器中暴露密钥。">
+    <PageHeader title="平台设置" description="展示平台运行边界；模型地址、模型名称和密钥统一在模型管理页面维护。">
       <template #actions><NButton secondary :loading="systemStore.loading" @click="systemStore.fetchHealth">刷新状态</NButton></template>
     </PageHeader>
     <div v-if="systemStore.error" class="error-panel" style="margin-bottom: 16px">{{ systemStore.error }}</div>
@@ -23,7 +23,8 @@ onMounted(() => systemStore.fetchHealth().catch(() => undefined))
         <dl class="execution-definition-list">
           <div><dt>控制面</dt><dd><StatusTag :status="systemStore.health?.status || 'unknown'" /></dd></div>
           <div><dt>执行模式</dt><dd>Sync JSON / SSE Stream / Async Queue</dd></div>
-          <div><dt>配置修改</dt><dd>在服务端 `.env` 或部署清单中完成</dd></div>
+          <div><dt>模型配置</dt><dd><RouterLink :to="{ name: 'models' }">进入模型管理</RouterLink></dd></div>
+          <div><dt>基础设施</dt><dd>在服务端 `.env` 或部署清单中完成</dd></div>
           <div><dt>密钥策略</dt><dd>前端不读取、不回显服务端密钥</dd></div>
         </dl>
       </section>
@@ -50,7 +51,8 @@ onMounted(() => systemStore.fetchHealth().catch(() => undefined))
           <li>MCP 注册权限固定为 read_only。</li>
           <li>API Key 仅创建时展示一次，后续只显示前缀。</li>
           <li>Agent 发布后，生产配置通过 Version 管理。</li>
-          <li>公网管理员登录与 RBAC 尚未在此页面提供。</li>
+          <li>模型写操作需要单独的 MODEL_MANAGEMENT_API_KEY。</li>
+          <li>完整管理员登录与 RBAC 尚未提供，控制台仍应由可信网关保护。</li>
         </ul>
       </section>
     </div>

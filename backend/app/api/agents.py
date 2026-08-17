@@ -26,6 +26,7 @@ from app.repositories import executions as execution_repository
 from app.repositories import schema_versions as schema_repository
 from app.repositories import mcp_servers as mcp_repository
 from app.repositories import knowledge as knowledge_repository
+from app.repositories import model_registrations as model_repository
 from app.repositories import skills as skill_repository
 from app.repositories import runtimes as runtime_repository
 from app.runtime.hermes import HermesClient, HermesRunResult, HermesRuntimeError
@@ -77,6 +78,7 @@ async def create_agent(payload: AgentCreate, session: AsyncSession = Depends(get
                 detail="parent Agent must be a manager",
             )
     await _validate_runtime_binding(session, payload.runtime_type, payload.runtime_config)
+    await _validate_model_binding(session, payload.model, payload.model_adapter)
     try:
         agent = await repository.create_agent(session, payload)
     except IntegrityError as exc:
@@ -156,6 +158,7 @@ async def update_agent_configuration(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     target_runtime = payload.runtime_type or agent.runtime_type
     await _validate_runtime_binding(session, target_runtime, payload.runtime_config)
+    await _validate_model_binding(session, payload.model, payload.model_adapter)
     incompatible = sorted(
         skill.id
         for skill in agent.skills
@@ -616,6 +619,24 @@ async def _validate_runtime_binding(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="configured Runtime type does not match Agent runtime_type",
+        )
+
+
+async def _validate_model_binding(
+    session: AsyncSession,
+    model_id: str,
+    adapter: str,
+) -> None:
+    value = await model_repository.resolve_model(session, model_id)
+    if value is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="configured model is not registered or is disabled",
+        )
+    if value.adapter != adapter:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"configured model requires adapter {value.adapter}",
         )
 
 

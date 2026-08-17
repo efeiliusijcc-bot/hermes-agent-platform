@@ -41,6 +41,10 @@ import type {
   RuntimeHealth,
   RuntimeType,
   ModelAdapterName,
+  ModelConnectivity,
+  ModelCreatePayload,
+  ModelUpdatePayload,
+  RegisteredModel,
   MetricsSummary,
   MultiAgentRunPayload,
   Skill,
@@ -91,6 +95,53 @@ export const platformApi = {
       payload,
     )
     return data
+  },
+
+  async listModels(enabledOnly = false): Promise<RegisteredModel[]> {
+    const { data } = await apiClient.get<RegisteredModel[]>('/api/models', {
+      params: { enabled_only: enabledOnly },
+    })
+    return data
+  },
+
+  async createModel(payload: ModelCreatePayload, managementKey: string): Promise<RegisteredModel> {
+    const { data } = await apiClient.post<RegisteredModel>('/api/models', payload, {
+      headers: { 'X-Model-Management-Key': managementKey },
+    })
+    return data
+  },
+
+  async updateModel(modelId: string, payload: ModelUpdatePayload, managementKey: string): Promise<RegisteredModel> {
+    const { data } = await apiClient.patch<RegisteredModel>(
+      `/api/models/${encodeURIComponent(modelId)}`,
+      payload,
+      { headers: { 'X-Model-Management-Key': managementKey } },
+    )
+    return data
+  },
+
+  async setDefaultModel(modelId: string, managementKey: string): Promise<RegisteredModel> {
+    const { data } = await apiClient.post<RegisteredModel>(
+      `/api/models/${encodeURIComponent(modelId)}/default`,
+      undefined,
+      { headers: { 'X-Model-Management-Key': managementKey } },
+    )
+    return data
+  },
+
+  async testModel(modelId: string, managementKey: string): Promise<ModelConnectivity> {
+    const { data } = await apiClient.post<ModelConnectivity>(
+      `/api/models/${encodeURIComponent(modelId)}/test`,
+      undefined,
+      { headers: { 'X-Model-Management-Key': managementKey } },
+    )
+    return data
+  },
+
+  async deleteModel(modelId: string, managementKey: string): Promise<void> {
+    await apiClient.delete(`/api/models/${encodeURIComponent(modelId)}`, {
+      headers: { 'X-Model-Management-Key': managementKey },
+    })
   },
 
   async createAgent(payload: AgentCreatePayload): Promise<Agent> {

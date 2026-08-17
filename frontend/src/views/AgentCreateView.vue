@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
 import { ArrowLeft, ArrowRight, Check, DeviceFloppy } from '@vicons/tabler'
 import { useRouter } from 'vue-router'
@@ -9,7 +9,7 @@ import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
 import { useAgentStore } from '@/stores/agents'
 import { useResourceStore } from '@/stores/resources'
-import type { Agent, AgentCreatePayload, AgentLifecycleStatus, AgentRuntime, AgentType, ModelAdapterName, ResponseMode, RuntimeType } from '@/types/api'
+import type { Agent, AgentCreatePayload, AgentLifecycleStatus, AgentRuntime, AgentType, ModelAdapterName, RegisteredModel, ResponseMode, RuntimeType } from '@/types/api'
 
 const router = useRouter()
 const message = useMessage()
@@ -19,6 +19,7 @@ const submitting = ref(false)
 const step = ref(0)
 const existingAgents = ref<Agent[]>([])
 const runtimes = ref<AgentRuntime[]>([])
+const models = ref<RegisteredModel[]>([])
 
 const steps = [
   { title: '基础信息', note: '名称、标识与职责' },
@@ -72,6 +73,13 @@ const runtimeOptions = computed(() => runtimes.value
     value: runtime.id,
   })))
 const selectedRuntime = computed(() => runtimes.value.find((item) => item.id === form.runtime_id) || null)
+const selectedModel = computed(() => models.value.find((item) => item.id === form.model) || null)
+const modelOptions = computed(() => models.value
+  .filter((item) => item.is_enabled)
+  .map((item) => ({
+    label: `${item.display_name} · ${item.provider}${item.is_default ? ' · 默认' : ''}`,
+    value: item.id,
+  })))
 const mcpOptions = computed(() => resourceStore.mcpServers.map((server) => ({ label: `${server.name} · ${server.config.kind}`, value: server.id })))
 const selectedSkills = computed(() => resourceStore.skills.filter((item) => form.skillIds.includes(item.id)))
 const selectedMCPs = computed(() => resourceStore.mcpServers.filter((item) => form.mcpIds.includes(item.id)))
@@ -93,7 +101,7 @@ function validateStep(index = step.value): boolean {
     if (!form.system_prompt.trim()) return warn('请填写 System Prompt')
   }
   if (index === 1) {
-    if (!form.model.trim()) return warn('请填写内网可用的模型标识')
+    if (!selectedModel.value?.is_enabled) return warn('请选择模型管理中已启用的模型')
     if (form.runtime_id && selectedRuntime.value?.type !== form.runtime_type) return warn('Runtime 实例与 Runtime 类型不匹配')
   }
   if (index === 2 && selectedSkills.value.some((skill) => !skill.runtime_support.includes(form.runtime_type))) {
@@ -157,10 +165,21 @@ async function submit() {
   }
 }
 
-onMounted(() => {
+watch(() => form.model, () => {
+  if (selectedModel.value) form.model_adapter = selectedModel.value.adapter
+})
+
+onMounted(async () => {
   resourceStore.fetchAll().catch(() => undefined)
   platformApi.listAgents().then((value) => { existingAgents.value = value }).catch(() => undefined)
   platformApi.listRuntimes().then((value) => { runtimes.value = value }).catch(() => undefined)
+  try {
+    models.value = await platformApi.listModels(true)
+    const defaultModel = models.value.find((item) => item.is_default) || models.value[0]
+    if (defaultModel) form.model = defaultModel.id
+  } catch {
+    models.value = []
+  }
 })
 </script>
 
@@ -199,8 +218,8 @@ onMounted(() => {
 
           <template v-else-if="step === 1">
             <div class="form-grid">
-              <NFormItem label="模型标识" required><NInput v-model:value="form.model" placeholder="内网模型名称" /></NFormItem>
-              <NFormItem label="Provider / Adapter"><NSelect v-model:value="form.model_adapter" :options="[{label:'Hermes',value:'hermes'},{label:'Qwen',value:'qwen'},{label:'DeepSeek',value:'deepseek'},{label:'GPT / OpenAI',value:'gpt'},{label:'Claude',value:'claude'}]" /></NFormItem>
+              <NFormItem label="模型" required><NSelect v-model:value="form.model" filterable :options="modelOptions" placeholder="从模型管理选择已启用模型" /></NFormItem>
+              <NFormItem label="Provider / Adapter"><NInput :value="selectedModel ? `${selectedModel.provider} / ${selectedModel.adapter}` : '--'" disabled /></NFormItem>
               <NFormItem label="Agent Runtime"><NSelect v-model:value="form.runtime_type" :options="[{label:'Hermes Runtime',value:'hermes'},{label:'Pi Runtime',value:'pi'}]" /></NFormItem>
               <NFormItem label="Runtime 实例"><NSelect v-model:value="form.runtime_id" clearable :options="runtimeOptions" placeholder="未选择时使用环境变量默认端点" /></NFormItem>
               <NFormItem label="默认响应模式"><NSelect v-model:value="form.response_mode" :options="[{label:'Sync JSON',value:'sync'},{label:'SSE Stream',value:'stream'}]" /></NFormItem>

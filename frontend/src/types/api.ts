@@ -9,6 +9,8 @@ export type ModelAdapterName = 'hermes' | 'qwen' | 'deepseek' | 'gpt' | 'claude'
 export type AgentType = 'manager' | 'worker'
 export type RuntimeType = 'hermes' | 'pi'
 export type RuntimeStatus = 'unknown' | 'online' | 'offline' | 'disabled'
+export type ModelProvider = 'qwen' | 'deepseek' | 'openai' | 'claude' | 'custom'
+export type ModelRegistryStatus = 'unknown' | 'online' | 'offline'
 export type LifecycleStatus = 'draft' | 'testing' | 'published' | 'deprecated' | 'disabled'
 
 export interface Agent {
@@ -233,6 +235,60 @@ export interface RuntimeHealth {
   id: string
   status: 'online' | 'offline'
   version: string | null
+  latency_ms: number
+  detail: string
+}
+
+export interface RegisteredModel {
+  id: string
+  display_name: string
+  provider: ModelProvider
+  adapter: ModelAdapterName
+  base_url: string
+  upstream_model: string
+  api_key_configured: boolean
+  is_enabled: boolean
+  is_default: boolean
+  timeout_seconds: number
+  max_retries: number
+  status: ModelRegistryStatus
+  last_health_at: string | null
+  last_error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ModelCreatePayload {
+  id: string
+  display_name: string
+  provider: ModelProvider
+  adapter: ModelAdapterName
+  base_url: string
+  upstream_model: string
+  api_key?: string | null
+  is_enabled: boolean
+  is_default: boolean
+  timeout_seconds: number
+  max_retries: number
+}
+
+export interface ModelUpdatePayload {
+  display_name?: string
+  provider?: ModelProvider
+  adapter?: ModelAdapterName
+  base_url?: string
+  upstream_model?: string
+  api_key?: string | null
+  clear_api_key?: boolean
+  is_enabled?: boolean
+  is_default?: boolean
+  timeout_seconds?: number
+  max_retries?: number
+}
+
+export interface ModelConnectivity {
+  id: string
+  status: 'online' | 'offline'
   latency_ms: number
   detail: string
 }

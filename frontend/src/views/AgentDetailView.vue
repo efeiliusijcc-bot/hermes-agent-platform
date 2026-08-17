@@ -27,6 +27,7 @@ import type {
   Artifact,
   ExecutionSummary,
   ModelAdapterName,
+  RegisteredModel,
   RuntimeType,
 } from '@/types/api'
 import { platformApi } from '@/api/platform'
@@ -51,6 +52,7 @@ const modelAdapter = ref<ModelAdapterName>('hermes')
 const runtimeType = ref<RuntimeType>('hermes')
 const runtimeConfigText = ref('{}')
 const runtimes = ref<AgentRuntime[]>([])
+const models = ref<RegisteredModel[]>([])
 const runtimeChecking = ref(false)
 const modelConfigText = ref('{}')
 const phase3Loading = ref(false)
@@ -91,6 +93,12 @@ const selectedRuntime = computed(() => {
   const matching = runtimes.value.filter((item) => item.type === agentStore.currentAgent?.runtime_type)
   return matching.length === 1 ? matching[0] : null
 })
+const selectedModel = computed(() => models.value.find((item) => item.id === modelText.value) || null)
+const modelOptions = computed(() => models.value.map((item) => ({
+  label: `${item.display_name} · ${item.provider}${item.is_default ? ' · 默认' : ''}${item.is_enabled ? '' : ' · 已停用'}`,
+  value: item.id,
+  disabled: !item.is_enabled,
+})))
 const successRate = computed(() => {
   if (!executions.value.length) return '--'
   const completed = executions.value.filter((item) => ['succeeded', 'failed'].includes(item.status))
@@ -145,6 +153,7 @@ async function load() {
     agentStore.fetchAgentDetail(agentId.value),
     resourceStore.fetchAll(),
     platformApi.listRuntimes().then((value) => { runtimes.value = value }),
+    platformApi.listModels().then((value) => { models.value = value }),
   ]).catch(() => undefined)
   if (agentStore.currentAgent) {
     inputSchemaText.value = JSON.stringify(agentStore.currentAgent.input_schema || {}, null, 2)
@@ -337,6 +346,10 @@ async function saveConfiguration() {
   } catch (error) { message.error(getApiErrorMessage(error), { duration: 7000 }) } finally { configurationSaving.value = false }
 }
 
+watch(modelText, () => {
+  if (selectedModel.value) modelAdapter.value = selectedModel.value.adapter
+})
+
 async function checkSelectedRuntime() {
   if (!selectedRuntime.value) return
   runtimeChecking.value = true
@@ -488,8 +501,8 @@ onMounted(load)
         <section v-show="activeTab === 'configuration'" class="surface panel">
           <div class="section-heading"><div><h2>Prompt Builder / Model Adapter</h2><p>模板变量在后端解析，配置写入 Agent Schema</p></div><NButton type="primary" secondary :loading="configurationSaving" :disabled="configurationLocked" @click="saveConfiguration">保存配置</NButton></div>
           <div class="form-grid">
-            <NFormItem label="模型"><NInput v-model:value="modelText" :disabled="configurationLocked" /></NFormItem>
-            <NFormItem label="Model Adapter"><NSelect v-model:value="modelAdapter" :disabled="configurationLocked" :options="[{label:'Hermes',value:'hermes'},{label:'Qwen',value:'qwen'},{label:'DeepSeek',value:'deepseek'},{label:'GPT / OpenAI',value:'gpt'},{label:'Claude',value:'claude'}]" /></NFormItem>
+            <NFormItem label="模型"><NSelect v-model:value="modelText" filterable :disabled="configurationLocked" :options="modelOptions" placeholder="从模型管理选择" /></NFormItem>
+            <NFormItem label="Provider / Adapter"><NInput :value="selectedModel ? `${selectedModel.provider} / ${selectedModel.adapter}` : modelAdapter" disabled /></NFormItem>
             <NFormItem label="Agent Runtime"><NSelect v-model:value="runtimeType" :disabled="configurationLocked" :options="[{label:'Hermes Runtime',value:'hermes'},{label:'Pi Runtime',value:'pi'}]" /></NFormItem>
             <NFormItem class="span-2" label="Model Config JSON"><NInput v-model:value="modelConfigText" type="textarea" :rows="4" class="mono" :disabled="configurationLocked" /></NFormItem>
             <NFormItem class="span-2" label="Runtime Config JSON"><NInput v-model:value="runtimeConfigText" type="textarea" :rows="4" class="mono" :disabled="configurationLocked" placeholder='{"runtime_id":"..."}' /></NFormItem>

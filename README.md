@@ -10,6 +10,8 @@ Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台
 
 管理控制台已按 FastAPI 契约实现，包含运行总览、Agent 创建/详情/删除、Skill/MCP 展示、能力绑定、Playground、Multi-Agent Team/Workflow、Sync/SSE 模式选择、实时 Trace 和执行日志查看。SSE 直接转发 Runtime 原生增量事件，不使用伪流式切分。
 
+模型地址、上游真实模型名和访问密钥由数据库模型注册表统一管理。模型 API Key 认证加密保存且接口永不回显；Agent 创建和配置只能选择已启用的模型别名，Model Gateway 在每次调用时动态解析实际地址与模型名。管理与密钥边界见 [docs/model-registry.md](docs/model-registry.md)。
+
 Hermes API Server 的原生 terminal、文件、浏览器、内置 Skill、委派等工具集已关闭，仅启用 `mcp-gateway`。这保证 Agent 不能绕过平台绑定直接使用 Hermes 本地工具。
 
 外部信源召回通过独立的 `source-recall-gateway` 受控接入：Agent Worker 与 Hermes Runtime 仍只加入 internal 网络，不能直接访问公网；只有网关保存上游密钥并将裁剪后的召回结果注入 Prompt。配置与验收边界见 [docs/source-recall-gateway.md](docs/source-recall-gateway.md)。
@@ -55,6 +57,7 @@ scripts/    开发、校验和部署脚本
 - 116 测试节点统一使用 Compose 项目名 `hermes-agent-platform`。
 - 116 上现有 `hermes`、`hermes-api` 及其网络、卷、端口不属于本项目，禁止修改。
 - 300B 模型不部署在 116，通过 `MODEL_ENDPOINT` 调用外部 OpenAI Compatible API。
+- `MODEL_ENDPOINT`、`MODEL_NAME` 和 `MODEL_API_KEY` 是首次升级的兼容引导配置；引导完成后以模型注册表为权威配置。
 - 管理控制台默认绑定 `127.0.0.1:18089`，经 Nginx 同源代理调用 `agent-api`，不会把内部容器地址暴露给浏览器。116 节点的 `18080` 已被其他项目使用，因此本项目不占用该端口。
 
 ## 设计依据
