@@ -20,15 +20,25 @@ class SessionWorkspace:
     input: Path
     output: Path
     temp: Path
+    workspace_type: str = "document"
+    repository: Path | None = None
 
 
 class WorkspaceManager:
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root).resolve()
 
-    def create_session(self, agent_id: str, session_id: UUID) -> SessionWorkspace:
+    def create_session(
+        self,
+        agent_id: str,
+        session_id: UUID,
+        *,
+        workspace_type: str = "document",
+    ) -> SessionWorkspace:
         if not AGENT_ID.fullmatch(agent_id):
             raise WorkspaceBoundaryError("invalid Agent id for workspace")
+        if workspace_type not in {"document", "repository"}:
+            raise WorkspaceBoundaryError("workspace type must be document or repository")
         session_name = str(session_id)
         agent_root = self._inside(self.root / agent_id)
         sessions_root = self._inside(agent_root / "sessions")
@@ -36,10 +46,21 @@ class WorkspaceManager:
         input_path = self._inside(target / "input")
         output_path = self._inside(target / "output")
         temp_path = self._inside(target / "temp")
-        for path in (agent_root, sessions_root, target, input_path, output_path, temp_path):
+        repository_path = self._inside(target / "repository") if workspace_type == "repository" else None
+        paths = [agent_root, sessions_root, target, input_path, output_path, temp_path]
+        if repository_path is not None:
+            paths.append(repository_path)
+        for path in paths:
             path.mkdir(parents=True, exist_ok=True, mode=0o770)
             path.chmod(0o2770)
-        return SessionWorkspace(root=target, input=input_path, output=output_path, temp=temp_path)
+        return SessionWorkspace(
+            root=target,
+            input=input_path,
+            output=output_path,
+            temp=temp_path,
+            workspace_type=workspace_type,
+            repository=repository_path,
+        )
 
     def write_output(self, workspace: SessionWorkspace, filename: str, content: bytes) -> Path:
         if not SAFE_FILENAME.fullmatch(filename) or filename in {".", ".."}:

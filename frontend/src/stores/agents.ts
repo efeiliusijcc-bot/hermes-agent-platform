@@ -157,7 +157,13 @@ export const useAgentStore = defineStore('agents', () => {
       prompt_template: string
       model_adapter: ModelAdapterName
       runtime_type?: RuntimeType
+      runtime_id?: string | null
       runtime_config?: Record<string, unknown>
+      capability_profile?: {
+        workspace_type: 'document' | 'repository'
+        required_tools: string[]
+        artifact_types: string[]
+      }
       model_config: Record<string, unknown>
     }) {
       currentAgent.value = await platformApi.updateAgentConfiguration(agentId, payload)

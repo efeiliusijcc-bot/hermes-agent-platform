@@ -16,13 +16,14 @@ from app.runtime.base import (
     RuntimeHealth,
     RuntimeSession,
 )
-from app.runtime.hermes import HermesRunResult
+from app.runtime.hermes import HermesRunResult, RuntimeArtifact
 
 
 class PiRuntimeAdapter(RuntimeAdapter):
     """HTTP adapter for an optional, separately deployed Pi Agent Runtime."""
 
     runtime_type = "pi"
+    runtime_label = "Pi"
 
     def __init__(
         self,
@@ -33,21 +34,20 @@ class PiRuntimeAdapter(RuntimeAdapter):
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         settings = get_settings()
-        self.endpoint = (endpoint or settings.pi_runtime_endpoint).rstrip("/")
+        configured_endpoint = endpoint or self._default_endpoint(settings)
+        if not configured_endpoint:
+            raise RuntimeAdapterError(f"{self.runtime_label} Runtime endpoint is not configured")
+        self.endpoint = configured_endpoint.rstrip("/")
         self.version = version
         self.config = config or {}
         configured_timeout = self.config.get("timeout_seconds")
         self.timeout = (
             float(configured_timeout)
             if isinstance(configured_timeout, (int, float)) and not isinstance(configured_timeout, bool)
-            else settings.pi_runtime_timeout_seconds
+            else self._default_timeout(settings)
         )
         self.transport = transport
-        self.api_key = (
-            settings.pi_runtime_api_key.get_secret_value()
-            if settings.pi_runtime_api_key is not None
-            else None
-        )
+        self.api_key = self._default_api_key(settings)
 
     async def create_session(
         self,
@@ -69,7 +69,7 @@ class PiRuntimeAdapter(RuntimeAdapter):
         )
         session_id = payload.get("id") or payload.get("session_id")
         if not session_id:
-            raise RuntimeAdapterError("Pi Runtime did not return a session id")
+            raise RuntimeAdapterError(f"{self.runtime_label} Runtime did not return a session id")
         return RuntimeSession(id=str(session_id), runtime_type=self.runtime_type)
 
     async def execute(
@@ -99,7 +99,7 @@ class PiRuntimeAdapter(RuntimeAdapter):
         )
         output = payload.get("output") or payload.get("output_text") or payload.get("result")
         if not isinstance(output, str):
-            raise RuntimeAdapterError("Pi Runtime did not return text output")
+            raise RuntimeAdapterError(f"{self.runtime_label} Runtime did not return text output")
         usage = payload.get("usage")
         token_usage = usage.get("total_tokens") if isinstance(usage, dict) else None
         if isinstance(token_usage, bool) or not isinstance(token_usage, int):
@@ -112,6 +112,7 @@ class PiRuntimeAdapter(RuntimeAdapter):
             status=str(payload.get("status") or "completed"),
             token_usage=token_usage,
             trace=trace[:500],
+            artifacts=self.result_artifacts(payload),
         )
 
     async def stream(
@@ -155,10 +156,12 @@ class PiRuntimeAdapter(RuntimeAdapter):
                             continue
                         event = json.loads(raw)
                         if not isinstance(event, dict):
-                            raise RuntimeAdapterError("Pi Runtime returned a non-object event")
+                            raise RuntimeAdapterError(
+                                f"{self.runtime_label} Runtime returned a non-object event"
+                            )
                         yield self._normalize_event(event)
         except (httpx.HTTPError, ValueError) as exc:
-            raise RuntimeAdapterError(f"Pi Runtime stream failed: {exc}") from exc
+            raise RuntimeAdapterError(f"{self.runtime_label} Runtime stream failed: {exc}") from exc
 
     async def stop(self, run_id: str) -> None:
         try:
@@ -173,12 +176,12 @@ class PiRuntimeAdapter(RuntimeAdapter):
         payload = await self._request("GET", health_path)
         status = str(payload.get("status") or "ok").lower()
         if status not in {"ok", "online", "healthy", "ready"}:
-            raise RuntimeAdapterError(f"Pi Runtime is not healthy: {status}")
+            raise RuntimeAdapterError(f"{self.runtime_label} Runtime is not healthy: {status}")
         version = payload.get("version") or self.version
         return RuntimeHealth(
             status="online",
             version=str(version) if version else None,
-            detail="Pi Runtime is online",
+            detail=f"{self.runtime_label} Runtime is online",
         )
 
     def _headers(self) -> dict[str, str]:
@@ -196,7 +199,9 @@ class PiRuntimeAdapter(RuntimeAdapter):
                 if response.status_code == status.HTTP_409_CONFLICT:
                     cancelled = response.json()
                     if isinstance(cancelled, dict) and cancelled.get("status") == "cancelled":
-                        raise RuntimeCancelledError("Pi Runtime execution was cancelled")
+                        raise RuntimeCancelledError(
+                            f"{self.runtime_label} Runtime execution was cancelled"
+                        )
                 response.raise_for_status()
                 payload = response.json()
         except RuntimeCancelledError:
@@ -204,10 +209,31 @@ class PiRuntimeAdapter(RuntimeAdapter):
         except (httpx.HTTPError, ValueError) as exc:
             status_code = getattr(getattr(exc, "response", None), "status_code", None)
             suffix = f" ({status_code})" if status_code else ""
-            raise RuntimeAdapterError(f"Pi Runtime request failed{suffix}: {exc}") from exc
+            raise RuntimeAdapterError(
+                f"{self.runtime_label} Runtime request failed{suffix}: {exc}"
+            ) from exc
         if not isinstance(payload, dict):
-            raise RuntimeAdapterError("Pi Runtime returned a non-object response")
+            raise RuntimeAdapterError(f"{self.runtime_label} Runtime returned a non-object response")
         return payload
+
+    def result_artifacts(self, payload: dict[str, Any]) -> tuple[RuntimeArtifact, ...]:
+        return ()
+
+    @staticmethod
+    def _default_endpoint(settings: Any) -> str | None:
+        return settings.pi_runtime_endpoint
+
+    @staticmethod
+    def _default_timeout(settings: Any) -> float:
+        return settings.pi_runtime_timeout_seconds
+
+    @staticmethod
+    def _default_api_key(settings: Any) -> str | None:
+        return (
+            settings.pi_runtime_api_key.get_secret_value()
+            if settings.pi_runtime_api_key is not None
+            else None
+        )
 
     @staticmethod
     def _normalize_event(event: dict[str, Any]) -> dict[str, Any]:

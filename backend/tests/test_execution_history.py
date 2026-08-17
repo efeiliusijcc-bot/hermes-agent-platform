@@ -128,6 +128,8 @@ def test_trace_contract_uses_persisted_nodes_artifacts_and_missing_token_fields(
         storage_type="filesystem",
         storage_path="trace-agent/session/result.txt",
         content_type="text/plain",
+        artifact_type="text",
+        runtime_source="platform",
         size_bytes=10,
         sha256="a" * 64,
         created_at=now,

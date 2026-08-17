@@ -30,12 +30,14 @@ from app.repositories import model_registrations as model_repository
 from app.repositories import skills as skill_repository
 from app.repositories import runtimes as runtime_repository
 from app.runtime.hermes import HermesClient, HermesRunResult, HermesRuntimeError
+from app.runtime.capabilities import normalize_capability_profile, validate_required_tools
+from app.runtime.events import normalize_trace_event
+from app.runtime.router import RuntimeRouter
 from app.runtime import (
     RuntimeAdapter,
     RuntimeAdapterError,
     RuntimeCancelledError,
     RuntimeContext,
-    get_runtime_adapter,
 )
 from app.schemas.agent import (
     AgentCreate,
@@ -77,7 +79,12 @@ async def create_agent(payload: AgentCreate, session: AsyncSession = Depends(get
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="parent Agent must be a manager",
             )
-    await _validate_runtime_binding(session, payload.runtime_type, payload.runtime_config)
+    await _validate_runtime_binding(
+        session,
+        payload.runtime_type,
+        payload.runtime_id,
+        payload.runtime_config,
+    )
     await _validate_model_binding(session, payload.model, payload.model_adapter)
     try:
         agent = await repository.create_agent(session, payload)
@@ -157,7 +164,16 @@ async def update_agent_configuration(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     target_runtime = payload.runtime_type or agent.runtime_type
-    await _validate_runtime_binding(session, target_runtime, payload.runtime_config)
+    payload.capability_profile = normalize_capability_profile(
+        payload.capability_profile,
+        runtime_type=target_runtime,
+    )
+    await _validate_runtime_binding(
+        session,
+        target_runtime,
+        payload.runtime_id,
+        payload.runtime_config,
+    )
     await _validate_model_binding(session, payload.model, payload.model_adapter)
     incompatible = sorted(
         skill.id
@@ -257,30 +273,34 @@ async def _execution_runtime(
     context: AgentExecutionContext, session: AsyncSession
 ) -> tuple[RuntimeAdapter, str, RuntimeContext]:
     runtime_type = getattr(context.agent, "runtime_type", "hermes")
+    runtime_id = getattr(context.agent, "runtime_id", None)
     runtime_config = getattr(context.agent, "runtime_config", {}) or {}
-    runtime_record = await runtime_repository.resolve_runtime(
-        session, runtime_type=runtime_type, runtime_config=runtime_config
+    route = await RuntimeRouter().resolve(
+        session,
+        runtime_type=runtime_type,
+        runtime_id=runtime_id,
+        runtime_config=runtime_config,
     )
-    if runtime_config.get("runtime_id") and runtime_record is None:
-        raise RuntimeAdapterError("configured Runtime is missing or has a different type")
-    if runtime_record is not None and runtime_record.status in {"offline", "disabled"}:
-        raise RuntimeAdapterError(f"configured Runtime is {runtime_record.status}")
-    adapter = get_runtime_adapter(
-        runtime_type,
-        endpoint=runtime_record.endpoint if runtime_record is not None else None,
-        version=runtime_record.version if runtime_record is not None else None,
-        config=runtime_record.config if runtime_record is not None else runtime_config,
-    )
+    runtime_record = route.runtime
+    adapter = route.adapter
     if context.orchestration_session_id is None:
         raise RuntimeAdapterError("platform Runtime session is missing")
     runtime_session = await session.get(AgentSession, context.orchestration_session_id)
     if runtime_session is None:
         raise RuntimeAdapterError("platform Runtime session was not found")
+    if _requires_fresh_runtime_session(runtime_type, context.trace_attempt):
+        runtime_session.runtime_session_id = None
     runtime_context = RuntimeContext(
         agent_id=context.agent.id,
         session_id=str(runtime_session.id),
-        workspace=str(context.workspace.root) if context.workspace is not None else runtime_session.workspace_path,
+        workspace=(
+            str(context.workspace.repository or context.workspace.root)
+            if context.workspace is not None
+            else runtime_session.workspace_path
+        ),
         memory_namespace=str(context.memory_scope.get("namespace") or ""),
+        workspace_type=runtime_session.workspace_type,
+        capability_profile=getattr(context.agent, "capability_profile", {}) or {},
         tools=tuple(sorted(context.mcp_capabilities)),
         skills=tuple(sorted(skill.id for skill in context.loaded_skills)),
         metadata={
@@ -487,9 +507,13 @@ async def stream_prepared_agent(
             if event_type == "message.delta" and isinstance(event.get("delta"), str):
                 output_parts.append(event["delta"])
             if event_type in {"run.cancelled", "run.canceled"}:
-                raise RuntimeCancelledError(str(event.get("error") or "Pi Runtime execution cancelled"))
+                raise RuntimeCancelledError(
+                    str(event.get("error") or f"{runtime_type.title()} Runtime execution cancelled")
+                )
             if event_type == "run.failed":
-                raise HermesRuntimeError(str(event.get("error") or f"Hermes {event_type}"))
+                raise HermesRuntimeError(
+                    str(event.get("error") or f"{runtime_type.title()} Runtime execution failed")
+                )
             if event_type == "run.completed":
                 output = str(event.get("output") or "".join(output_parts))
                 result = HermesRunResult(
@@ -498,6 +522,11 @@ async def stream_prepared_agent(
                     status="completed",
                     token_usage=HermesClient._extract_token_usage(event),
                     trace=tuple(runtime_trace[:100]),
+                    artifacts=(
+                        runtime.result_artifacts(event)
+                        if callable(getattr(runtime, "result_artifacts", None))
+                        else ()
+                    ),
                 )
                 await execution_repository.finish_step(
                     session,
@@ -538,7 +567,9 @@ async def stream_prepared_agent(
                 completed = True
             yield event
         if not completed:
-            raise HermesRuntimeError("Hermes event stream ended without a completion event")
+            raise HermesRuntimeError(
+                f"{runtime_type.title()} Runtime event stream ended without a completion event"
+            )
     except (AgentMemoryError, ArtifactStorageError) as exc:
         await _fail_execution(context.execution, session, exc)
         raise
@@ -603,11 +634,37 @@ def _ensure_agent_editable(agent: Agent) -> None:
         )
 
 
+def _requires_fresh_runtime_session(runtime_type: str, trace_attempt: int) -> bool:
+    """Avoid replaying a failed durable Harness session on a platform retry.
+
+    The official DeepSeek runtime persists a session log under DSH_SESSION_ROOT.
+    Platform retries rebuild their prompt from platform-managed Memory, so reusing
+    that durable Harness session would duplicate the previous attempt's context.
+    """
+
+    return runtime_type == "deepseek" and trace_attempt > 0
+
+
 async def _validate_runtime_binding(
-    session: AsyncSession, runtime_type: str, runtime_config: dict[str, Any]
+    session: AsyncSession,
+    runtime_type: str,
+    runtime_id: UUID | None,
+    runtime_config: dict[str, Any],
 ) -> None:
-    configured_id = runtime_config.get("runtime_id")
+    configured_id = runtime_id or runtime_config.get("runtime_id")
     if configured_id is None:
+        if runtime_type == "deepseek":
+            value = await runtime_repository.resolve_runtime(
+                session,
+                runtime_type=runtime_type,
+                runtime_id=None,
+                runtime_config=runtime_config,
+            )
+            if value is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="DeepSeek Runtime has no registered online instance",
+                )
         return
     value = await runtime_repository.get_runtime(session, UUID(str(configured_id)))
     if value is None:
@@ -653,10 +710,20 @@ async def _prepare_agent_execution(
     agent_version_id: UUID | None = None,
 ) -> AgentExecutionContext:
     manager = WorkspaceManager(get_settings().workspace_root)
+    runtime_type = getattr(agent, "runtime_type", "hermes")
+    capability_profile = normalize_capability_profile(
+        getattr(agent, "capability_profile", {}) or {},
+        runtime_type=runtime_type,
+    )
+    workspace_type = str(capability_profile["workspace_type"])
     if orchestration_session is None:
         internal_session_id = uuid4()
         try:
-            workspace = manager.create_session(agent.id, internal_session_id)
+            workspace = manager.create_session(
+                agent.id,
+                internal_session_id,
+                workspace_type=workspace_type,
+            )
             manager.write_input(workspace, "request.txt", payload.input.encode("utf-8"))
         except (OSError, WorkspaceBoundaryError) as exc:
             raise HTTPException(
@@ -667,7 +734,8 @@ async def _prepare_agent_execution(
             id=internal_session_id,
             agent_id=agent.id,
             memory_session_id=payload.session_id,
-            runtime_type=getattr(agent, "runtime_type", "hermes"),
+            runtime_type=runtime_type,
+            workspace_type=workspace_type,
             status="running",
             input=payload.input,
             workspace_path=manager.relative(workspace.root),
@@ -676,7 +744,11 @@ async def _prepare_agent_execution(
         session.add(orchestration_session)
     else:
         try:
-            workspace = manager.create_session(agent.id, orchestration_session.id)
+            workspace = manager.create_session(
+                agent.id,
+                orchestration_session.id,
+                workspace_type=workspace_type,
+            )
             manager.write_input(workspace, "request.txt", payload.input.encode("utf-8"))
         except (OSError, WorkspaceBoundaryError) as exc:
             orchestration_session.status = "failed"
@@ -687,6 +759,8 @@ async def _prepare_agent_execution(
                 detail="Session workspace creation failed",
             ) from exc
         orchestration_session.status = "running"
+        orchestration_session.runtime_type = runtime_type
+        orchestration_session.workspace_type = workspace_type
         orchestration_session.started_at = datetime.now(timezone.utc)
         orchestration_session.finished_at = None
     input_schema = schema_version.input_schema if schema_version else agent.input_schema
@@ -821,6 +895,7 @@ async def _prepare_agent_execution(
             }
             for server in mcp_servers
         }
+        validate_required_tools(capability_profile, set(mcp_capabilities))
         for server in mcp_servers:
             logger.info("MCP loaded: %s", server.id)
         await execution_repository.record_step(
@@ -917,7 +992,12 @@ async def _prepare_agent_execution(
         execution.details = {
             "phase": "runtime_prepare",
             "runtime_type": getattr(agent, "runtime_type", "hermes"),
+            "runtime_id": (
+                str(getattr(agent, "runtime_id", "") or "") or None
+            ),
             "runtime_config": getattr(agent, "runtime_config", {}) or {},
+            "capability_profile": capability_profile,
+            "workspace_type": workspace_type,
             "skills_loaded": [skill.id for skill in loaded_skills],
             "mcp_loaded": [server.id for server in mcp_servers],
             "mcp_permissions": mcp_capabilities,
@@ -1052,7 +1132,17 @@ async def _complete_execution(
     manager = WorkspaceManager(get_settings().workspace_root)
     storage = artifact_storage or get_artifact_storage()
     artifacts: list[Artifact] = []
-    for filename, content, content_type in _execution_artifact_payloads(result, output_json):
+    runtime_type = getattr(context.agent, "runtime_type", "hermes")
+    allowed_artifact_types = set(
+        (getattr(context.agent, "capability_profile", {}) or {}).get("artifact_types") or []
+    )
+    for filename, content, content_type, artifact_type, runtime_source in _execution_artifact_payloads(
+        result,
+        output_json,
+        runtime_source=runtime_type,
+    ):
+        if runtime_source != "platform" and allowed_artifact_types and artifact_type not in allowed_artifact_types:
+            raise RuntimeError(f"Runtime artifact type is not allowed: {artifact_type}")
         manager.write_output(context.workspace, filename, content)
         stored = await storage.save(
             agent_id=context.agent.id,
@@ -1075,6 +1165,8 @@ async def _complete_execution(
                 storage_type=stored.storage_type,
                 storage_path=stored.storage_path,
                 content_type=content_type,
+                artifact_type=artifact_type,
+                runtime_source=runtime_source,
                 size_bytes=stored.size_bytes,
                 sha256=stored.sha256,
             )
@@ -1083,6 +1175,8 @@ async def _complete_execution(
             artifact.storage_type = stored.storage_type
             artifact.storage_path = stored.storage_path
             artifact.content_type = content_type
+            artifact.artifact_type = artifact_type
+            artifact.runtime_source = runtime_source
             artifact.size_bytes = stored.size_bytes
             artifact.sha256 = stored.sha256
         artifacts.append(artifact)
@@ -1130,24 +1224,56 @@ async def _complete_execution(
             output_data={
                 "artifact_id": str(artifact.id),
                 "filename": artifact.filename,
+                "artifact_type": artifact.artifact_type,
+                "runtime_source": artifact.runtime_source,
                 "size_bytes": artifact.size_bytes,
             },
         )
 
 
 def _execution_artifact_payloads(
-    result: HermesRunResult, output_json: Any | None
-) -> list[tuple[str, bytes, str]]:
+    result: HermesRunResult,
+    output_json: Any | None,
+    *,
+    runtime_source: str = "platform",
+) -> list[tuple[str, bytes, str, str, str]]:
     primary_filename = "result.json" if output_json is not None else "result.txt"
     primary_type = (
         "application/json; charset=utf-8"
         if output_json is not None
         else "text/plain; charset=utf-8"
     )
-    payloads = [(primary_filename, result.output.encode("utf-8"), primary_type)]
+    primary_artifact_type = "json" if output_json is not None else "text"
+    payloads = [
+        (
+            primary_filename,
+            result.output.encode("utf-8"),
+            primary_type,
+            primary_artifact_type,
+            "platform",
+        )
+    ]
     report = output_json.get("report_markdown") if isinstance(output_json, dict) else None
     if isinstance(report, str) and report.strip():
-        payloads.append(("report.md", report.encode("utf-8"), "text/markdown; charset=utf-8"))
+        payloads.append(
+            (
+                "report.md",
+                report.encode("utf-8"),
+                "text/markdown; charset=utf-8",
+                "markdown",
+                "platform",
+            )
+        )
+    payloads.extend(
+        (
+            artifact.filename,
+            artifact.content,
+            artifact.content_type,
+            artifact.artifact_type,
+            runtime_source,
+        )
+        for artifact in result.artifacts
+    )
     return payloads
 
 
@@ -1239,28 +1365,8 @@ async def _record_runtime_trace(
     session: AsyncSession,
 ) -> None:
     runtime_type = getattr(context.agent, "runtime_type", "hermes")
-    type_map = {
-        "start": "runtime",
-        "skill_load": "skill",
-        "tool_call": "mcp",
-        "tool_started": "mcp",
-        "tool_completed": "mcp",
-        "model_call": "model",
-        "artifact_save": "artifact",
-        "end": "runtime",
-    }
     for index, raw in enumerate(result.trace[:100]):
-        event_type = str(raw.get("event") or raw.get("type") or "runtime_event").lower()
-        normalized_type = event_type.replace(".", "_")
-        step_type = type_map.get(normalized_type, "runtime")
-        raw_status = str(raw.get("status") or "succeeded").lower()
-        step_status = (
-            "failed"
-            if raw_status in {"failed", "error"}
-            else "cancelled"
-            if raw_status in {"cancelled", "canceled"}
-            else "succeeded"
-        )
+        event_type, step_type, step_status = normalize_trace_event(raw)
         latency = raw.get("latency_ms") or raw.get("duration_ms")
         await execution_repository.record_step(
             session,

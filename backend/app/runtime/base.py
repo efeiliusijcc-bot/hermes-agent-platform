@@ -35,6 +35,8 @@ class RuntimeContext:
     session_id: str
     workspace: str
     memory_namespace: str
+    workspace_type: str = "document"
+    capability_profile: dict[str, Any] | None = None
     tools: tuple[str, ...] = ()
     skills: tuple[str, ...] = ()
     metadata: dict[str, Any] | None = None
@@ -44,7 +46,9 @@ class RuntimeContext:
             "agent_id": self.agent_id,
             "session_id": self.session_id,
             "workspace": self.workspace,
+            "workspace_type": self.workspace_type,
             "memory_namespace": self.memory_namespace,
+            "capability_profile": self.capability_profile or {},
             "tools": list(self.tools),
             "skills": list(self.skills),
             "metadata": self.metadata or {},

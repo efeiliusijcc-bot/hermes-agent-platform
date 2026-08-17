@@ -15,6 +15,7 @@ from app.schemas.multi_agent import MultiAgentRunRequest, WorkflowNodeSpec
 from app.task_queue import TaskQueue
 from app.workspace import WorkspaceManager
 from app.workspace import WorkspaceBoundaryError
+from app.runtime.capabilities import normalize_capability_profile
 
 
 class OrchestratorError(RuntimeError):
@@ -246,8 +247,17 @@ class AgentOrchestrator:
     ) -> AgentTask:
         internal_session_id = uuid4()
         manager = WorkspaceManager(self.settings.workspace_root)
+        capability_profile = normalize_capability_profile(
+            agent.capability_profile,
+            runtime_type=agent.runtime_type,
+        )
+        workspace_type = str(capability_profile["workspace_type"])
         try:
-            workspace = manager.create_session(agent.id, internal_session_id)
+            workspace = manager.create_session(
+                agent.id,
+                internal_session_id,
+                workspace_type=workspace_type,
+            )
         except (OSError, WorkspaceBoundaryError) as exc:
             raise OrchestratorError("task workspace creation failed") from exc
         task_input = self._node_prompt(payload.input, role, node_type, config or {})
@@ -270,6 +280,7 @@ class AgentOrchestrator:
             },
             agent_version_id=agent.current_version_id,
             runtime_type=agent.runtime_type,
+            workspace_type=workspace_type,
             parent_task_id=parent_task_id,
             workflow_id=workflow_id,
             workflow_run_id=run.id,

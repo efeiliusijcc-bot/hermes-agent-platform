@@ -17,7 +17,13 @@ const agent = {
   prompt_template: '{{input}}',
   model_adapter: 'qwen' as const,
   runtime_type: 'hermes' as const,
+  runtime_id: null,
   runtime_config: {},
+  capability_profile: {
+    workspace_type: 'document' as const,
+    required_tools: [],
+    artifact_types: ['text', 'json', 'markdown'],
+  },
   api_enabled: false,
   status: 'active' as const,
   response_mode: 'sync' as const,

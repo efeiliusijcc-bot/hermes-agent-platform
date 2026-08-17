@@ -11,6 +11,7 @@ mkdir -p \
   "$PROJECT_ROOT/data/minio" \
   "$PROJECT_ROOT/data/hermes" \
   "$PROJECT_ROOT/data/hermes-workspace" \
+  "$PROJECT_ROOT/data/deepseek-sessions" \
   "$PROJECT_ROOT/data/artifacts" \
   "$PROJECT_ROOT/data/mcp-files" \
   "$PROJECT_ROOT/skills"
@@ -32,8 +33,11 @@ chmod 2770 "$PROJECT_ROOT/data/hermes-workspace" "$PROJECT_ROOT/data/artifacts"
 if [ "$(id -u)" = "0" ]; then
   chown -R "${AGENT_API_UID:-10002}:${WORKSPACE_SHARED_GID:-10003}" \
     "$PROJECT_ROOT/data/hermes-workspace" "$PROJECT_ROOT/data/artifacts"
+  chown -R "${DEEPSEEK_RUNTIME_UID:-10004}:${DEEPSEEK_RUNTIME_GID:-10004}" \
+    "$PROJECT_ROOT/data/deepseek-sessions"
   chown -R "${MCP_GATEWAY_UID:-10001}:${MCP_GATEWAY_GID:-10001}" \
     "$PROJECT_ROOT/data/mcp-files"
 fi
+chmod 2770 "$PROJECT_ROOT/data/deepseek-sessions"
 
 echo "Persistent data directories prepared under $PROJECT_ROOT/data"

@@ -9,6 +9,8 @@ TARGET_FRONTEND_PORT=${OFFLINE_FRONTEND_PORT:-18089}
 TARGET_INTERNAL_NETWORK=${OFFLINE_INTERNAL_NETWORK_NAME:-hermes-agent-platform-internal}
 TARGET_EDGE_NETWORK=${OFFLINE_EDGE_NETWORK_NAME:-hermes-agent-platform-edge}
 TARGET_PI_RUNTIME_NETWORK=${OFFLINE_PI_RUNTIME_NETWORK_NAME:-hermes-agent-platform-pi-runtime}
+TARGET_DEEPSEEK_RUNTIME_NETWORK=${OFFLINE_DEEPSEEK_RUNTIME_NETWORK_NAME:-hermes-agent-platform-deepseek-runtime}
+TARGET_DEEPSEEK_HARNESS_NETWORK=${OFFLINE_DEEPSEEK_HARNESS_NETWORK_NAME:-hermes-agent-platform-deepseek-harness}
 
 test -f "$PROJECT_ROOT/.env" || {
   echo "Offline bundle is missing .env" >&2
@@ -40,10 +42,13 @@ HERMES_COMPOSE_PROJECT_NAME=$PROJECT_NAME
 HERMES_INTERNAL_NETWORK_NAME=$TARGET_INTERNAL_NETWORK
 HERMES_EDGE_NETWORK_NAME=$TARGET_EDGE_NETWORK
 HERMES_PI_RUNTIME_NETWORK_NAME=$TARGET_PI_RUNTIME_NETWORK
+HERMES_DEEPSEEK_RUNTIME_NETWORK_NAME=$TARGET_DEEPSEEK_RUNTIME_NETWORK
+HERMES_DEEPSEEK_HARNESS_NETWORK_NAME=$TARGET_DEEPSEEK_HARNESS_NETWORK
 AGENT_API_PORT=$TARGET_API_PORT
 FRONTEND_PORT=$TARGET_FRONTEND_PORT
 export HERMES_COMPOSE_PROJECT_NAME HERMES_INTERNAL_NETWORK_NAME HERMES_EDGE_NETWORK_NAME
-export HERMES_PI_RUNTIME_NETWORK_NAME AGENT_API_PORT FRONTEND_PORT
+export HERMES_PI_RUNTIME_NETWORK_NAME HERMES_DEEPSEEK_RUNTIME_NETWORK_NAME
+export HERMES_DEEPSEEK_HARNESS_NETWORK_NAME AGENT_API_PORT FRONTEND_PORT
 
 COMPOSE="docker compose -p $PROJECT_NAME -f $PROJECT_ROOT/docker-compose.yml"
 
@@ -54,7 +59,7 @@ done < "$PROJECT_ROOT/OFFLINE_IMAGES.txt"
 
 "$PROJECT_ROOT/scripts/prepare-data-dirs.sh"
 cp "$PROJECT_ROOT/offline-data/redis/dump.rdb" "$PROJECT_ROOT/data/redis/dump.rdb"
-for data_name in hermes hermes-workspace mcp-files; do
+for data_name in hermes hermes-workspace deepseek-sessions mcp-files; do
   if [ -d "$PROJECT_ROOT/offline-data/$data_name" ]; then
     cp -a "$PROJECT_ROOT/offline-data/$data_name/." "$PROJECT_ROOT/data/$data_name/"
   fi
@@ -143,6 +148,7 @@ import urllib.request
 with urllib.request.urlopen("http://127.0.0.1:8000/api/runtimes", timeout=10) as response:
     values = json.load(response)
 assert any(value["type"] == "pi" and value["status"] == "online" for value in values), values
+assert any(value["type"] == "deepseek" and value["status"] == "online" for value in values), values
 PY
 
 echo "Offline restore completed for Compose project $PROJECT_NAME"

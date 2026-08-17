@@ -50,7 +50,9 @@ const promptTemplateText = ref('{{input}}')
 const modelText = ref('hermes-agent')
 const modelAdapter = ref<ModelAdapterName>('hermes')
 const runtimeType = ref<RuntimeType>('hermes')
+const runtimeId = ref<string | null>(null)
 const runtimeConfigText = ref('{}')
+const capabilityProfileText = ref('{}')
 const runtimes = ref<AgentRuntime[]>([])
 const models = ref<RegisteredModel[]>([])
 const runtimeChecking = ref(false)
@@ -74,6 +76,7 @@ const versionTestOutput = ref('')
 const versionTesting = ref(false)
 const comparingVersion = ref<AgentVersion | null>(null)
 const activeTab = ref<'overview' | 'configuration' | 'versions' | 'execution' | 'api' | 'artifacts' | 'logs'>('overview')
+let hydratingConfiguration = false
 const detailTabs = [
   { key: 'overview', label: '概览' },
   { key: 'configuration', label: '配置' },
@@ -87,12 +90,23 @@ const detailTabs = [
 const currentVersion = computed(() => versions.value.find((item) => item.status === 'published') || null)
 const lastExecution = computed(() => executions.value[0] || null)
 const selectedRuntime = computed(() => {
-  const runtimeId = agentStore.currentAgent?.runtime_config?.runtime_id
-  const configured = runtimes.value.find((item) => item.id === runtimeId)
+  const configured = runtimes.value.find((item) => item.id === runtimeId.value)
   if (configured) return configured
-  const matching = runtimes.value.filter((item) => item.type === agentStore.currentAgent?.runtime_type)
+  const matching = runtimes.value.filter((item) => item.type === runtimeType.value)
   return matching.length === 1 ? matching[0] : null
 })
+const runtimeOptions = computed(() => runtimes.value
+  .filter((runtime) => runtime.type === runtimeType.value && runtime.status !== 'disabled')
+  .map((runtime) => ({ label: `${runtime.name} · ${runtime.version} · ${runtime.status}`, value: runtime.id })))
+const runtimeTypeOptions = computed(() => [
+  { label: 'Hermes Runtime', value: 'hermes' },
+  { label: 'Pi Runtime', value: 'pi' },
+  {
+    label: runtimes.value.some((runtime) => runtime.type === 'deepseek') ? 'DeepSeek Harness' : 'DeepSeek Harness · 未注册',
+    value: 'deepseek',
+    disabled: !runtimes.value.some((runtime) => runtime.type === 'deepseek' && runtime.status !== 'disabled'),
+  },
+])
 const selectedModel = computed(() => models.value.find((item) => item.id === modelText.value) || null)
 const modelOptions = computed(() => models.value.map((item) => ({
   label: `${item.display_name} · ${item.provider}${item.is_default ? ' · 默认' : ''}${item.is_enabled ? '' : ' · 已停用'}`,
@@ -156,6 +170,7 @@ async function load() {
     platformApi.listModels().then((value) => { models.value = value }),
   ]).catch(() => undefined)
   if (agentStore.currentAgent) {
+    hydratingConfiguration = true
     inputSchemaText.value = JSON.stringify(agentStore.currentAgent.input_schema || {}, null, 2)
     outputSchemaText.value = JSON.stringify(agentStore.currentAgent.output_schema || {}, null, 2)
     systemPromptText.value = agentStore.currentAgent.system_prompt
@@ -163,8 +178,11 @@ async function load() {
     modelText.value = agentStore.currentAgent.model
     modelAdapter.value = agentStore.currentAgent.model_adapter
     runtimeType.value = agentStore.currentAgent.runtime_type
+    runtimeId.value = agentStore.currentAgent.runtime_id
     runtimeConfigText.value = JSON.stringify(agentStore.currentAgent.runtime_config || {}, null, 2)
+    capabilityProfileText.value = JSON.stringify(agentStore.currentAgent.capability_profile || {}, null, 2)
     modelConfigText.value = JSON.stringify(agentStore.currentAgent.model_config || {}, null, 2)
+    hydratingConfiguration = false
   }
   phase3Loading.value = true
   await Promise.all([
@@ -331,6 +349,10 @@ async function testVersion() {
 
 async function saveConfiguration() {
   if (rejectLockedEdit()) return
+  if (runtimeType.value === 'deepseek' && (!runtimeId.value || selectedRuntime.value?.status !== 'online')) {
+    message.warning('DeepSeek Harness 必须绑定已注册且在线的 Runtime 实例')
+    return
+  }
   configurationSaving.value = true
   try {
     await agentStore.updateConfiguration(agentId.value, {
@@ -339,7 +361,13 @@ async function saveConfiguration() {
       prompt_template: promptTemplateText.value,
       model_adapter: modelAdapter.value,
       runtime_type: runtimeType.value,
+      runtime_id: runtimeId.value,
       runtime_config: JSON.parse(runtimeConfigText.value) as Record<string, unknown>,
+      capability_profile: JSON.parse(capabilityProfileText.value) as {
+        workspace_type: 'document' | 'repository'
+        required_tools: string[]
+        artifact_types: string[]
+      },
       model_config: JSON.parse(modelConfigText.value) as Record<string, unknown>,
     })
     message.success('Prompt 与模型配置已保存')
@@ -349,6 +377,26 @@ async function saveConfiguration() {
 watch(modelText, () => {
   if (selectedModel.value) modelAdapter.value = selectedModel.value.adapter
 })
+
+watch(runtimeType, (runtimeTypeValue, previous) => {
+  if (hydratingConfiguration) return
+  if (selectedRuntime.value?.type !== runtimeTypeValue) runtimeId.value = null
+  const candidate = runtimes.value.find((runtime) => runtime.type === runtimeTypeValue && runtime.status === 'online')
+  if (candidate) runtimeId.value = candidate.id
+  if (runtimeTypeValue === 'deepseek') {
+    capabilityProfileText.value = JSON.stringify({
+      workspace_type: 'repository',
+      required_tools: [],
+      artifact_types: ['code_patch', 'git_diff', 'test_report'],
+    }, null, 2)
+  } else if (previous === 'deepseek') {
+    capabilityProfileText.value = JSON.stringify({
+      workspace_type: 'document',
+      required_tools: [],
+      artifact_types: ['text', 'json', 'markdown', 'pdf', 'xlsx'],
+    }, null, 2)
+  }
+}, { flush: 'sync' })
 
 async function checkSelectedRuntime() {
   if (!selectedRuntime.value) return
@@ -503,9 +551,11 @@ onMounted(load)
           <div class="form-grid">
             <NFormItem label="模型"><NSelect v-model:value="modelText" filterable :disabled="configurationLocked" :options="modelOptions" placeholder="从模型管理选择" /></NFormItem>
             <NFormItem label="Provider / Adapter"><NInput :value="selectedModel ? `${selectedModel.provider} / ${selectedModel.adapter}` : modelAdapter" disabled /></NFormItem>
-            <NFormItem label="Agent Runtime"><NSelect v-model:value="runtimeType" :disabled="configurationLocked" :options="[{label:'Hermes Runtime',value:'hermes'},{label:'Pi Runtime',value:'pi'}]" /></NFormItem>
+            <NFormItem label="Agent Runtime"><NSelect v-model:value="runtimeType" :disabled="configurationLocked" :options="runtimeTypeOptions" /></NFormItem>
+            <NFormItem label="Runtime 实例"><NSelect v-model:value="runtimeId" clearable :disabled="configurationLocked" :options="runtimeOptions" :placeholder="runtimeType === 'deepseek' ? 'DeepSeek 必须选择在线实例' : '可使用类型默认端点'" /></NFormItem>
             <NFormItem class="span-2" label="Model Config JSON"><NInput v-model:value="modelConfigText" type="textarea" :rows="4" class="mono" :disabled="configurationLocked" /></NFormItem>
-            <NFormItem class="span-2" label="Runtime Config JSON"><NInput v-model:value="runtimeConfigText" type="textarea" :rows="4" class="mono" :disabled="configurationLocked" placeholder='{"runtime_id":"..."}' /></NFormItem>
+            <NFormItem class="span-2" label="Runtime Config JSON"><NInput v-model:value="runtimeConfigText" type="textarea" :rows="4" class="mono" :disabled="configurationLocked" placeholder='{"timeout_seconds":900}' /></NFormItem>
+            <NFormItem class="span-2" label="Capability Profile JSON"><NInput v-model:value="capabilityProfileText" type="textarea" :rows="6" class="mono" :disabled="configurationLocked" /></NFormItem>
           </div>
           <div class="lifecycle-controls" style="margin-bottom: 14px">
             <span>{{ selectedRuntime ? `${selectedRuntime.name} · ${selectedRuntime.endpoint}` : '未绑定注册表实例，将使用环境变量默认端点' }}</span>
@@ -617,7 +667,7 @@ onMounted(load)
           <div v-else-if="artifacts.length" class="artifact-list">
             <a v-for="artifact in artifacts" :key="artifact.id" class="artifact-row" :href="platformApi.artifactDownloadUrl(artifact.id)">
               <NIcon :component="Api" size="18" />
-              <div><strong>{{ artifact.filename }}</strong><span class="mono">{{ artifact.content_type }} · {{ artifact.size_bytes }} bytes</span><span class="mono">SHA-256 {{ artifact.sha256 }}</span></div>
+              <div><strong>{{ artifact.filename }}</strong><span class="mono">{{ artifact.artifact_type }} · {{ artifact.runtime_source }} · {{ artifact.content_type }} · {{ artifact.size_bytes }} bytes</span><span class="mono">SHA-256 {{ artifact.sha256 }}</span></div>
             </a>
           </div>
           <div v-else class="empty-state empty-state-compact"><div><h3>尚无 Artifact</h3><p>Agent 产生文件后，会显示在这里并支持受控下载。</p></div></div>

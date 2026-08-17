@@ -16,12 +16,21 @@ class HermesRuntimeError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class RuntimeArtifact:
+    filename: str
+    content: bytes
+    content_type: str
+    artifact_type: str
+
+
+@dataclass(frozen=True)
 class HermesRunResult:
     output: str
     run_id: str | None
     status: str
     token_usage: int | None = None
     trace: tuple[dict[str, Any], ...] = ()
+    artifacts: tuple[RuntimeArtifact, ...] = ()
 
 
 class HermesClient:

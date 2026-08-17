@@ -13,6 +13,7 @@
 - MinIO `artifacts`、`knowledge` 两个 bucket 的对象镜像；
 - Hermes 数据目录、工作目录和 MCP 只读文件；
 - 已固化官方 `@earendil-works/pi-agent-core 0.84.2` 依赖的 `pi-runtime` 镜像；
+- 已固化官方 DeepSeek Harness npm `0.1.0-rc.6` 依赖和锁文件的 DeepSeek Runtime 镜像、隔离网关和 Harness JSONL Session 数据目录；
 - 所有内部文件的 `SHA256SUMS` 与镜像清单。
 
 离线包包含模型、数据库、Redis 和 MinIO 密钥，必须按敏感配置文件管理。脚本以 `0600` 创建归档和校验文件，不得上传到公开制品库或提交到 Git。
@@ -60,4 +61,4 @@ Phase 9 在 116 使用以下完全独立的验证边界模拟新节点：
 ./tests/phase9_offline_deployment.sh /absolute/path/to/hermes-agent-platform-v1.0.0-*.tar.gz
 ```
 
-测试验证归档内外校验和、镜像导入、十三个长期服务健康、Pi Runtime 自动注册与健康检查、前端静态页面与 API 同源代理、PostgreSQL/Redis/MinIO/文件数据迁移，以及恢复后的 Knowledge Analyst 真实多源分析。测试还比较原 `hermes-agent-platform` 容器 ID，确保整个过程没有重建原部署。成功后只删除隔离验证项目和验证目录，保留原部署与离线包。
+测试验证归档内外校验和、镜像导入、十五个长期服务健康、Pi/DeepSeek Runtime 自动注册与健康检查、前端静态页面与 API 同源代理、PostgreSQL/Redis/MinIO/文件/Harness Session 数据迁移，以及恢复后的 Knowledge Analyst 真实多源分析。测试还比较原 `hermes-agent-platform` 容器 ID，确保整个过程没有重建原部署。成功后只删除隔离验证项目和验证目录，保留原部署与离线包。

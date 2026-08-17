@@ -46,6 +46,8 @@ services:
         condition: service_healthy
       pi-runtime:
         condition: service_healthy
+      deepseek-runtime:
+        condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -90,6 +92,10 @@ services:
       PI_RUNTIME_API_KEY: ${PI_RUNTIME_API_KEY:?PI_RUNTIME_API_KEY is required}
       PI_RUNTIME_TIMEOUT_SECONDS: ${PI_RUNTIME_TIMEOUT_SECONDS:-180}
       PI_RUNTIME_VERSION: ${PI_RUNTIME_VERSION:-0.84.2}
+      DEEPSEEK_RUNTIME_ENDPOINT: ${DEEPSEEK_RUNTIME_ENDPOINT:-http://deepseek-runtime:8770}
+      DEEPSEEK_RUNTIME_API_KEY: ${DEEPSEEK_RUNTIME_API_KEY:?DEEPSEEK_RUNTIME_API_KEY is required}
+      DEEPSEEK_RUNTIME_TIMEOUT_SECONDS: ${DEEPSEEK_RUNTIME_TIMEOUT_SECONDS:-900}
+      DEEPSEEK_RUNTIME_VERSION: ${DEEPSEEK_RUNTIME_VERSION:-0.1.0-rc.6}
       RUNTIME_AUTO_REGISTER: ${RUNTIME_AUTO_REGISTER:-true}
       SKILLS_ROOT: /app/skills
       SKILL_MAX_DOCUMENT_BYTES: ${SKILL_MAX_DOCUMENT_BYTES:-262144}
@@ -137,6 +143,7 @@ services:
       - platform-internal
       - platform-edge
       - pi-runtime-internal
+      - deepseek-runtime-internal
 
   agent-worker:
     image: hermes-agent-platform/agent-api:phase7
@@ -160,6 +167,8 @@ services:
       source-recall-gateway:
         condition: service_healthy
       pi-runtime:
+        condition: service_healthy
+      deepseek-runtime:
         condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
@@ -207,6 +216,10 @@ services:
       PI_RUNTIME_API_KEY: ${PI_RUNTIME_API_KEY:?PI_RUNTIME_API_KEY is required}
       PI_RUNTIME_TIMEOUT_SECONDS: ${PI_RUNTIME_TIMEOUT_SECONDS:-180}
       PI_RUNTIME_VERSION: ${PI_RUNTIME_VERSION:-0.84.2}
+      DEEPSEEK_RUNTIME_ENDPOINT: ${DEEPSEEK_RUNTIME_ENDPOINT:-http://deepseek-runtime:8770}
+      DEEPSEEK_RUNTIME_API_KEY: ${DEEPSEEK_RUNTIME_API_KEY:?DEEPSEEK_RUNTIME_API_KEY is required}
+      DEEPSEEK_RUNTIME_TIMEOUT_SECONDS: ${DEEPSEEK_RUNTIME_TIMEOUT_SECONDS:-900}
+      DEEPSEEK_RUNTIME_VERSION: ${DEEPSEEK_RUNTIME_VERSION:-0.1.0-rc.6}
       RUNTIME_AUTO_REGISTER: ${RUNTIME_AUTO_REGISTER:-true}
       SKILLS_ROOT: /app/skills
       SKILL_MAX_DOCUMENT_BYTES: ${SKILL_MAX_DOCUMENT_BYTES:-262144}
@@ -246,6 +259,7 @@ services:
     networks:
       - platform-internal
       - pi-runtime-internal
+      - deepseek-runtime-internal
 
   hermes-orchestrator:
     image: hermes-agent-platform/agent-api:phase7
@@ -363,6 +377,7 @@ services:
     networks:
       - platform-internal
       - pi-runtime-internal
+      - deepseek-harness-internal
       - platform-edge
 
   model-stub:
@@ -474,6 +489,106 @@ services:
       start_period: 10s
     networks:
       - pi-runtime-internal
+
+  deepseek-runtime:
+    image: hermes-agent-platform/deepseek-runtime:phase8
+    restart: unless-stopped
+    entrypoint: ["uvicorn", "deepseek_runtime_service.gateway:app", "--host", "0.0.0.0", "--port", "8770"]
+    depends_on:
+      deepseek-harness-core:
+        condition: service_healthy
+      model-gateway:
+        condition: service_healthy
+    environment:
+      DEEPSEEK_RUNTIME_API_KEY: ${DEEPSEEK_RUNTIME_API_KEY:?DEEPSEEK_RUNTIME_API_KEY is required}
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:?MODEL_GATEWAY_API_KEY is required}
+      DEEPSEEK_HARNESS_CORE_ENDPOINT: http://deepseek-harness-core:8771
+      MODEL_GATEWAY_ENDPOINT: http://model-gateway:8080
+      DEEPSEEK_RUNTIME_REQUEST_TIMEOUT_SECONDS: ${DEEPSEEK_RUNTIME_TIMEOUT_SECONDS:-900}
+      DEEPSEEK_RUNTIME_REQUEST_MAX_BYTES: ${DEEPSEEK_RUNTIME_REQUEST_MAX_BYTES:-2097152}
+    expose:
+      - "8770"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8770/health', timeout=2)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    networks:
+      - deepseek-runtime-internal
+      - deepseek-harness-internal
+
+  deepseek-harness-core:
+    build:
+      context: .
+      dockerfile: services/deepseek-runtime/Dockerfile
+    image: hermes-agent-platform/deepseek-runtime:phase8
+    restart: unless-stopped
+    user: "0:0"
+    environment:
+      HOME: /tmp/deepseek-home
+      WORKSPACE_ROOT: /data/workspaces
+      DEEPSEEK_SESSION_ROOT: /data/deepseek-sessions
+      MODEL_GATEWAY_ENDPOINT: http://deepseek-runtime:8770/model/v1
+      DEEPSEEK_MODEL_PROXY_TOKEN: proxy-transport-only-not-a-secret
+      DEEPSEEK_HARNESS_PROVIDER: ${DEEPSEEK_HARNESS_PROVIDER:-deepseek-official}
+      DEEPSEEK_HARNESS_CORDIS_CONFIG: /app/cordis.yml
+      DEEPSEEK_RUNTIME_MAX_CONCURRENCY: ${DEEPSEEK_RUNTIME_MAX_CONCURRENCY:-2}
+      DEEPSEEK_RUNTIME_QUEUE_TIMEOUT_SECONDS: ${DEEPSEEK_RUNTIME_QUEUE_TIMEOUT_SECONDS:-60}
+      DEEPSEEK_RUNTIME_REQUEST_TIMEOUT_SECONDS: ${DEEPSEEK_RUNTIME_TIMEOUT_SECONDS:-900}
+      DEEPSEEK_RUNTIME_REQUEST_MAX_BYTES: ${DEEPSEEK_RUNTIME_REQUEST_MAX_BYTES:-2097152}
+      DEEPSEEK_RUNTIME_MAX_ARTIFACT_BYTES: ${DEEPSEEK_RUNTIME_MAX_ARTIFACT_BYTES:-2097152}
+      DEEPSEEK_RUNTIME_SESSION_TTL_SECONDS: ${DEEPSEEK_RUNTIME_SESSION_TTL_SECONDS:-1800}
+      DEEPSEEK_RUNTIME_MAX_SESSIONS: ${DEEPSEEK_RUNTIME_MAX_SESSIONS:-1000}
+      DEEPSEEK_RUNTIME_MAX_OUTPUT_TOKENS: ${DEEPSEEK_RUNTIME_MAX_OUTPUT_TOKENS:-8192}
+      DEEPSEEK_RUNTIME_EXECUTION_UID_MIN: ${DEEPSEEK_RUNTIME_EXECUTION_UID_MIN:-20000}
+      DEEPSEEK_RUNTIME_EXECUTION_UID_MAX: ${DEEPSEEK_RUNTIME_EXECUTION_UID_MAX:-60000}
+    volumes:
+      - ./data/hermes-workspace:/data/workspaces
+      - ./data/deepseek-sessions:/data/deepseek-sessions
+    group_add:
+      - "${WORKSPACE_SHARED_GID:-10003}"
+    expose:
+      - "8771"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - KILL
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8771/health', timeout=2)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    networks:
+      - deepseek-harness-internal
 
   mcp-gateway:
     build:
@@ -652,4 +767,10 @@ networks:
     name: ${HERMES_EDGE_NETWORK_NAME:-hermes-agent-platform-edge}
   pi-runtime-internal:
     name: ${HERMES_PI_RUNTIME_NETWORK_NAME:-hermes-agent-platform-pi-runtime}
+    internal: true
+  deepseek-runtime-internal:
+    name: ${HERMES_DEEPSEEK_RUNTIME_NETWORK_NAME:-hermes-agent-platform-deepseek-runtime}
+    internal: true
+  deepseek-harness-internal:
+    name: ${HERMES_DEEPSEEK_HARNESS_NETWORK_NAME:-hermes-agent-platform-deepseek-harness}
     internal: true

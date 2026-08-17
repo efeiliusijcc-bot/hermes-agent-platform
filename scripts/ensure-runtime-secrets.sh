@@ -28,6 +28,13 @@ if ! grep -q '^PI_RUNTIME_API_KEY=.' "$ENV_FILE"; then
   generated=1
 fi
 
+if ! grep -q '^DEEPSEEK_RUNTIME_API_KEY=.' "$ENV_FILE"; then
+  deepseek_runtime_key=$(openssl rand -base64 48 | tr -d '\n')
+  printf '\nDEEPSEEK_RUNTIME_API_KEY=%s\n' "$deepseek_runtime_key" >>"$ENV_FILE"
+  echo "DeepSeek Runtime API key was generated without printing its value"
+  generated=1
+fi
+
 if ! grep -q '^MODEL_REGISTRY_ENCRYPTION_KEY=.' "$ENV_FILE"; then
   encryption_key=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '\n')
   printf '\nMODEL_REGISTRY_ENCRYPTION_KEY=%s\n' "$encryption_key" >>"$ENV_FILE"

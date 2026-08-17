@@ -9,7 +9,7 @@ import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
 import { useAgentStore } from '@/stores/agents'
 import { useResourceStore } from '@/stores/resources'
-import type { Agent, AgentCreatePayload, AgentLifecycleStatus, AgentRuntime, AgentType, ModelAdapterName, RegisteredModel, ResponseMode, RuntimeType } from '@/types/api'
+import type { Agent, AgentCreatePayload, AgentLifecycleStatus, AgentRuntime, AgentType, ModelAdapterName, RegisteredModel, ResponseMode, RuntimeType, WorkspaceType } from '@/types/api'
 
 const router = useRouter()
 const message = useMessage()
@@ -42,6 +42,9 @@ interface FormModel {
   model_adapter: ModelAdapterName
   runtime_type: RuntimeType
   runtime_id: string | null
+  workspace_type: WorkspaceType
+  required_tools: string[]
+  artifact_types: string[]
   prompt_template: string
   temperature: number
   status: AgentLifecycleStatus
@@ -54,7 +57,9 @@ interface FormModel {
 
 const form = reactive<FormModel>({
   id: '', name: '', description: '', agent_type: 'worker', parent_agent_id: null, role: '', system_prompt: '',
-  model: '', model_adapter: 'hermes', runtime_type: 'hermes', runtime_id: null, prompt_template: '{{input}}', temperature: 0.1,
+  model: '', model_adapter: 'hermes', runtime_type: 'hermes', runtime_id: null,
+  workspace_type: 'document', required_tools: [], artifact_types: ['text', 'json', 'markdown', 'pdf', 'xlsx'],
+  prompt_template: '{{input}}', temperature: 0.1,
   status: 'active', response_mode: 'sync', skillIds: [], mcpIds: [],
   inputSchema: '{\n  "type": "object",\n  "properties": {}\n}',
   outputSchema: '{\n  "type": "object",\n  "properties": {}\n}',
@@ -72,6 +77,25 @@ const runtimeOptions = computed(() => runtimes.value
     label: `${runtime.name} · ${runtime.version} · ${runtime.status}`,
     value: runtime.id,
   })))
+const runtimeTypeOptions = computed(() => [
+  { label: 'Hermes Runtime', value: 'hermes' },
+  { label: 'Pi Runtime', value: 'pi' },
+  {
+    label: runtimes.value.some((runtime) => runtime.type === 'deepseek')
+      ? 'DeepSeek Harness'
+      : 'DeepSeek Harness · 未注册',
+    value: 'deepseek',
+    disabled: !runtimes.value.some((runtime) => runtime.type === 'deepseek' && runtime.status !== 'disabled'),
+  },
+])
+const workspaceTypeOptions = computed(() => [
+  { label: '文档工作区', value: 'document', disabled: form.runtime_type === 'deepseek' },
+  { label: '代码仓库工作区', value: 'repository' },
+])
+const artifactTypeOptions = [
+  'text', 'json', 'markdown', 'pdf', 'xlsx', 'code_patch', 'git_diff', 'test_report',
+].map((value) => ({ label: value, value }))
+const requiredToolOptions = ['filesystem', 'database'].map((value) => ({ label: value, value }))
 const selectedRuntime = computed(() => runtimes.value.find((item) => item.id === form.runtime_id) || null)
 const selectedModel = computed(() => models.value.find((item) => item.id === form.model) || null)
 const modelOptions = computed(() => models.value
@@ -103,6 +127,8 @@ function validateStep(index = step.value): boolean {
   if (index === 1) {
     if (!selectedModel.value?.is_enabled) return warn('请选择模型管理中已启用的模型')
     if (form.runtime_id && selectedRuntime.value?.type !== form.runtime_type) return warn('Runtime 实例与 Runtime 类型不匹配')
+    if (form.runtime_type === 'deepseek' && selectedRuntime.value?.status !== 'online') return warn('DeepSeek Harness 必须绑定已注册且在线的 Runtime 实例')
+    if (form.runtime_type === 'deepseek' && form.workspace_type !== 'repository') return warn('DeepSeek Harness 只能使用代码仓库工作区')
   }
   if (index === 2 && selectedSkills.value.some((skill) => !skill.runtime_support.includes(form.runtime_type))) {
     return warn(`存在不支持 ${form.runtime_type} Runtime 的 Skill`)
@@ -147,7 +173,13 @@ async function submit() {
       model: form.model.trim(),
       model_adapter: form.model_adapter,
       runtime_type: form.runtime_type,
-      runtime_config: form.runtime_id ? { runtime_id: form.runtime_id } : {},
+      runtime_id: form.runtime_id,
+      runtime_config: {},
+      capability_profile: {
+        workspace_type: form.workspace_type,
+        required_tools: form.required_tools,
+        artifact_types: form.artifact_types,
+      },
       prompt_template: form.prompt_template,
       status: form.status,
       response_mode: form.response_mode,
@@ -169,10 +201,28 @@ watch(() => form.model, () => {
   if (selectedModel.value) form.model_adapter = selectedModel.value.adapter
 })
 
+watch(() => form.runtime_type, (runtimeType, previous) => {
+  if (selectedRuntime.value?.type !== runtimeType) form.runtime_id = null
+  const candidate = runtimes.value.find((runtime) => runtime.type === runtimeType && runtime.status === 'online')
+  if (candidate) form.runtime_id = candidate.id
+  if (runtimeType === 'deepseek') {
+    form.workspace_type = 'repository'
+    form.artifact_types = ['code_patch', 'git_diff', 'test_report']
+  } else if (previous === 'deepseek') {
+    form.workspace_type = 'document'
+    form.artifact_types = ['text', 'json', 'markdown', 'pdf', 'xlsx']
+  }
+  form.skillIds = form.skillIds.filter((id) => resourceStore.skills.find((skill) => skill.id === id)?.runtime_support.includes(runtimeType))
+})
+
 onMounted(async () => {
   resourceStore.fetchAll().catch(() => undefined)
   platformApi.listAgents().then((value) => { existingAgents.value = value }).catch(() => undefined)
-  platformApi.listRuntimes().then((value) => { runtimes.value = value }).catch(() => undefined)
+  platformApi.listRuntimes().then((value) => {
+    runtimes.value = value
+    const candidate = value.find((runtime) => runtime.type === form.runtime_type && runtime.status === 'online')
+    if (candidate) form.runtime_id = candidate.id
+  }).catch(() => undefined)
   try {
     models.value = await platformApi.listModels(true)
     const defaultModel = models.value.find((item) => item.is_default) || models.value[0]
@@ -220,8 +270,11 @@ onMounted(async () => {
             <div class="form-grid">
               <NFormItem label="模型" required><NSelect v-model:value="form.model" filterable :options="modelOptions" placeholder="从模型管理选择已启用模型" /></NFormItem>
               <NFormItem label="Provider / Adapter"><NInput :value="selectedModel ? `${selectedModel.provider} / ${selectedModel.adapter}` : '--'" disabled /></NFormItem>
-              <NFormItem label="Agent Runtime"><NSelect v-model:value="form.runtime_type" :options="[{label:'Hermes Runtime',value:'hermes'},{label:'Pi Runtime',value:'pi'}]" /></NFormItem>
-              <NFormItem label="Runtime 实例"><NSelect v-model:value="form.runtime_id" clearable :options="runtimeOptions" placeholder="未选择时使用环境变量默认端点" /></NFormItem>
+              <NFormItem label="Agent Runtime"><NSelect v-model:value="form.runtime_type" :options="runtimeTypeOptions" /></NFormItem>
+              <NFormItem label="Runtime 实例"><NSelect v-model:value="form.runtime_id" clearable :options="runtimeOptions" :placeholder="form.runtime_type === 'deepseek' ? 'DeepSeek 必须选择在线实例' : '未选择时使用类型默认端点'" /></NFormItem>
+              <NFormItem label="工作区类型"><NSelect v-model:value="form.workspace_type" :options="workspaceTypeOptions" /></NFormItem>
+              <NFormItem label="允许产物"><NSelect v-model:value="form.artifact_types" multiple :options="artifactTypeOptions" /></NFormItem>
+              <NFormItem class="span-2" label="平台必需工具"><NSelect v-model:value="form.required_tools" multiple clearable :options="requiredToolOptions" placeholder="可选；执行前由平台校验已绑定 MCP 能力" /></NFormItem>
               <NFormItem label="默认响应模式"><NSelect v-model:value="form.response_mode" :options="[{label:'Sync JSON',value:'sync'},{label:'SSE Stream',value:'stream'}]" /></NFormItem>
               <NFormItem label="Temperature"><NSlider v-model:value="form.temperature" :min="0" :max="2" :step="0.1" /></NFormItem>
             </div>
@@ -238,6 +291,7 @@ onMounted(async () => {
           <template v-else-if="step === 3">
             <NFormItem label="Select MCP"><NSelect v-model:value="form.mcpIds" multiple filterable clearable :loading="resourceStore.loading" :options="mcpOptions" placeholder="选择已注册 MCP" /></NFormItem>
             <NAlert type="warning" :bordered="false" style="margin-bottom: 14px">当前平台仅允许经 MCP Gateway 注册的 read_only filesystem/database 能力。</NAlert>
+            <NAlert v-if="form.runtime_type === 'deepseek'" type="info" :bordered="false" style="margin-bottom: 14px">官方 0.1.0-rc.6 SDK Runtime 组合未装载通用 MCP Client；当前代码操作使用容器内置 bash/filesystem。这里的 MCP 绑定仍由平台鉴权和审计，但不会伪装为 Harness 原生工具。</NAlert>
             <div v-if="selectedMCPs.length" class="selection-list"><div v-for="server in selectedMCPs" :key="server.id"><strong>{{ server.name }}</strong><span>{{ server.config.kind }} · {{ server.permission }} · {{ server.status }}</span></div></div>
             <div v-else class="schema-empty">没有选择 MCP。后续可在 Configuration 中绑定。</div>
           </template>
@@ -253,7 +307,7 @@ onMounted(async () => {
           <template v-else>
             <div class="review-grid">
               <section><h3>Agent</h3><dl><div><dt>ID</dt><dd class="mono">{{ form.id }}</dd></div><div><dt>名称</dt><dd>{{ form.name }}</dd></div><div><dt>类型</dt><dd>{{ form.agent_type }}</dd></div><div><dt>Role</dt><dd>{{ form.role }}</dd></div><div><dt>状态</dt><dd>{{ form.status }}</dd></div></dl></section>
-              <section><h3>Runtime</h3><dl><div><dt>Runtime</dt><dd>{{ form.runtime_type }}</dd></div><div><dt>实例</dt><dd>{{ selectedRuntime?.name || '环境变量默认端点' }}</dd></div><div><dt>版本</dt><dd>{{ selectedRuntime?.version || '--' }}</dd></div><div><dt>状态</dt><dd>{{ selectedRuntime?.status || '未注册' }}</dd></div><div><dt>Model</dt><dd class="mono">{{ form.model }}</dd></div><div><dt>Adapter</dt><dd>{{ form.model_adapter }}</dd></div><div><dt>响应</dt><dd>{{ form.response_mode }}</dd></div><div><dt>Temperature</dt><dd>{{ form.temperature }}</dd></div></dl></section>
+              <section><h3>Runtime</h3><dl><div><dt>Runtime</dt><dd>{{ form.runtime_type }}</dd></div><div><dt>实例</dt><dd>{{ selectedRuntime?.name || '类型默认端点' }}</dd></div><div><dt>版本</dt><dd>{{ selectedRuntime?.version || '--' }}</dd></div><div><dt>状态</dt><dd>{{ selectedRuntime?.status || '未注册' }}</dd></div><div><dt>工作区</dt><dd>{{ form.workspace_type }}</dd></div><div><dt>产物类型</dt><dd>{{ form.artifact_types.join(', ') }}</dd></div><div><dt>Model</dt><dd class="mono">{{ form.model }}</dd></div><div><dt>Adapter</dt><dd>{{ form.model_adapter }}</dd></div><div><dt>响应</dt><dd>{{ form.response_mode }}</dd></div><div><dt>Temperature</dt><dd>{{ form.temperature }}</dd></div></dl></section>
               <section><h3>Capabilities</h3><dl><div><dt>Skills</dt><dd>{{ form.skillIds.length }}</dd></div><div><dt>MCP</dt><dd>{{ form.mcpIds.length }}</dd></div><div><dt>Input Schema</dt><dd>已配置</dd></div><div><dt>Output Schema</dt><dd>已配置</dd></div></dl></section>
             </div>
             <NAlert type="warning" :bordered="false">Agent 创建与 Skill/MCP 绑定不是同一后端事务；发生部分失败时会保留 Agent，并明确报告失败项。</NAlert>

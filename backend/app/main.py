@@ -64,7 +64,7 @@ async def lifespan(_: FastAPI):
 
 
 async def _register_builtin_runtimes(session) -> None:
-    specifications = (
+    specifications = [
         (
             "Hermes Runtime",
             "hermes",
@@ -79,7 +79,22 @@ async def _register_builtin_runtimes(session) -> None:
             settings.pi_runtime_endpoint,
             {"health_path": "/health"},
         ),
-    )
+    ]
+    if settings.deepseek_runtime_endpoint:
+        specifications.append(
+            (
+                "DeepSeek Coding Runtime",
+                "deepseek",
+                settings.deepseek_runtime_version,
+                settings.deepseek_runtime_endpoint,
+                {
+                    "health_path": "/health",
+                    "workspace_type": "repository",
+                    "transport": "hermes-http-bridge/json-rpc-stdio",
+                    "harness_mcp_plugin": False,
+                },
+            )
+        )
     for name, runtime_type, version, endpoint, config in specifications:
         value = await runtime_repository.ensure_runtime(
             session,

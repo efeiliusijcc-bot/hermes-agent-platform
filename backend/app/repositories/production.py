@@ -30,6 +30,7 @@ from app.db.models import (
     agent_skill,
 )
 from app.prompting import validate_prompt_template
+from app.runtime.capabilities import normalize_capability_profile
 from app.schemas.schema_validation import normalize_schema
 from app.schemas.agent import validate_runtime_config
 
@@ -597,7 +598,11 @@ async def build_agent_snapshot(session: AsyncSession, agent: Agent) -> dict[str,
         "runtime": {
             "response_mode": agent.response_mode,
             "runtime_type": getattr(agent, "runtime_type", "hermes"),
+            "runtime_id": (
+                str(agent.runtime_id) if getattr(agent, "runtime_id", None) is not None else None
+            ),
             "runtime_config": getattr(agent, "runtime_config", {}) or {},
+            "capability_profile": getattr(agent, "capability_profile", {}) or {},
         },
     }
 
@@ -730,11 +735,21 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> None:
         raise ValueError("Agent Version model adapter is invalid")
     if runtime.get("response_mode") not in {"sync", "stream"}:
         raise ValueError("Agent Version response_mode is invalid")
-    if runtime.get("runtime_type", "hermes") not in {"hermes", "pi"}:
+    if runtime.get("runtime_type", "hermes") not in {"hermes", "pi", "deepseek"}:
         raise ValueError("Agent Version runtime_type is invalid")
+    runtime_id = runtime.get("runtime_id")
+    if runtime_id is not None:
+        try:
+            UUID(str(runtime_id))
+        except ValueError as exc:
+            raise ValueError("Agent Version runtime_id is invalid") from exc
     if not isinstance(runtime.get("runtime_config", {}), dict):
         raise ValueError("Agent Version runtime_config is invalid")
     validate_runtime_config(runtime.get("runtime_config", {}))
+    normalize_capability_profile(
+        runtime.get("capability_profile", {}),
+        runtime_type=runtime.get("runtime_type", "hermes"),
+    )
     schema = snapshot["schema"]
     input_schema = schema.get("input_schema") if isinstance(schema.get("input_schema"), dict) else {}
     output_schema = schema.get("output_schema") if isinstance(schema.get("output_schema"), dict) else {}
@@ -789,13 +804,26 @@ async def build_version_runtime_agent(
         ),
         runtime_type=(
             runtime.get("runtime_type")
-            if runtime.get("runtime_type") in {"hermes", "pi"}
+            if runtime.get("runtime_type") in {"hermes", "pi", "deepseek"}
             else getattr(agent, "runtime_type", "hermes")
+        ),
+        runtime_id=(
+            UUID(str(runtime["runtime_id"]))
+            if runtime.get("runtime_id")
+            else getattr(agent, "runtime_id", None)
         ),
         runtime_config=(
             runtime.get("runtime_config")
             if isinstance(runtime.get("runtime_config"), dict)
             else getattr(agent, "runtime_config", {})
+        ),
+        capability_profile=normalize_capability_profile(
+            runtime.get("capability_profile", getattr(agent, "capability_profile", {})),
+            runtime_type=(
+                runtime.get("runtime_type")
+                if runtime.get("runtime_type") in {"hermes", "pi", "deepseek"}
+                else getattr(agent, "runtime_type", "hermes")
+            ),
         ),
         input_schema=input_schema,
         output_schema=output_schema,
@@ -1001,10 +1029,16 @@ async def restore_agent_version(
     agent.output_schema = schema.get("output_schema") if isinstance(schema.get("output_schema"), dict) else {}
     if runtime.get("response_mode") in {"sync", "stream"}:
         agent.response_mode = runtime["response_mode"]
-    if runtime.get("runtime_type") in {"hermes", "pi"}:
+    if runtime.get("runtime_type") in {"hermes", "pi", "deepseek"}:
         agent.runtime_type = runtime["runtime_type"]
+    if "runtime_id" in runtime:
+        agent.runtime_id = UUID(str(runtime["runtime_id"])) if runtime["runtime_id"] else None
     if isinstance(runtime.get("runtime_config"), dict):
         agent.runtime_config = runtime["runtime_config"]
+    if isinstance(runtime.get("capability_profile"), dict):
+        agent.capability_profile = normalize_capability_profile(
+            runtime["capability_profile"], runtime_type=agent.runtime_type
+        )
 
     await session.execute(delete(agent_skill).where(agent_skill.c.agent_id == agent.id))
     await session.execute(delete(agent_mcp).where(agent_mcp.c.agent_id == agent.id))

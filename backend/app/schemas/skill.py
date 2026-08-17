@@ -9,7 +9,7 @@ class SkillCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     path: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
-    runtime_support: list[Literal["hermes", "pi"]] = Field(
+    runtime_support: list[Literal["hermes", "pi", "deepseek"]] = Field(
         default_factory=lambda: ["hermes"], min_length=1
     )
 
@@ -23,7 +23,7 @@ class SkillRead(BaseModel):
     path: str
     version: str
     manifest: dict[str, Any]
-    runtime_support: list[Literal["hermes", "pi"]]
+    runtime_support: list[Literal["hermes", "pi", "deepseek"]]
     package_sha256: str | None
     created_at: datetime
     updated_at: datetime

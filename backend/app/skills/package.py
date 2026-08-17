@@ -203,9 +203,11 @@ class SkillPackageImporter:
         if (
             not isinstance(raw_runtime_support, list)
             or not raw_runtime_support
-            or any(item not in {"hermes", "pi"} for item in raw_runtime_support)
+            or any(item not in {"hermes", "pi", "deepseek"} for item in raw_runtime_support)
         ):
-            raise SkillLoadError("skill.yaml runtime_support must contain hermes and/or pi")
+            raise SkillLoadError(
+                "skill.yaml runtime_support must contain hermes, pi, and/or deepseek"
+            )
         runtime_support = tuple(dict.fromkeys(str(item) for item in raw_runtime_support))
         return raw_id, raw_name.strip(), raw_description, raw_version, raw_entry, runtime_support
 

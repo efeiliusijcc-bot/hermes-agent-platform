@@ -15,6 +15,7 @@ from app.repositories import orchestration as repository
 from app.schemas.orchestration import ArtifactRead, SessionRead, TaskRead, TaskSubmitRequest
 from app.task_queue import TaskQueue, TaskQueueError, get_task_queue
 from app.workspace import WorkspaceBoundaryError, WorkspaceManager
+from app.runtime.capabilities import normalize_capability_profile
 from app.storage import ArtifactStorageError, get_artifact_storage
 
 
@@ -35,8 +36,17 @@ async def submit_task(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Agent is not active")
     session_id = uuid4()
     manager = WorkspaceManager(get_settings().workspace_root)
+    capability_profile = normalize_capability_profile(
+        agent.capability_profile,
+        runtime_type=agent.runtime_type,
+    )
+    workspace_type = str(capability_profile["workspace_type"])
     try:
-        workspace = manager.create_session(agent_id, session_id)
+        workspace = manager.create_session(
+            agent_id,
+            session_id,
+            workspace_type=workspace_type,
+        )
     except (OSError, WorkspaceBoundaryError) as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="workspace creation failed") from exc
     task = await repository.create_task(
@@ -58,6 +68,7 @@ async def submit_task(
         },
         agent_version_id=agent.current_version_id,
         runtime_type=agent.runtime_type,
+        workspace_type=workspace_type,
     )
     try:
         await queue.enqueue(task.id, task.priority)

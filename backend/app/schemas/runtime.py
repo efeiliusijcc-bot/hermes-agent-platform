@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-RuntimeType = Literal["hermes", "pi"]
+RuntimeType = Literal["hermes", "pi", "deepseek"]
 RuntimeStatus = Literal["unknown", "online", "offline", "disabled"]
 
 

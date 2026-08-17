@@ -94,9 +94,10 @@ async def resolve_runtime(
     session: AsyncSession,
     *,
     runtime_type: str,
+    runtime_id: UUID | str | None = None,
     runtime_config: dict[str, Any] | None,
 ) -> AgentRuntime | None:
-    configured_id = (runtime_config or {}).get("runtime_id")
+    configured_id = runtime_id or (runtime_config or {}).get("runtime_id")
     if configured_id:
         try:
             runtime_id = UUID(str(configured_id))

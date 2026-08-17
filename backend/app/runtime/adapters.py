@@ -17,6 +17,7 @@ from app.runtime.base import (
 )
 from app.runtime.hermes import HermesClient, HermesRunResult, HermesRuntimeError
 from app.runtime.pi import PiRuntimeAdapter
+from app.runtime.deepseek import DeepSeekRuntimeAdapter
 
 
 class HermesRuntimeAdapter(RuntimeAdapter):
@@ -137,8 +138,10 @@ def get_runtime_adapter(
         return HermesRuntimeAdapter(endpoint=endpoint, version=version, config=config)
     if normalized == "pi":
         return PiRuntimeAdapter(endpoint=endpoint, version=version, config=config)
+    if normalized == "deepseek":
+        return DeepSeekRuntimeAdapter(endpoint=endpoint, version=version, config=config)
     raise ValueError(f"unsupported runtime type: {runtime_type}")
 
 
 def supported_runtime_types() -> tuple[str, ...]:
-    return ("hermes", "pi")
+    return ("hermes", "pi", "deepseek")

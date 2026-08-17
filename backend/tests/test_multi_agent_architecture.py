@@ -97,8 +97,8 @@ def test_workflow_schema_accepts_dag_and_rejects_cycles() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_interface_supports_hermes_and_pi_without_direct_dependency() -> None:
-    assert supported_runtime_types() == ("hermes", "pi")
+async def test_runtime_interface_supports_all_registered_runtime_types() -> None:
+    assert supported_runtime_types() == ("hermes", "pi", "deepseek")
     hermes = get_runtime_adapter("hermes")
     runtime_session = await hermes.create_session(
         agent_id="worker-agent", execution_id="execution-1"
@@ -106,6 +106,9 @@ async def test_runtime_interface_supports_hermes_and_pi_without_direct_dependenc
     assert runtime_session.id == "execution-1"
     assert runtime_session.runtime_type == "hermes"
     assert get_runtime_adapter("pi").runtime_type == "pi"
+    assert get_runtime_adapter("deepseek", endpoint="http://deepseek-runtime:8770").runtime_type == (
+        "deepseek"
+    )
     with pytest.raises(ValueError, match="unsupported runtime"):
         get_runtime_adapter("unknown")
 

@@ -67,7 +67,9 @@ class Agent(Base):
             name="ck_agents_model_adapter",
         ),
         CheckConstraint("agent_type IN ('manager', 'worker')", name="ck_agents_agent_type"),
-        CheckConstraint("runtime_type IN ('hermes', 'pi')", name="ck_agents_runtime_type"),
+        CheckConstraint(
+            "runtime_type IN ('hermes', 'pi', 'deepseek')", name="ck_agents_runtime_type"
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -84,7 +86,11 @@ class Agent(Base):
     prompt_template: Mapped[str] = mapped_column(Text, nullable=False, default="{{input}}")
     model_adapter: Mapped[str] = mapped_column(String(32), nullable=False, default="hermes")
     runtime_type: Mapped[str] = mapped_column(String(32), nullable=False, default="hermes")
+    runtime_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_runtimes.id", ondelete="SET NULL"), nullable=True
+    )
     runtime_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    capability_profile: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     api_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     response_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="sync")
@@ -291,7 +297,7 @@ class MCPServer(Base):
 class AgentRuntime(Base):
     __tablename__ = "agent_runtimes"
     __table_args__ = (
-        CheckConstraint("type IN ('hermes', 'pi')", name="ck_agent_runtimes_type"),
+        CheckConstraint("type IN ('hermes', 'pi', 'deepseek')", name="ck_agent_runtimes_type"),
         CheckConstraint(
             "status IN ('unknown', 'online', 'offline', 'disabled')",
             name="ck_agent_runtimes_status",
@@ -456,7 +462,7 @@ class ExecutionLog(Base):
             name="ck_execution_logs_token_usage",
         ),
         CheckConstraint(
-            "runtime_type IN ('hermes', 'pi')", name="ck_execution_logs_runtime_type"
+            "runtime_type IN ('hermes', 'pi', 'deepseek')", name="ck_execution_logs_runtime_type"
         ),
     )
 
@@ -509,7 +515,8 @@ class ExecutionStep(Base):
     __table_args__ = (
         UniqueConstraint("execution_id", "step_key", name="uq_execution_steps_execution_key"),
         CheckConstraint(
-            "step_type IN ('request', 'schema', 'memory', 'skill', 'mcp', 'knowledge', 'model', 'artifact', 'runtime')",
+            "step_type IN ('request', 'schema', 'memory', 'skill', 'mcp', 'knowledge', "
+            "'model', 'artifact', 'runtime', 'plan', 'repository', 'code', 'test', 'git')",
             name="ck_execution_steps_type",
         ),
         CheckConstraint(
@@ -550,7 +557,11 @@ class AgentSession(Base):
             name="ck_agent_sessions_status",
         ),
         CheckConstraint(
-            "runtime_type IN ('hermes', 'pi')", name="ck_agent_sessions_runtime_type"
+            "runtime_type IN ('hermes', 'pi', 'deepseek')", name="ck_agent_sessions_runtime_type"
+        ),
+        CheckConstraint(
+            "workspace_type IN ('document', 'repository')",
+            name="ck_agent_sessions_workspace_type",
         ),
     )
 
@@ -560,6 +571,7 @@ class AgentSession(Base):
     memory_session_id: Mapped[str] = mapped_column(String(128), nullable=False)
     runtime_type: Mapped[str] = mapped_column(String(32), nullable=False, default="hermes")
     runtime_session_id: Mapped[str | None] = mapped_column(String(255))
+    workspace_type: Mapped[str] = mapped_column(String(32), nullable=False, default="document")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
     input: Mapped[str] = mapped_column(Text, nullable=False)
     output: Mapped[str | None] = mapped_column(Text)
@@ -648,6 +660,8 @@ class Artifact(Base):
     storage_type: Mapped[str] = mapped_column(String(32), nullable=False)
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    artifact_type: Mapped[str] = mapped_column(String(64), nullable=False, default="text")
+    runtime_source: Mapped[str] = mapped_column(String(32), nullable=False, default="platform")
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

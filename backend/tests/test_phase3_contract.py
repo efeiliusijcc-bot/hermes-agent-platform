@@ -21,7 +21,7 @@ def test_compose_runs_worker_against_isolated_workspace_mount() -> None:
     assert "WORKSPACE_ROOT: /data/workspaces" in compose
     assert "./data/hermes-workspace:/data/workspaces" in compose
     assert 'entrypoint: ["python", "-m", "app.worker"]' in compose
-    runtime_block = compose.rsplit("\n  hermes-runtime:\n", 1)[1].split("\n  mcp-gateway:\n", 1)[0]
+    runtime_block = compose.rsplit("\n  hermes-runtime:\n", 1)[1].split("\n  pi-runtime:\n", 1)[0]
     assert "hermes-workspace" not in runtime_block
     assert "TERMINAL_CWD: /opt/data" in runtime_block
 

@@ -28,6 +28,7 @@ from app.schemas.execution import (
 from app.schemas.orchestration import ArtifactRead, TaskRead
 from app.task_queue import TaskQueue, TaskQueueError, get_task_queue
 from app.workspace import WorkspaceBoundaryError, WorkspaceManager
+from app.runtime.capabilities import normalize_capability_profile
 
 
 router = APIRouter(prefix="/api/executions", tags=["executions"])
@@ -141,8 +142,17 @@ async def retry_execution(
     )
     internal_session_id = uuid4()
     manager = WorkspaceManager(get_settings().workspace_root)
+    capability_profile = normalize_capability_profile(
+        getattr(source.agent, "capability_profile", {}) or {},
+        runtime_type=getattr(source.agent, "runtime_type", "hermes"),
+    )
+    workspace_type = str(capability_profile["workspace_type"])
     try:
-        workspace = manager.create_session(source.agent_id, internal_session_id)
+        workspace = manager.create_session(
+            source.agent_id,
+            internal_session_id,
+            workspace_type=workspace_type,
+        )
     except (OSError, WorkspaceBoundaryError) as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -162,6 +172,7 @@ async def retry_execution(
         retry_of_execution_id=source.id,
         agent_version_id=source.agent_version_id,
         runtime_type=getattr(source.agent, "runtime_type", "hermes"),
+        workspace_type=workspace_type,
     )
     try:
         await queue.enqueue(task.id, task.priority)

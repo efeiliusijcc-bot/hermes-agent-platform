@@ -1,12 +1,14 @@
 # Hermes Agent Platform
 
-The platform now includes the Agent Schema / public API contract, Agent isolation and concurrency, production lifecycle, Multi-Agent orchestration, and the independently deployed official Pi Runtime. See `docs/phase2-registry-publication.md`, `docs/phase3-agent-isolation-concurrency.md`, `docs/phase4-production-agent-runtime.md`, `docs/phase5-multi-agent-orchestration.md`, and `docs/phase5-pi-runtime-deployment.md`.
+The platform now includes the Agent Schema / public API contract, Agent isolation and concurrency, production lifecycle, Multi-Agent orchestration, the independently deployed official Pi Runtime, and an isolated DeepSeek Harness integration for repository coding tasks. See `docs/phase2-registry-publication.md`, `docs/phase3-agent-isolation-concurrency.md`, `docs/phase4-production-agent-runtime.md`, `docs/phase5-multi-agent-orchestration.md`, `docs/phase5-pi-runtime-deployment.md`, and `docs/deepseek-runtime-integration.md`.
 
 Hermes Agent Platform 是面向企业内网的离线 Agent 基础平台。平台以 Hermes Agent Runtime 为执行核心，通过外部 OpenAI Compatible 模型服务完成推理，并组合 Agent、Skill、MCP、Knowledge 与 Memory 构建可配置、可隔离的 AI 工作单元。
 
 ## 当前阶段
 
-当前仓库已完成 Agent Schema/API Gateway、隔离并发、Schema/Storage、生产 Agent Runtime，以及 Multi-Agent Team/Workflow 编排。除既有能力外，平台支持 Manager/Worker 关系、任务树、Workflow DAG、人工审批、Redis Stream 通信、独立 Orchestrator、并行 Worker 执行、Manager 结果聚合，并已部署基于官方 `@earendil-works/pi-agent-core 0.84.2` 的独立 Pi Runtime 服务。
+当前仓库已完成 Agent Schema/API Gateway、隔离并发、Schema/Storage、生产 Agent Runtime，以及 Multi-Agent Team/Workflow 编排。除既有能力外，平台支持 Manager/Worker 关系、任务树、Workflow DAG、人工审批、Redis Stream 通信、独立 Orchestrator、并行 Worker 执行、Manager 结果聚合，并接入基于官方 `@earendil-works/pi-agent-core 0.84.2` 的独立 Pi Runtime，以及固定官方 npm 包 `0.1.0-rc.6` 的 DeepSeek Coding Runtime。
+
+DeepSeek Harness 使用官方逐行 JSON-RPC 2.0 stdio 协议，由平台内部 HTTP 网关转换成统一 Runtime 契约。真实 Runtime Key 和 Model Gateway Key 只保留在隔离网关容器，不进入会执行模型生成 bash 命令的 Harness 核心容器。平台固定安装 SDK JSON-RPC、Agent、bash、filesystem 和 JSONL Session 所需的官方 npm 包；该组合未装载通用 MCP Client，因此不能把平台 MCP 绑定描述为 Harness 原生工具。实际能力边界见 [docs/deepseek-runtime-integration.md](docs/deepseek-runtime-integration.md)。
 
 管理控制台已按 FastAPI 契约实现，包含运行总览、Agent 创建/详情/删除、Skill/MCP 展示、能力绑定、Playground、Multi-Agent Team/Workflow、Sync/SSE 模式选择、实时 Trace 和执行日志查看。SSE 直接转发 Runtime 原生增量事件，不使用伪流式切分。
 
@@ -81,6 +83,8 @@ Phase 3.1 的 Schema/API 版本生命周期、Artifact Storage Provider、Memory
 Phase 4 的生产生命周期、Client/Key 鉴权、限流、审计、指标、健康门禁、版本回滚及 116 独立验收证据见 [docs/phase4-production-agent-runtime.md](docs/phase4-production-agent-runtime.md)。控制面管理员认证尚未定义，因此管理接口只允许放在可信内网或由外层可信网关保护，不能直接暴露公网。
 
 Phase 5 的 Agent Team、Workflow DAG、Runtime Adapter、Redis Agent Message、独立 Orchestrator 和人工审批见 [docs/phase5-multi-agent-orchestration.md](docs/phase5-multi-agent-orchestration.md)。Pi Runtime 适配契约见 [docs/pi-runtime-adapter.md](docs/pi-runtime-adapter.md)；真实服务部署、独立网络、Stop、离线镜像和 116 端到端验收见 [docs/phase5-pi-runtime-deployment.md](docs/phase5-pi-runtime-deployment.md)。
+
+Runtime Integration Layer、DeepSeek Harness JSON-RPC 桥接、仓库工作区、Coding Trace/Artifact、密钥隔离和当前 MCP 限制见 [docs/deepseek-runtime-integration.md](docs/deepseek-runtime-integration.md)。
 
 ## 校验
 

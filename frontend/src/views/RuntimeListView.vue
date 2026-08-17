@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Cpu, Heartbeat, Refresh, Server } from '@vicons/tabler'
+import { Code, Cpu, Heartbeat, Refresh, Server } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
@@ -17,13 +17,13 @@ const agents = ref<Agent[]>([])
 const health = ref<Record<string, RuntimeHealth>>({})
 
 const onlineCount = computed(() => runtimes.value.filter((item) => item.status === 'online').length)
-const piAgents = computed(() => agents.value.filter((item) => item.runtime_type === 'pi').length)
+const deepseekAgents = computed(() => agents.value.filter((item) => item.runtime_type === 'deepseek').length)
 
 function agentCount(runtime: AgentRuntime): number {
   const sameType = runtimes.value.filter((item) => item.type === runtime.type)
   return agents.value.filter((agent) => {
     if (agent.runtime_type !== runtime.type) return false
-    const runtimeId = agent.runtime_config?.runtime_id
+    const runtimeId = agent.runtime_id
     return runtimeId === runtime.id || (!runtimeId && sameType.length === 1)
   }).length
 }
@@ -70,7 +70,7 @@ onMounted(load)
 
 <template>
   <section class="runtime-page">
-    <PageHeader eyebrow="RUNTIME REGISTRY" title="运行时管理" description="统一查看 Hermes 与 Pi 运行时的版本、健康状态和 Agent 使用情况。">
+    <PageHeader eyebrow="RUNTIME REGISTRY" title="运行时管理" description="统一查看 Hermes、Pi 与 DeepSeek Harness 的版本、健康状态和 Agent 使用情况。">
       <template #actions>
         <NButton :loading="loading || checking !== null" @click="checkAll">
           <template #icon><NIcon :component="Refresh" /></template>检查全部
@@ -83,7 +83,7 @@ onMounted(load)
     <div class="runtime-metrics">
       <article><NIcon :component="Server" /><div><strong>{{ runtimes.length }}</strong><span>注册实例</span></div></article>
       <article><NIcon :component="Heartbeat" /><div><strong>{{ onlineCount }}</strong><span>在线 Runtime</span></div></article>
-      <article><NIcon :component="Cpu" /><div><strong>{{ piAgents }}</strong><span>Pi Agents</span></div></article>
+      <article><NIcon :component="Code" /><div><strong>{{ deepseekAgents }}</strong><span>Coding Agents</span></div></article>
     </div>
 
     <div v-if="loading" class="runtime-grid">
@@ -92,8 +92,8 @@ onMounted(load)
     <div v-else-if="runtimes.length" class="runtime-grid">
       <article v-for="runtime in runtimes" :key="runtime.id" class="runtime-card">
         <header>
-          <div class="runtime-icon"><NIcon :component="runtime.type === 'pi' ? Cpu : Server" /></div>
-          <div><span>{{ runtime.type === 'pi' ? 'PI AGENT CORE' : 'HERMES AGENT' }}</span><h2>{{ runtime.name }}</h2></div>
+          <div class="runtime-icon"><NIcon :component="runtime.type === 'pi' ? Cpu : runtime.type === 'deepseek' ? Code : Server" /></div>
+          <div><span>{{ runtime.type === 'pi' ? 'PI AGENT CORE' : runtime.type === 'deepseek' ? 'DEEPSEEK HARNESS' : 'HERMES AGENT' }}</span><h2>{{ runtime.name }}</h2></div>
           <StatusTag :status="runtime.status" />
         </header>
         <dl>
@@ -111,7 +111,7 @@ onMounted(load)
         </footer>
       </article>
     </div>
-    <NEmpty v-else description="还没有注册 Runtime；启动平台后会自动登记内置 Hermes 与 Pi Runtime。" />
+    <NEmpty v-else description="还没有注册 Runtime；启动平台后会自动登记 Hermes、Pi 与已配置的 DeepSeek Harness。" />
   </section>
 </template>
 

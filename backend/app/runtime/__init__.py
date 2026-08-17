@@ -8,7 +8,7 @@ from app.runtime.base import (
     RuntimeHealth,
     RuntimeSession,
 )
-from app.runtime.hermes import HermesClient, HermesRunResult
+from app.runtime.hermes import HermesClient, HermesRunResult, RuntimeArtifact
 
 
 def get_runtime_adapter(
@@ -37,6 +37,7 @@ __all__ = [
     "RuntimeContext",
     "RuntimeHealth",
     "RuntimeSession",
+    "RuntimeArtifact",
     "get_runtime_adapter",
     "supported_runtime_types",
 ]

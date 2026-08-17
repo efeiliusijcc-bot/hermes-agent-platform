@@ -37,7 +37,7 @@ class TeamMemberRead(BaseModel):
     agent_id: str
     agent_name: str
     agent_type: Literal["manager", "worker"]
-    runtime_type: Literal["hermes", "pi"]
+    runtime_type: Literal["hermes", "pi", "deepseek"]
     role: str
     priority: int
 

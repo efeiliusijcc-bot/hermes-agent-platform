@@ -12,7 +12,8 @@ from app.schemas.orchestration import ArtifactRead, TaskRead
 ExecutionStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 ExecutionStepStatus = Literal["pending", "running", "succeeded", "failed", "skipped", "cancelled"]
 ExecutionStepType = Literal[
-    "request", "schema", "memory", "skill", "mcp", "knowledge", "model", "artifact", "runtime"
+    "request", "schema", "memory", "skill", "mcp", "knowledge", "model", "artifact", "runtime",
+    "plan", "repository", "code", "test", "git",
 ]
 
 
@@ -53,7 +54,7 @@ class ExecutionSummary(BaseModel):
     status: ExecutionStatus
     task: str
     response_mode: Literal["sync", "stream", "async"]
-    runtime_type: Literal["hermes", "pi"]
+    runtime_type: Literal["hermes", "pi", "deepseek"]
     runtime_id: UUID | None
     runtime_version: str | None
     priority: int | None
@@ -116,7 +117,7 @@ class ExecutionTraceRead(BaseModel):
     session_id: UUID | None
     memory_session_id: str | None
     status: ExecutionStatus
-    runtime_type: Literal["hermes", "pi"]
+    runtime_type: Literal["hermes", "pi", "deepseek"]
     runtime_id: UUID | None
     runtime_version: str | None
     model: str | None
@@ -139,5 +140,5 @@ class ExecutionRetryRequest(BaseModel):
 class ExecutionStopRead(BaseModel):
     execution_id: UUID
     status: Literal["cancelled"]
-    runtime_type: Literal["hermes", "pi"]
+    runtime_type: Literal["hermes", "pi", "deepseek"]
     runtime_run_id: str

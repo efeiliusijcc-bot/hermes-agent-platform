@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.prompting import validate_prompt_template
+from app.runtime.capabilities import normalize_capability_profile
 from app.schemas.runtime import RuntimeType, validate_public_runtime_config
 from app.schemas.schema_validation import normalize_schema
 
@@ -29,7 +30,9 @@ class AgentCreate(BaseModel):
     prompt_template: str = Field(default="{{input}}", min_length=1, max_length=100_000)
     model_adapter: ModelAdapterName = "hermes"
     runtime_type: RuntimeType = "hermes"
+    runtime_id: UUID | None = None
     runtime_config: dict[str, Any] = Field(default_factory=dict)
+    capability_profile: dict[str, Any] = Field(default_factory=dict)
     status: AgentLifecycle = "active"
     response_mode: ResponseMode = "sync"
     input_schema: dict[str, Any] = Field(default_factory=dict)
@@ -57,6 +60,10 @@ class AgentCreate(BaseModel):
     def validate_template_contract(self) -> "AgentCreate":
         validate_prompt_template(self.prompt_template, self.input_schema)
         validate_runtime_config(self.runtime_config)
+        self.capability_profile = normalize_capability_profile(
+            self.capability_profile,
+            runtime_type=self.runtime_type,
+        )
         return self
 
 
@@ -82,13 +89,24 @@ class AgentConfigurationUpdate(BaseModel):
     prompt_template: str = Field(min_length=1, max_length=100_000)
     model_adapter: ModelAdapterName
     runtime_type: RuntimeType | None = None
+    runtime_id: UUID | None = None
     runtime_config: dict[str, Any] = Field(default_factory=dict)
+    capability_profile: dict[str, Any] = Field(default_factory=dict)
     model_settings: dict[str, Any] = Field(default_factory=dict, alias="model_config")
 
     @field_validator("runtime_config")
     @classmethod
     def validate_runtime(cls, value: dict[str, Any]) -> dict[str, Any]:
         return validate_runtime_config(value)
+
+    @model_validator(mode="after")
+    def validate_capabilities(self) -> "AgentConfigurationUpdate":
+        if self.runtime_type is not None:
+            self.capability_profile = normalize_capability_profile(
+                self.capability_profile,
+                runtime_type=self.runtime_type,
+            )
+        return self
 
 
 class AgentRead(BaseModel):
@@ -109,7 +127,9 @@ class AgentRead(BaseModel):
     prompt_template: str
     model_adapter: ModelAdapterName
     runtime_type: RuntimeType
+    runtime_id: UUID | None
     runtime_config: dict[str, Any]
+    capability_profile: dict[str, Any]
     api_enabled: bool
     status: AgentLifecycle
     response_mode: ResponseMode

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NIcon } from 'naive-ui'
-import { Activity, Api, Archive, Database, Hierarchy, PlugConnected, Robot, Settings } from '@vicons/tabler'
+import { Activity, Api, Archive, Code, Database, GitBranch, Hierarchy, ListSearch, PlugConnected, Robot, Settings, TestPipe } from '@vicons/tabler'
 
 import StatusTag from '@/components/StatusTag.vue'
 import { formatDurationMs } from '@/utils/executionStudio'
@@ -24,6 +24,11 @@ const icon = computed(() => ({
   model: Robot,
   artifact: Archive,
   runtime: Activity,
+  plan: Hierarchy,
+  repository: ListSearch,
+  code: Code,
+  test: TestPipe,
+  git: GitBranch,
 })[props.node.step_type] || Activity)
 
 const typeLabel = computed(() => ({
@@ -36,6 +41,11 @@ const typeLabel = computed(() => ({
   model: 'Model',
   artifact: 'Artifact',
   runtime: props.node.step_key.startsWith('hermes_runtime') ? 'Model Runtime' : 'Runtime',
+  plan: 'Plan',
+  repository: 'Repository',
+  code: 'Code Edit',
+  test: 'Test',
+  git: 'Git Diff',
 })[props.node.step_type] || props.node.step_type)
 </script>
 

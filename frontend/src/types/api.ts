@@ -7,7 +7,8 @@ export type SessionStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'can
 export type ResponseMode = 'sync' | 'stream'
 export type ModelAdapterName = 'hermes' | 'qwen' | 'deepseek' | 'gpt' | 'claude'
 export type AgentType = 'manager' | 'worker'
-export type RuntimeType = 'hermes' | 'pi'
+export type RuntimeType = 'hermes' | 'pi' | 'deepseek'
+export type WorkspaceType = 'document' | 'repository'
 export type RuntimeStatus = 'unknown' | 'online' | 'offline' | 'disabled'
 export type ModelProvider = 'qwen' | 'deepseek' | 'openai' | 'claude' | 'custom'
 export type ModelRegistryStatus = 'unknown' | 'online' | 'offline'
@@ -26,7 +27,13 @@ export interface Agent {
   prompt_template: string
   model_adapter: ModelAdapterName
   runtime_type: RuntimeType
+  runtime_id: string | null
   runtime_config: Record<string, unknown>
+  capability_profile: {
+    workspace_type: WorkspaceType
+    required_tools: string[]
+    artifact_types: string[]
+  }
   api_enabled: boolean
   status: AgentStatus
   response_mode: ResponseMode
@@ -50,7 +57,13 @@ export interface AgentCreatePayload {
   prompt_template?: string
   model_adapter?: ModelAdapterName
   runtime_type?: RuntimeType
+  runtime_id?: string | null
   runtime_config?: Record<string, unknown>
+  capability_profile?: {
+    workspace_type: WorkspaceType
+    required_tools: string[]
+    artifact_types: string[]
+  }
   status: AgentLifecycleStatus
   response_mode?: ResponseMode
   input_schema?: Record<string, unknown>
@@ -100,6 +113,7 @@ export interface AgentSession {
   memory_session_id: string
   runtime_type: RuntimeType
   runtime_session_id: string | null
+  workspace_type: WorkspaceType
   status: SessionStatus
   input: string
   output: string | null
@@ -117,6 +131,8 @@ export interface Artifact {
   storage_type: string
   storage_path: string
   content_type: string
+  artifact_type: string
+  runtime_source: 'platform' | RuntimeType
   size_bytes: number
   sha256: string
   created_at: string
@@ -357,7 +373,7 @@ export interface ExecutionInput {
 }
 
 export type ExecutionStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled'
-export type ExecutionStepType = 'request' | 'schema' | 'memory' | 'skill' | 'mcp' | 'knowledge' | 'model' | 'artifact' | 'runtime'
+export type ExecutionStepType = 'request' | 'schema' | 'memory' | 'skill' | 'mcp' | 'knowledge' | 'model' | 'artifact' | 'runtime' | 'plan' | 'repository' | 'code' | 'test' | 'git'
 
 export interface ExecutionStep {
   id: string

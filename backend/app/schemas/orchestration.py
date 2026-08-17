@@ -37,8 +37,9 @@ class SessionRead(BaseModel):
     agent_id: str
     user_id: str | None
     memory_session_id: str
-    runtime_type: Literal["hermes", "pi"]
+    runtime_type: Literal["hermes", "pi", "deepseek"]
     runtime_session_id: str | None
+    workspace_type: Literal["document", "repository"]
     status: SessionStatus
     input: str
     output: str | None
@@ -84,6 +85,8 @@ class ArtifactRead(BaseModel):
     storage_type: str
     storage_path: str
     content_type: str
+    artifact_type: str
+    runtime_source: Literal["platform", "hermes", "pi", "deepseek"]
     size_bytes: int
     sha256: str
     created_at: datetime

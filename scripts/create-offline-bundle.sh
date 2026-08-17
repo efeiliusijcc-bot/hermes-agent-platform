@@ -33,6 +33,7 @@ mkdir -p \
   "$STAGE_ROOT/offline-data/redis" \
   "$STAGE_ROOT/offline-data/hermes" \
   "$STAGE_ROOT/offline-data/hermes-workspace" \
+  "$STAGE_ROOT/offline-data/deepseek-sessions" \
   "$STAGE_ROOT/offline-data/mcp-files"
 
 rsync -a \
@@ -48,7 +49,7 @@ rsync -a \
 cp "$PROJECT_ROOT/.env" "$STAGE_ROOT/.env"
 chmod 0600 "$STAGE_ROOT/.env"
 
-for data_name in hermes hermes-workspace mcp-files; do
+for data_name in hermes hermes-workspace deepseek-sessions mcp-files; do
   if [ -d "$PROJECT_ROOT/data/$data_name" ]; then
     rsync -a "$PROJECT_ROOT/data/$data_name/" "$STAGE_ROOT/offline-data/$data_name/"
   fi
@@ -138,6 +139,9 @@ hermes_release=v0.20.0
 hermes_image=nousresearch/hermes-agent:v2026.8.3@sha256:16788311e2fa3035456bdc1bafb8ec2b1777db64ebf020af9bb7eb73c3712c9e
 pi_core_release=0.84.2
 pi_runtime_image=hermes-agent-platform/pi-runtime:phase5
+deepseek_harness_release=0.1.0-rc.6
+deepseek_runtime_image=hermes-agent-platform/deepseek-runtime:phase8
+deepseek_transport=json-rpc-2.0-stdio-via-isolated-http-gateway
 data_format=postgres-custom-dump,redis-rdb-and-logical,minio-object-mirror,bind-directory-copy
 EOF
 

@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     pi_runtime_api_key: SecretStr | None = None
     pi_runtime_timeout_seconds: int = Field(default=180, ge=10, le=1800)
     pi_runtime_version: str = "0.84.2"
+    deepseek_runtime_endpoint: str | None = None
+    deepseek_runtime_api_key: SecretStr | None = None
+    deepseek_runtime_timeout_seconds: int = Field(default=900, ge=10, le=7200)
+    deepseek_runtime_version: str = "0.1.0-rc.6"
     runtime_auto_register: bool = True
 
     skills_root: str = "/app/skills"
