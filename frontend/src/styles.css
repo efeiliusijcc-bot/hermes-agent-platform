@@ -501,6 +501,54 @@ a { color: inherit; text-decoration: none; }
 .detail-tab-aside > .detail-stack:first-child { display: none; }
 .filter-select { width: min(100%, 240px); }
 
+.conversation-workspace { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 680px; overflow: hidden; }
+.conversation-session-pane { min-width: 0; border-right: 1px solid var(--line); background: var(--surface-subtle); }
+.conversation-pane-header, .conversation-transcript-header { display: flex; min-height: 76px; align-items: center; justify-content: space-between; gap: 14px; padding: 15px 17px; border-bottom: 1px solid var(--line); }
+.conversation-pane-header h2 { margin: 0; font-size: 16px; }
+.conversation-pane-header p { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.conversation-session-list { display: grid; max-height: 720px; overflow-y: auto; }
+.conversation-session-list > button { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; width: 100%; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); background: transparent; text-align: left; cursor: pointer; }
+.conversation-session-list > button:hover { background: #303030; }
+.conversation-session-list > button.active { background: #343434; box-shadow: inset 3px 0 0 var(--accent); }
+.conversation-session-list > button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.conversation-session-title { grid-column: 1 / -1; overflow: hidden; font-size: 12px; font-weight: 620; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-session-meta { display: flex; min-width: 0; gap: 8px; color: var(--muted); font: 9px/1.4 "SFMono-Regular", Consolas, monospace; }
+.conversation-session-skeleton, .conversation-transcript-skeleton { display: grid; gap: 12px; padding: 18px; }
+.conversation-transcript-pane { min-width: 0; background: var(--surface); }
+.conversation-transcript-header { padding-inline: 22px; background: #2d2d2d; }
+.conversation-transcript-header > div { display: grid; min-width: 0; gap: 3px; }
+.conversation-transcript-header > div > span { color: var(--muted); font-size: 9px; text-transform: uppercase; }
+.conversation-transcript-header strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-transcript-header small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-transcript-header > span { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
+.conversation-transcript { display: grid; gap: 26px; max-height: 720px; overflow-y: auto; padding: 26px clamp(22px, 4vw, 54px) 40px; }
+.conversation-turn { display: grid; width: min(100%, 980px); gap: 14px; margin-inline: auto; }
+.conversation-turn + .conversation-turn { padding-top: 26px; border-top: 1px solid var(--line); }
+.conversation-message { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; align-items: start; }
+.conversation-avatar { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #505050; border-radius: 8px; color: var(--muted); background: #303030; }
+.conversation-message-user .conversation-avatar { color: #1a1a1a; border-color: #d4d4d4; background: var(--accent); }
+.conversation-message-content { min-width: 0; }
+.conversation-message-content > header { display: flex; min-height: 24px; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+.conversation-message-content > header strong { font-size: 12px; }
+.conversation-message-content > header time { color: var(--muted); font: 9px/1.4 "SFMono-Regular", Consolas, monospace; }
+.conversation-message-content > header > span { display: flex; align-items: center; gap: 9px; }
+.conversation-message-user .conversation-copy { width: fit-content; max-width: min(88%, 760px); margin-left: auto; border-color: #505050; background: #343434; }
+.conversation-copy { padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; color: #d6d6d6; background: #242424; font-size: 13px; line-height: 1.72; overflow-wrap: anywhere; }
+.conversation-copy h3 { margin: 14px 0 7px; color: var(--ink); font-size: 14px; }
+.conversation-copy h3:first-child { margin-top: 0; }
+.conversation-copy p { margin: 0; white-space: pre-wrap; }
+.conversation-copy p + p, .conversation-copy p + .conversation-list-item, .conversation-list-item + p { margin-top: 8px; }
+.conversation-list-item { position: relative; padding-left: 14px; }
+.conversation-list-item::before { content: ""; position: absolute; top: .72em; left: 2px; width: 4px; height: 4px; border-radius: 50%; background: var(--muted); }
+.conversation-copy pre { max-width: 100%; margin: 12px 0 0; overflow: auto; padding: 13px 14px; border: 1px solid #404040; border-radius: 6px; color: #dcdcdc; background: #191919; font: 11px/1.65 "SFMono-Regular", Consolas, monospace; white-space: pre; }
+.conversation-message-content > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 7px; color: var(--muted); font-size: 9px; }
+.conversation-message-content > footer span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-state { display: grid; min-height: 250px; place-content: center; justify-items: center; padding: 24px; color: var(--muted); text-align: center; }
+.conversation-state strong { margin-top: 10px; color: var(--ink); font-size: 13px; }
+.conversation-state p { max-width: 300px; margin: 6px 0 14px; font-size: 11px; line-height: 1.55; }
+.conversation-state-error { color: #ff8a87; }
+.conversation-state-wide { min-height: 520px; }
+
 .artifact-registry { overflow: hidden; }
 .artifact-table-head, .artifact-registry-row { display: grid; grid-template-columns: minmax(210px, 1.3fr) minmax(210px, 1.1fr) minmax(140px, .75fr) 80px 120px 32px; gap: 12px; align-items: center; }
 .artifact-table-head { padding: 10px 16px; color: var(--muted); background: var(--surface-subtle); font-size: 9px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
@@ -566,6 +614,14 @@ a { color: inherit; text-decoration: none; }
   .health-infrastructure-grid { grid-template-columns: 1fr 1fr; }
   .artifact-table-head, .artifact-registry-row { grid-template-columns: minmax(190px, 1.2fr) minmax(190px, 1fr) 80px 110px 32px; }
   .artifact-table-head > :nth-child(3), .artifact-registry-row > :nth-child(3) { display: none; }
+  .agent-detail-page .page-header { align-items: flex-start; flex-direction: column; }
+  .agent-detail-page .page-actions { width: 100%; flex-wrap: wrap; }
+  .conversation-workspace { grid-template-columns: 1fr; min-height: 0; }
+  .conversation-session-pane { border-right: 0; border-bottom: 1px solid var(--line); }
+  .conversation-session-list { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 250px; }
+  .conversation-session-list > button:nth-child(odd) { border-right: 1px solid var(--line); }
+  .conversation-session-list > button.active { box-shadow: inset 0 3px 0 var(--accent); }
+  .conversation-transcript { max-height: none; }
 }
 
 @media (max-width: 760px) {
@@ -639,6 +695,16 @@ a { color: inherit; text-decoration: none; }
   .operations-table-head { display: none; }
   .operations-table-row { grid-template-columns: minmax(0, 1fr) repeat(2, auto); }
   .operations-table-row > :nth-child(n+4) { display: none; }
+  .conversation-session-list { grid-template-columns: 1fr; max-height: 250px; }
+  .conversation-session-list > button:nth-child(odd) { border-right: 0; }
+  .conversation-transcript { padding: 20px 14px 30px; }
+  .conversation-transcript-header { align-items: flex-start; padding-inline: 16px; }
+  .conversation-message { grid-template-columns: 30px minmax(0, 1fr); gap: 9px; }
+  .conversation-avatar { width: 30px; height: 30px; }
+  .conversation-message-user .conversation-copy { max-width: 100%; }
+  .conversation-copy { padding: 12px; }
+  .conversation-message-content > header { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .conversation-message-content > footer { align-items: flex-start; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {

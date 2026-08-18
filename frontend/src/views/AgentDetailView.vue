@@ -5,6 +5,7 @@ import { ArrowLeft, Hierarchy, Book2, Edit, PlugConnected, TestPipe, Api, GitBra
 import { useRoute, useRouter } from 'vue-router'
 
 import BindingDialog from '@/components/BindingDialog.vue'
+import AgentConversationPanel from '@/components/agent/AgentConversationPanel.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { getApiErrorMessage } from '@/api/client'
@@ -62,6 +63,8 @@ const sessions = ref<AgentSession[]>([])
 const tasks = ref<AgentTask[]>([])
 const artifacts = ref<Artifact[]>([])
 const executions = ref<ExecutionSummary[]>([])
+const executionHistoryLoading = ref(false)
+const executionHistoryError = ref<string | null>(null)
 const workspace = ref<AgentWorkspace | null>(null)
 const phase4Loading = ref(false)
 const lifecycleSaving = ref(false)
@@ -75,12 +78,13 @@ const versionTestInput = ref('')
 const versionTestOutput = ref('')
 const versionTesting = ref(false)
 const comparingVersion = ref<AgentVersion | null>(null)
-const activeTab = ref<'overview' | 'configuration' | 'versions' | 'execution' | 'api' | 'artifacts' | 'logs'>('overview')
+const activeTab = ref<'overview' | 'configuration' | 'versions' | 'conversation' | 'execution' | 'api' | 'artifacts' | 'logs'>('overview')
 let hydratingConfiguration = false
 const detailTabs = [
   { key: 'overview', label: '概览' },
   { key: 'configuration', label: '配置' },
   { key: 'versions', label: '版本' },
+  { key: 'conversation', label: '聊天记录' },
   { key: 'execution', label: '执行记录' },
   { key: 'api', label: '接口' },
   { key: 'artifacts', label: '产物' },
@@ -119,6 +123,20 @@ const successRate = computed(() => {
   if (!completed.length) return '--'
   return `${(completed.filter((item) => item.status === 'succeeded').length / completed.length * 100).toFixed(1)}%`
 })
+
+async function loadExecutionHistory() {
+  executionHistoryLoading.value = true
+  executionHistoryError.value = null
+  try {
+    const value = await platformApi.listExecutions({ agent_id: agentId.value, limit: 50 })
+    executions.value = value.items
+  } catch (error) {
+    executions.value = []
+    executionHistoryError.value = getApiErrorMessage(error)
+  } finally {
+    executionHistoryLoading.value = false
+  }
+}
 
 const lifecycleLabels: Array<{ label: string; value: AgentLifecycleStatus }> = [
   { label: 'Active', value: 'active' },
@@ -190,7 +208,7 @@ async function load() {
     platformApi.listTasks(agentId.value).then((value) => { tasks.value = value }),
     platformApi.listArtifacts(agentId.value).then((value) => { artifacts.value = value }),
     platformApi.getWorkspace(agentId.value).then((value) => { workspace.value = value }),
-    platformApi.listExecutions({ agent_id: agentId.value, limit: 50 }).then((value) => { executions.value = value.items }),
+    loadExecutionHistory(),
   ]).catch(() => undefined).finally(() => { phase3Loading.value = false })
   await loadProductionRuntime()
 }
@@ -449,7 +467,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div>
+  <div class="agent-detail-page">
     <PageHeader :title="agentStore.currentAgent?.name || 'Agent 详情'" :description="agentStore.currentAgent?.description || '查看平台中保存的 Agent 配置和绑定关系。'">
       <template #actions>
         <NButton @click="router.push({ name: 'agents' })"><template #icon><NIcon :component="ArrowLeft" /></template>返回列表</NButton>
@@ -487,11 +505,20 @@ onMounted(load)
       v-else-if="agentStore.currentAgent"
       class="detail-grid"
       :class="{
-        'detail-tab-main': activeTab === 'versions',
+        'detail-tab-main': ['versions', 'conversation'].includes(activeTab),
         'detail-tab-aside': ['execution', 'api', 'artifacts', 'logs'].includes(activeTab),
       }"
     >
       <div class="detail-stack">
+        <AgentConversationPanel
+          v-if="activeTab === 'conversation'"
+          :executions="executions"
+          :loading="executionHistoryLoading"
+          :history-error="executionHistoryError"
+          :agent-name="agentStore.currentAgent.name"
+          @refresh="loadExecutionHistory"
+          @open-trace="router.push({ name: 'trace-detail', params: { id: $event } })"
+        />
         <section v-show="activeTab === 'overview'" class="surface panel">
           <div class="section-heading">
             <div><h2>生产生命周期</h2><p>状态迁移由后端校验；归档后不可再调用</p></div>
