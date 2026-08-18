@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { GitBranch, PlayerPlay, Plus, Refresh, UserCheck, Users } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import TeamRunWorkspace from '@/components/orchestration/TeamRunWorkspace.vue'
 import { platformApi } from '@/api/platform'
 import type { Agent, AgentTask, AgentTeam, Workflow, WorkflowNode, WorkflowRun } from '@/types/api'
-import { formatDate } from '@/utils/format'
 
 const loading = ref(false)
+const runLoading = ref(false)
 const actionLoading = ref(false)
 const error = ref('')
 const agents = ref<Agent[]>([])
@@ -19,6 +21,8 @@ const runTasks = ref<AgentTask[]>([])
 const selectedTeamId = ref<string | null>(null)
 const selectedRunId = ref<string | null>(null)
 const pollTimer = ref<number | null>(null)
+const router = useRouter()
+let runRequestSerial = 0
 
 const teamForm = reactive({ name: '', description: '', ownerAgentId: '' })
 const memberForm = reactive({ agentId: '', role: '', priority: 50 })
@@ -56,25 +60,70 @@ function humanError(value: unknown): string {
 async function loadAll(silent = false) {
   if (!silent) loading.value = true
   try {
-    const [agentValues, teamValues, workflowValues, runValues] = await Promise.all([
+    const [agentValues, teamValues, workflowValues] = await Promise.all([
       platformApi.listAgents(),
       platformApi.listAgentTeams(),
       platformApi.listWorkflows(),
-      platformApi.listWorkflowRuns(),
     ])
     agents.value = agentValues
     teams.value = teamValues
     workflows.value = workflowValues
-    runs.value = runValues
-    if (!selectedTeamId.value && teamValues.length) selectedTeamId.value = teamValues[0].id
-    if (selectedRunId.value) {
-      runTasks.value = await platformApi.listWorkflowRunTasks(selectedRunId.value)
+    if (!selectedTeamId.value || !teamValues.some((team) => team.id === selectedTeamId.value)) {
+      selectedTeamId.value = teamValues[0]?.id || null
     }
+    await loadRunState(true)
     error.value = ''
   } catch (value) {
     error.value = humanError(value)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadRunState(silent = false) {
+  const teamId = selectedTeamId.value
+  const serial = ++runRequestSerial
+  if (!teamId) {
+    runs.value = []
+    runTasks.value = []
+    selectedRunId.value = null
+    return
+  }
+  if (!silent || !runs.value.length) runLoading.value = true
+  try {
+    const runValues = await platformApi.listWorkflowRuns({ team_id: teamId })
+    if (serial !== runRequestSerial || teamId !== selectedTeamId.value) return
+    runs.value = [...runValues].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+    const nextRunId = runs.value.some((run) => run.id === selectedRunId.value)
+      ? selectedRunId.value
+      : runs.value[0]?.id || null
+    if (nextRunId !== selectedRunId.value) runTasks.value = []
+    selectedRunId.value = nextRunId
+    const taskValues = nextRunId ? await platformApi.listWorkflowRunTasks(nextRunId) : []
+    if (serial !== runRequestSerial || teamId !== selectedTeamId.value) return
+    runTasks.value = taskValues
+    error.value = ''
+  } catch (value) {
+    if (serial === runRequestSerial) error.value = humanError(value)
+  } finally {
+    if (serial === runRequestSerial) runLoading.value = false
+  }
+}
+
+async function selectRun(runId: string) {
+  const serial = ++runRequestSerial
+  selectedRunId.value = runId
+  runTasks.value = []
+  runLoading.value = true
+  try {
+    const taskValues = await platformApi.listWorkflowRunTasks(runId)
+    if (serial !== runRequestSerial || selectedRunId.value !== runId) return
+    runTasks.value = taskValues
+    error.value = ''
+  } catch (value) {
+    if (serial === runRequestSerial) error.value = humanError(value)
+  } finally {
+    if (serial === runRequestSerial) runLoading.value = false
   }
 }
 
@@ -184,7 +233,7 @@ async function startRun() {
       : await platformApi.runAgentTeam(selectedTeamId.value, payload)
     selectedRunId.value = run.id
     runForm.input = ''
-    await loadAll(true)
+    await loadRunState(true)
   } catch (value) {
     error.value = humanError(value)
   } finally {
@@ -196,7 +245,7 @@ async function review(task: AgentTask, approved: boolean) {
   actionLoading.value = true
   try {
     await platformApi.reviewHumanTask(task.id, approved, approved ? '控制台审批通过' : '控制台审批拒绝')
-    await loadAll(true)
+    await loadRunState(true)
   } catch (value) {
     error.value = humanError(value)
   } finally {
@@ -207,14 +256,23 @@ async function review(task: AgentTask, approved: boolean) {
 watch(selectedTeamId, () => {
   runForm.workflowId = ''
   workflowForm.agentIds = []
+  selectedRunId.value = null
+  runs.value = []
+  runTasks.value = []
+  void loadRunState(true)
 })
-watch(selectedRunId, async (value) => {
-  runTasks.value = value ? await platformApi.listWorkflowRunTasks(value) : []
-})
+
+function openExecution(executionId: string) {
+  void router.push({ name: 'execution-detail', params: { id: executionId } })
+}
+
+function openTrace(executionId: string) {
+  void router.push({ name: 'trace-detail', params: { id: executionId } })
+}
 
 onMounted(async () => {
   await loadAll()
-  pollTimer.value = window.setInterval(() => loadAll(true), 3000)
+  pollTimer.value = window.setInterval(() => loadRunState(true), 3000)
 })
 onBeforeUnmount(() => {
   if (pollTimer.value) window.clearInterval(pollTimer.value)
@@ -299,32 +357,18 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section class="control-panel runs-panel">
-        <header><div><span>04</span><h2>运行状态</h2></div><small>3 秒自动刷新</small></header>
-        <div class="run-layout">
-          <div class="run-list">
-            <button v-for="run in runs.slice(0, 12)" :key="run.id" :class="{ active: run.id === selectedRunId }" @click="selectedRunId = run.id">
-              <div><StatusTag :status="run.status" /><time>{{ formatDate(run.created_at) }}</time></div>
-              <strong>{{ run.input }}</strong>
-              <span class="mono">{{ run.id }}</span>
-            </button>
-          </div>
-          <div class="task-tree">
-            <article v-for="task in runTasks" :key="task.id" :class="{ child: task.parent_task_id }">
-              <div class="task-node"><span /><i /></div>
-              <div class="task-copy">
-                <div><strong>{{ task.node_key === '__manager__' ? 'Manager 汇总' : task.node_key || task.agent_id }}</strong><StatusTag :status="task.status" /></div>
-                <small>{{ task.agent_id }} · {{ task.node_type }}</small>
-                <div v-if="task.status === 'human_review'" class="approval-actions">
-                  <NButton size="small" type="primary" @click="review(task, true)">通过</NButton>
-                  <NButton size="small" type="error" secondary @click="review(task, false)">拒绝</NButton>
-                </div>
-              </div>
-            </article>
-            <NEmpty v-if="!runTasks.length" description="选择一次运行查看任务树" />
-          </div>
-        </div>
-      </section>
+      <TeamRunWorkspace
+        :runs="runs"
+        :tasks="runTasks"
+        :agents="agents"
+        :selected-run-id="selectedRunId"
+        :loading="runLoading"
+        @select-run="selectRun"
+        @refresh="loadRunState()"
+        @review="review"
+        @open-execution="openExecution"
+        @open-trace="openTrace"
+      />
     </div>
   </section>
 </template>
@@ -344,7 +388,7 @@ onBeforeUnmount(() => {
 .control-panel > header span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: var(--brand); background: var(--brand-soft); font-size: 11px; font-weight: 800; }
 .control-panel h2 { margin: 0; font-size: 16px; }
 .control-panel header small { color: var(--text-muted); }
-.team-members, .workflow-list, .run-list, .task-tree { display: grid; gap: 8px; margin-top: 14px; }
+.team-members, .workflow-list { display: grid; gap: 8px; margin-top: 14px; }
 .member-row { display: grid; grid-template-columns: 36px 1fr auto auto; align-items: center; gap: 10px; padding: 10px; border-radius: 10px; background: var(--surface-subtle); }
 .member-avatar { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: white; background: var(--brand); font-weight: 800; }
 .member-row strong, .member-row span { display: block; }
@@ -358,26 +402,7 @@ onBeforeUnmount(() => {
 .node-strip span { flex: none; padding: 5px 8px; border-radius: 7px; background: var(--brand-soft); color: var(--brand-strong); font-size: 11px; }
 .node-strip i { color: var(--text-muted); font-style: normal; }
 .priority-row { display: flex; align-items: center; justify-content: space-between; color: var(--text-muted); font-size: 12px; }
-.runs-panel { grid-column: 1 / -1; }
-.run-layout { display: grid; grid-template-columns: minmax(260px, .75fr) minmax(0, 1.25fr); gap: 18px; }
-.run-list { max-height: 440px; overflow-y: auto; }
-.run-list button { display: grid; gap: 8px; width: 100%; padding: 12px; border: 1px solid var(--border-color); border-radius: 10px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.run-list button.active { border-color: var(--brand); background: var(--brand-soft); }
-.run-list button > div { display: flex; justify-content: space-between; align-items: center; }
-.run-list time, .run-list .mono { color: var(--text-muted); font-size: 10px; }
-.run-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-tree { position: relative; align-content: start; }
-.task-tree article { display: grid; grid-template-columns: 28px 1fr; min-height: 62px; }
-.task-node { position: relative; }
-.task-node span { position: absolute; top: 11px; left: 8px; width: 10px; height: 10px; border: 2px solid var(--brand); border-radius: 50%; background: var(--surface); z-index: 1; }
-.task-node i { position: absolute; top: 20px; bottom: -12px; left: 12px; width: 1px; background: var(--border-color); }
-.task-tree article:last-child .task-node i { display: none; }
-.task-tree article.child .task-copy { margin-left: 14px; }
-.task-copy { padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 10px; }
-.task-copy > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.task-copy small { color: var(--text-muted); }
-.approval-actions { display: flex; gap: 8px; margin-top: 10px; }
 .mono { font-family: var(--font-mono); }
-@media (max-width: 1000px) { .orchestration-metrics { grid-template-columns: repeat(2, 1fr); } .orchestration-grid, .run-layout { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .orchestration-metrics { grid-template-columns: repeat(2, 1fr); } .orchestration-grid { grid-template-columns: 1fr; } }
 @media (max-width: 620px) { .orchestration-metrics { grid-template-columns: 1fr; } .member-row { grid-template-columns: 34px 1fr auto; } .member-row .n-button { grid-column: 2 / -1; justify-self: start; } }
 </style>
