@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -42,38 +43,52 @@ if not 60 <= ACCESS_TOKEN_TTL_SECONDS <= 3600:
 READ_QUERY = re.compile(r"^(select|with)\b", re.IGNORECASE)
 DATABASE_POOL: asyncpg.Pool | None = None
 REDIS_CLIENT: redis.Redis | None = None
+RESOURCE_LOCK = asyncio.Lock()
+
+
+async def _ensure_resources() -> tuple[asyncpg.Pool, redis.Redis]:
+    global DATABASE_POOL, REDIS_CLIENT
+    async with RESOURCE_LOCK:
+        if DATABASE_POOL is None:
+            DATABASE_POOL = await asyncpg.create_pool(
+                host=os.environ.get("POSTGRES_HOST", "postgres"),
+                port=int(os.environ.get("POSTGRES_PORT", "5432")),
+                user=os.environ["POSTGRES_USER"],
+                password=os.environ["POSTGRES_PASSWORD"],
+                database=os.environ["POSTGRES_DB"],
+                min_size=1,
+                max_size=5,
+                command_timeout=10,
+            )
+        if REDIS_CLIENT is None:
+            REDIS_CLIENT = redis.Redis(
+                host=os.environ.get("REDIS_HOST", "redis"),
+                port=int(os.environ.get("REDIS_PORT", "6379")),
+                db=int(os.environ.get("REDIS_DB", "0")),
+                password=os.environ.get("REDIS_PASSWORD") or None,
+                decode_responses=True,
+            )
+        return DATABASE_POOL, REDIS_CLIENT
+
+
+async def _close_resources() -> None:
+    global DATABASE_POOL, REDIS_CLIENT
+    async with RESOURCE_LOCK:
+        redis_client = REDIS_CLIENT
+        pool = DATABASE_POOL
+        REDIS_CLIENT = None
+        DATABASE_POOL = None
+        if redis_client is not None:
+            await redis_client.aclose()
+        if pool is not None:
+            await pool.close()
 
 
 @asynccontextmanager
 async def lifespan(_) -> AsyncIterator[dict[str, Any]]:
-    global DATABASE_POOL, REDIS_CLIENT
     FILES_ROOT.mkdir(parents=True, exist_ok=True)
-    pool = await asyncpg.create_pool(
-        host=os.environ.get("POSTGRES_HOST", "postgres"),
-        port=int(os.environ.get("POSTGRES_PORT", "5432")),
-        user=os.environ["POSTGRES_USER"],
-        password=os.environ["POSTGRES_PASSWORD"],
-        database=os.environ["POSTGRES_DB"],
-        min_size=1,
-        max_size=5,
-        command_timeout=10,
-    )
-    redis_client = redis.Redis(
-        host=os.environ.get("REDIS_HOST", "redis"),
-        port=int(os.environ.get("REDIS_PORT", "6379")),
-        db=int(os.environ.get("REDIS_DB", "0")),
-        password=os.environ.get("REDIS_PASSWORD") or None,
-        decode_responses=True,
-    )
-    DATABASE_POOL = pool
-    REDIS_CLIENT = redis_client
-    try:
-        yield {"pool": pool, "redis": redis_client}
-    finally:
-        await redis_client.aclose()
-        await pool.close()
-        DATABASE_POOL = None
-        REDIS_CLIENT = None
+    pool, redis_client = await _ensure_resources()
+    yield {"pool": pool, "redis": redis_client}
 
 
 mcp = FastMCP(
@@ -311,30 +326,36 @@ async def _authorize_capability_token(
 
 @mcp.custom_route("/internal/capabilities/invoke", methods=["POST"])
 async def capability_invoke(request: Request) -> JSONResponse:
-    if DATABASE_POOL is None:
+    try:
+        pool, redis_client = await _ensure_resources()
+    except Exception:
+        logger.exception("Capability Gateway resources are unavailable")
         return JSONResponse(
             {"status": "FAILED", "error": {"code": "PROVIDER_UNAVAILABLE", "message": "Gateway 尚未就绪"}},
             status_code=503,
         )
     return await invoke_capability(
         request,
-        pool=DATABASE_POOL,
-        redis_client=REDIS_CLIENT,
+        pool=pool,
+        redis_client=redis_client,
         signing_key=SIGNING_KEY,
     )
 
 
 @mcp.custom_route("/internal/capabilities/resolve", methods=["POST"])
 async def capability_resolve(request: Request) -> JSONResponse:
-    if DATABASE_POOL is None:
+    try:
+        pool, redis_client = await _ensure_resources()
+    except Exception:
+        logger.exception("Capability Gateway resources are unavailable")
         return JSONResponse(
             {"status": "FAILED", "error": {"code": "PROVIDER_UNAVAILABLE", "message": "Gateway 尚未就绪"}},
             status_code=503,
         )
     return await resolve_capabilities(
         request,
-        pool=DATABASE_POOL,
-        redis_client=REDIS_CLIENT,
+        pool=pool,
+        redis_client=redis_client,
         signing_key=SIGNING_KEY,
     )
 
@@ -342,6 +363,25 @@ async def capability_resolve(request: Request) -> JSONResponse:
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "database": DATABASE_POOL is not None})
+
+
+def create_application():
+    """Build the HTTP app with resources alive for MCP and custom REST routes."""
+    application = mcp.streamable_http_app()
+    session_lifespan = application.router.lifespan_context
+
+    @asynccontextmanager
+    async def application_lifespan(app):
+        FILES_ROOT.mkdir(parents=True, exist_ok=True)
+        await _ensure_resources()
+        try:
+            async with session_lifespan(app):
+                yield
+        finally:
+            await _close_resources()
+
+    application.router.lifespan_context = application_lifespan
+    return application
 
 
 async def _require_capability(
@@ -437,4 +477,11 @@ def _timestamp() -> str:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http")
+    import uvicorn
+
+    uvicorn.run(
+        create_application(),
+        host=mcp.settings.host,
+        port=mcp.settings.port,
+        log_level=mcp.settings.log_level.lower(),
+    )

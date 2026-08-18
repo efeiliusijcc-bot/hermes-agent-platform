@@ -56,7 +56,7 @@ def test_phase5_deploys_the_official_pi_core_as_an_internal_service() -> None:
     assert package["dependencies"]["@earendil-works/pi-agent-core"] == "0.84.2"
     assert package["dependencies"]["@earendil-works/pi-ai"] == "0.84.2"
     assert "pi-runtime:" in compose
-    assert "hermes-agent-platform/pi-runtime:phase5" in compose
+    assert "hermes-agent-platform/pi-runtime:capability-v1" in compose
     assert "MODEL_GATEWAY_ENDPOINT: http://model-gateway:8080/v1" in compose
     assert "MCP_GATEWAY_ENDPOINT: http://mcp-gateway:8090/mcp" in compose
     pi_service = compose.split("\n  pi-runtime:\n", 1)[1].split("\n  mcp-gateway:\n", 1)[0]

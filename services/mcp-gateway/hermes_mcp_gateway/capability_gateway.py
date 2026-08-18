@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
 import os
 import re
 import socket
@@ -23,6 +24,8 @@ from starlette.responses import JSONResponse
 
 from hermes_mcp_gateway.auth import MCPAccessDenied, renew_capability_token, verify_capability_token
 
+
+logger = logging.getLogger(__name__)
 
 STANDARD_ERRORS = {
     "INVALID_ARGUMENT": 422,
@@ -104,8 +107,8 @@ async def resolve_capabilities(
                         "capability": row["capability_key"],
                         "version": row["version"],
                         "description": row["description"] or row["display_name"],
-                        "input_schema": dict(row["input_schema"] or {}),
-                        "output_schema": dict(row["output_schema"] or {}),
+                        "input_schema": _json_object(row["input_schema"]),
+                        "output_schema": _json_object(row["output_schema"]),
                         "side_effect": row["side_effect"],
                         "idempotency": row["idempotency"],
                     }
@@ -189,13 +192,13 @@ async def invoke_capability(
         await _enforce_approval(binding, execution)
         await _enforce_quota(pool, binding, provider, execution_id)
         try:
-            validate(arguments, dict(binding["input_schema"] or {}))
+            validate(arguments, _json_object(binding["input_schema"]))
         except ValidationError as exc:
             raise GatewayError("INVALID_ARGUMENT", f"Capability 输入不符合契约：{exc.message}") from exc
         scoped_arguments = _apply_policy(
             arguments,
-            dict(binding["parameter_policy"] or {}),
-            dict(provider["scope_definition"] or {}) if provider["scope_definition"] else None,
+            _json_object(binding["parameter_policy"]),
+            _json_object(provider["scope_definition"]) if provider["scope_definition"] else None,
         )
         invocation_id = uuid.uuid4()
         await pool.execute(
@@ -228,9 +231,9 @@ async def invoke_capability(
             token,
             idempotency=str(binding["idempotency"]),
         )
-        mapped = _map_response(result, dict(provider["response_mapping"] or {}))
+        mapped = _map_response(result, _json_object(provider["response_mapping"]))
         try:
-            validate(mapped, dict(binding["output_schema"] or {}))
+            validate(mapped, _json_object(binding["output_schema"]))
         except ValidationError as exc:
             raise GatewayError("OUTPUT_INVALID", f"Connector 输出不符合契约：{exc.message}") from exc
         latency = max(0, round((monotonic() - started) * 1000))
@@ -276,6 +279,7 @@ async def invoke_capability(
             await _finish(pool, invocation_id, "FAILED", max(0, round((monotonic() - started) * 1000)), error="PROVIDER_UNAVAILABLE")
         return _error("PROVIDER_UNAVAILABLE", "Connector 调用失败", invocation_id)
     except Exception:
+        logger.exception("Capability invocation failed unexpectedly invocation=%s", invocation_id)
         if invocation_id is not None:
             await _finish(pool, invocation_id, "FAILED", max(0, round((monotonic() - started) * 1000)), error="INTERNAL_ERROR")
         return _error("INTERNAL_ERROR", "Capability Gateway 内部错误", invocation_id)
@@ -330,12 +334,12 @@ async def _authorized_execution(
 
 
 async def _enforce_approval(binding: asyncpg.Record, execution: asyncpg.Record) -> None:
-    policy = dict(binding["approval_policy"] or {})
+    policy = _json_object(binding["approval_policy"])
     mode = str(policy.get("mode") or policy.get("type") or "NONE").upper()
     required = bool(policy.get("required")) or mode not in {"", "NONE", "DISABLED"}
     if not required:
         return
-    details = dict(execution["details"] or {})
+    details = _json_object(execution["details"])
     approvals = details.get("capability_approvals")
     approved_ids: set[str] = set()
     if isinstance(approvals, list):
@@ -354,7 +358,7 @@ async def _enforce_quota(
     provider: asyncpg.Record,
     execution_id: str,
 ) -> None:
-    quota = dict(binding["quota_policy"] or {})
+    quota = _json_object(binding["quota_policy"])
     calls_per_execution = int(quota.get("calls_per_execution") or 20)
     calls_per_minute = int(quota.get("calls_per_minute") or 60)
     max_concurrency = int(quota.get("max_concurrency") or 2)
@@ -371,7 +375,7 @@ async def _enforce_quota(
     )
     if execution_count >= calls_per_execution or minute_count >= calls_per_minute or active_count >= max_concurrency:
         raise GatewayError("RATE_LIMITED", "Capability 调用达到配额或并发上限")
-    instance_quota = dict((provider["connection_config"] or {}).get("quota_policy") or {})
+    instance_quota = _json_object(_json_object(provider["connection_config"]).get("quota_policy"))
     instance_calls_per_minute = int(instance_quota.get("calls_per_minute") or 600)
     instance_max_concurrency = int(instance_quota.get("max_concurrency") or 20)
     instance_minute_count, instance_active_count = await pool.fetchrow(
@@ -440,7 +444,7 @@ async def _invoke_provider(
 ) -> Any:
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     auth_type = provider["auth_type"]
-    config = dict(provider["connection_config"] or {})
+    config = _json_object(provider["connection_config"])
     if secret and auth_type == "bearer":
         headers["Authorization"] = f"Bearer {secret}"
     elif secret and auth_type == "header":
@@ -450,8 +454,8 @@ async def _invoke_provider(
         headers[name] = secret
     endpoint = str(provider["endpoint"])
     await _validate_network(endpoint, str(provider["network_zone"]), config)
-    request_data = _map_request(arguments, dict(provider["request_mapping"] or {}))
-    timeout_policy = dict(provider["timeout_policy"] or {})
+    request_data = _map_request(arguments, _json_object(provider["request_mapping"]))
+    timeout_policy = _json_object(provider["timeout_policy"])
     timeout = httpx.Timeout(
         float(timeout_policy.get("read_seconds") or 15),
         connect=float(timeout_policy.get("connect_seconds") or 5),
@@ -488,7 +492,7 @@ async def _invoke_provider(
         raise GatewayError("PERMISSION_DENIED", "Connector Operation 不允许跨 Host")
     await _validate_network(url, str(provider["network_zone"]), config)
     method = str(provider["method"] or "POST").upper()
-    retries = int((provider["retry_policy"] or {}).get("max_retries") or 0)
+    retries = int(_json_object(provider["retry_policy"]).get("max_retries") or 0)
     if (
         provider["operation_side_effect"] != "READ_ONLY"
         and idempotency not in {"SAFE_RETRY", "IDEMPOTENT"}
@@ -575,6 +579,22 @@ def _map_request(arguments: dict[str, Any], mapping: dict[str, Any]) -> dict[str
     if scope_target and arguments.get("resource_scope") is not None:
         value[str(scope_target)] = arguments["resource_scope"]
     return value
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    """Normalize JSONB returned by asyncpg, which is text without a custom codec."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (ValueError, json.JSONDecodeError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    try:
+        return dict(value) if value is not None else {}
+    except (TypeError, ValueError):
+        return {}
 
 
 def _map_response(result: Any, mapping: dict[str, Any]) -> Any:
