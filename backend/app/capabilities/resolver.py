@@ -125,6 +125,15 @@ async def resolve_agent_capabilities(
     ).all()
     bindings_by_capability = {capability.key: binding for binding, _, capability in rows}
     bindings_by_alias = {binding.tool_alias: binding for binding, _, _ in rows}
+    if rows and not runtime_features.get("capability_gateway"):
+        runtime_type = str(runtime_features.get("runtime_type") or "当前")
+        issues.append(
+            PreflightIssue(
+                "RUNTIME_FEATURE_MISMATCH",
+                "runtime.required_features.capability_gateway",
+                f"{runtime_type} Runtime 尚未提供不向模型暴露 Token 的动态 Capability Dispatcher",
+            )
+        )
     await _validate_skill_requirements(
         session,
         snapshot,

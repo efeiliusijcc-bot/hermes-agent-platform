@@ -99,6 +99,9 @@ def _base64url(value: bytes) -> str:
 
 def _base64url_decode(value: str) -> bytes:
     try:
-        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
     except (ValueError, UnicodeEncodeError) as exc:
         raise CapabilityTokenError("malformed execution capability token encoding") from exc
+    if not hmac.compare_digest(_base64url(decoded), value):
+        raise CapabilityTokenError("non-canonical execution capability token encoding")
+    return decoded

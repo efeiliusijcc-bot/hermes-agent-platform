@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
@@ -132,6 +133,13 @@ async def invoke_capability(
     signing_key: str,
 ) -> JSONResponse:
     invocation_id: uuid.UUID | None = None
+    claims: dict[str, Any] | None = None
+    binding: Any | None = None
+    implementation: Any | None = None
+    arguments: dict[str, Any] = {}
+    execution_id = ""
+    tool_name = ""
+    execution_authorized = False
     started = monotonic()
     try:
         token = _bearer(request.headers.get("authorization"))
@@ -145,15 +153,17 @@ async def invoke_capability(
             raise GatewayError("INVALID_ARGUMENT", "请求必须是 JSON 对象")
         execution_id = str(payload.get("execution_id") or "")
         tool_name = str(payload.get("tool_name") or "")
-        arguments = payload.get("arguments")
-        if execution_id != claims["execution_id"] or not tool_name or not isinstance(arguments, dict):
+        raw_arguments = payload.get("arguments")
+        if execution_id != claims["execution_id"] or not tool_name or not isinstance(raw_arguments, dict):
             raise GatewayError("INVALID_ARGUMENT", "execution_id、tool_name 或 arguments 无效")
+        arguments = raw_arguments
         execution = await _authorized_execution(pool, execution_id, claims)
+        execution_authorized = True
 
         binding = await pool.fetchrow(
             """
             SELECT b.*, cv.version AS capability_version, cv.input_schema, cv.output_schema,
-                   cv.side_effect, cv.idempotency, cv.default_timeout_ms,
+                   cv.side_effect, cv.idempotency, cv.cache_policy, cv.default_timeout_ms,
                    c.key AS capability_key
             FROM agent_capability_bindings b
             JOIN capability_versions cv ON cv.id = b.capability_version_id
@@ -190,7 +200,6 @@ async def invoke_capability(
         if provider is None or not provider["enabled"] or provider["health_status"] == "offline":
             raise GatewayError("PROVIDER_UNAVAILABLE", "Connector 当前不可用")
         await _enforce_approval(binding, execution)
-        await _enforce_quota(pool, binding, provider, execution_id)
         try:
             validate(arguments, _json_object(binding["input_schema"]))
         except ValidationError as exc:
@@ -201,28 +210,87 @@ async def invoke_capability(
             _json_object(provider["scope_definition"]) if provider["scope_definition"] else None,
         )
         invocation_id = uuid.uuid4()
-        await pool.execute(
-            """
-            INSERT INTO capability_invocations
-                (id, execution_id, agent_id, agent_version_id, binding_id,
-                 capability_key, capability_version, tool_alias,
-                 connector_instance_revision_id, resource_scope_revision_id,
-                 status, input_summary)
-            VALUES ($1, $2::uuid, $3, $4::uuid, $5::uuid, $6, $7, $8,
-                    $9::uuid, $10::uuid, 'PENDING', $11::jsonb)
-            """,
-            invocation_id,
-            execution_id,
-            claims["agent_id"],
-            claims["agent_version_id"],
-            binding["id"],
-            binding["capability_key"],
-            binding["capability_version"],
-            tool_name,
-            implementation["connector_instance_revision_id"],
-            binding["resource_scope_revision_id"],
-            json.dumps(_summary(scoped_arguments)),
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                for lock_key in sorted(
+                    (
+                        f"binding:{binding['id']}",
+                        f"connector:{provider['revision_id']}",
+                    )
+                ):
+                    await connection.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                        lock_key,
+                    )
+                await _enforce_quota(connection, binding, provider, execution_id)
+                await connection.execute(
+                    """
+                    INSERT INTO capability_invocations
+                        (id, execution_id, agent_id, agent_version_id, binding_id,
+                         capability_key, capability_version, tool_alias,
+                         connector_instance_revision_id, resource_scope_revision_id,
+                         status, input_summary)
+                    VALUES ($1, $2::uuid, $3, $4::uuid, $5::uuid, $6, $7, $8,
+                            $9::uuid, $10::uuid, 'PENDING', $11::jsonb)
+                    """,
+                    invocation_id,
+                    execution_id,
+                    claims["agent_id"],
+                    claims["agent_version_id"],
+                    binding["id"],
+                    binding["capability_key"],
+                    binding["capability_version"],
+                    tool_name,
+                    implementation["connector_instance_revision_id"],
+                    binding["resource_scope_revision_id"],
+                    json.dumps(_summary(scoped_arguments)),
+                )
+        cached = await _cache_get(
+            redis_client,
+            binding=binding,
+            implementation=implementation,
+            claims=claims,
+            arguments=scoped_arguments,
         )
+        if cached is not None:
+            try:
+                validate(cached, _json_object(binding["output_schema"]))
+            except ValidationError:
+                cached = None
+        if cached is not None:
+            latency = max(0, round((monotonic() - started) * 1000))
+            await _finish(
+                pool,
+                invocation_id,
+                "SUCCEEDED",
+                latency,
+                output=_summary(cached),
+                cache_hit=True,
+            )
+            await _trace(
+                pool,
+                execution_id,
+                invocation_id,
+                binding,
+                "succeeded",
+                latency,
+                event="capability_cache_hit",
+            )
+            return JSONResponse(
+                {
+                    "invocation_id": str(invocation_id),
+                    "status": "SUCCEEDED",
+                    "data": cached,
+                    "metadata": {
+                        "capability": binding["capability_key"],
+                        "version": binding["capability_version"],
+                        "latency_ms": latency,
+                        "provider_revision": str(implementation["connector_instance_revision_id"]),
+                        "cache_hit": True,
+                        "token_renewal": _renewal(claims, signing_key),
+                    },
+                }
+            )
         secret = _decrypt(provider["encrypted_payload"]) if provider["encrypted_payload"] else None
         result = await _invoke_provider(
             provider,
@@ -236,18 +304,18 @@ async def invoke_capability(
             validate(mapped, _json_object(binding["output_schema"]))
         except ValidationError as exc:
             raise GatewayError("OUTPUT_INVALID", f"Connector 输出不符合契约：{exc.message}") from exc
+        await _cache_set(
+            redis_client,
+            binding=binding,
+            implementation=implementation,
+            claims=claims,
+            arguments=scoped_arguments,
+            value=mapped,
+        )
         latency = max(0, round((monotonic() - started) * 1000))
         await _finish(pool, invocation_id, "SUCCEEDED", latency, output=_summary(mapped))
         await _trace(pool, execution_id, invocation_id, binding, "succeeded", latency)
-        token_renewal = None
-        if int(claims["exp"]) - int(datetime.now(timezone.utc).timestamp()) < int(
-            os.getenv("CAPABILITY_TOKEN_RENEW_BEFORE_SECONDS", "120")
-        ):
-            token_renewal = renew_capability_token(
-                claims,
-                signing_key,
-                ttl_seconds=int(os.getenv("CAPABILITY_TOKEN_TTL_SECONDS", "600")),
-            )
+        token_renewal = _renewal(claims, signing_key)
         return JSONResponse(
             {
                 "invocation_id": str(invocation_id),
@@ -266,9 +334,19 @@ async def invoke_capability(
     except MCPAccessDenied as exc:
         return _error("PERMISSION_DENIED", str(exc), None)
     except GatewayError as exc:
-        if invocation_id is not None:
-            latency = max(0, round((monotonic() - started) * 1000))
-            await _finish(pool, invocation_id, "DENIED" if exc.code == "PERMISSION_DENIED" else "FAILED", latency, error=exc.code)
+        if claims is not None and execution_id and execution_authorized:
+            invocation_id = await _audit_failure(
+                pool,
+                invocation_id=invocation_id,
+                claims=claims,
+                binding=binding,
+                implementation=implementation,
+                execution_id=execution_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                code=exc.code,
+                latency=max(0, round((monotonic() - started) * 1000)),
+            )
         return _error(exc.code, exc.message, invocation_id)
     except httpx.TimeoutException:
         if invocation_id is not None:
@@ -280,8 +358,19 @@ async def invoke_capability(
         return _error("PROVIDER_UNAVAILABLE", "Connector 调用失败", invocation_id)
     except Exception:
         logger.exception("Capability invocation failed unexpectedly invocation=%s", invocation_id)
-        if invocation_id is not None:
-            await _finish(pool, invocation_id, "FAILED", max(0, round((monotonic() - started) * 1000)), error="INTERNAL_ERROR")
+        if claims is not None and execution_id and execution_authorized:
+            invocation_id = await _audit_failure(
+                pool,
+                invocation_id=invocation_id,
+                claims=claims,
+                binding=binding,
+                implementation=implementation,
+                execution_id=execution_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                code="INTERNAL_ERROR",
+                latency=max(0, round((monotonic() - started) * 1000)),
+            )
         return _error("INTERNAL_ERROR", "Capability Gateway 内部错误", invocation_id)
 
 
@@ -301,11 +390,76 @@ async def _implementation(pool: asyncpg.Pool, binding: asyncpg.Record) -> asyncp
     )
 
 
+async def _audit_failure(
+    pool: asyncpg.Pool,
+    *,
+    invocation_id: uuid.UUID | None,
+    claims: dict[str, Any],
+    binding: Any | None,
+    implementation: Any | None,
+    execution_id: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    code: str,
+    latency: int,
+) -> uuid.UUID:
+    value = invocation_id or uuid.uuid4()
+    capability_key = str(binding["capability_key"]) if binding is not None else "unknown"
+    capability_version = str(binding["capability_version"]) if binding is not None else "unknown"
+    binding_id = binding["id"] if binding is not None else None
+    scope_revision = binding["resource_scope_revision_id"] if binding is not None else None
+    connector_revision = (
+        implementation["connector_instance_revision_id"] if implementation is not None else None
+    )
+    await pool.execute(
+        """
+        INSERT INTO capability_invocations
+            (id, execution_id, agent_id, agent_version_id, binding_id,
+             capability_key, capability_version, tool_alias,
+             connector_instance_revision_id, resource_scope_revision_id,
+             status, input_summary, output_summary, error_code, latency_ms, finished_at)
+        VALUES ($1, $2::uuid, $3, $4::uuid, $5::uuid, $6, $7, $8,
+                $9::uuid, $10::uuid, $11, $12::jsonb, '{}'::jsonb, $13, $14, now())
+        ON CONFLICT (id) DO UPDATE SET
+            status=EXCLUDED.status,
+            error_code=EXCLUDED.error_code,
+            latency_ms=EXCLUDED.latency_ms,
+            finished_at=now()
+        """,
+        value,
+        execution_id,
+        claims["agent_id"],
+        claims["agent_version_id"],
+        binding_id,
+        capability_key,
+        capability_version,
+        tool_name or "unknown",
+        connector_revision,
+        scope_revision,
+        "DENIED" if code == "PERMISSION_DENIED" else "FAILED",
+        json.dumps(_summary(arguments), ensure_ascii=False),
+        code,
+        latency,
+    )
+    return value
+
+
 async def _ensure_not_revoked(redis_client: Any, claims: dict[str, Any]) -> None:
     if redis_client is not None and await redis_client.exists(
         f"hermes:capability-token:revoked:{claims['jti']}"
     ):
         raise GatewayError("PERMISSION_DENIED", "Execution Token 已撤销")
+
+
+def _renewal(claims: dict[str, Any], signing_key: str) -> str | None:
+    remaining = int(claims["exp"]) - int(datetime.now(timezone.utc).timestamp())
+    if remaining >= int(os.getenv("CAPABILITY_TOKEN_RENEW_BEFORE_SECONDS", "120")):
+        return None
+    return renew_capability_token(
+        claims,
+        signing_key,
+        ttl_seconds=int(os.getenv("CAPABILITY_TOKEN_TTL_SECONDS", "600")),
+    )
 
 
 async def _authorized_execution(
@@ -353,7 +507,7 @@ async def _enforce_approval(binding: asyncpg.Record, execution: asyncpg.Record) 
 
 
 async def _enforce_quota(
-    pool: asyncpg.Pool,
+    pool: Any,
     binding: asyncpg.Record,
     provider: asyncpg.Record,
     execution_id: str,
@@ -393,6 +547,82 @@ async def _enforce_quota(
         or instance_active_count >= instance_max_concurrency
     ):
         raise GatewayError("RATE_LIMITED", "Connector Instance 达到全局配额或并发上限")
+
+
+def _cache_key(
+    binding: Any,
+    implementation: Any,
+    claims: dict[str, Any],
+    arguments: dict[str, Any],
+) -> str:
+    material = {
+        "agent_id": claims["agent_id"],
+        "binding_id": str(binding["id"]),
+        "capability": binding["capability_key"],
+        "version": binding["capability_version"],
+        "connector_revision": str(implementation["connector_instance_revision_id"]),
+        "scope_revision": (
+            str(binding["resource_scope_revision_id"])
+            if binding["resource_scope_revision_id"] is not None
+            else None
+        ),
+        "arguments": arguments,
+    }
+    encoded = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return "hermes:capability-cache:" + hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _cache_ttl(binding: Any) -> int:
+    if str(binding["side_effect"]) != "READ_ONLY":
+        return 0
+    policy = _json_object(binding["cache_policy"])
+    if not bool(policy.get("enabled")):
+        return 0
+    try:
+        ttl = int(policy.get("ttl_seconds") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return min(max(ttl, 0), 3600)
+
+
+async def _cache_get(
+    redis_client: Any,
+    *,
+    binding: Any,
+    implementation: Any,
+    claims: dict[str, Any],
+    arguments: dict[str, Any],
+) -> Any | None:
+    if redis_client is None or _cache_ttl(binding) <= 0:
+        return None
+    try:
+        raw = await redis_client.get(_cache_key(binding, implementation, claims, arguments))
+        return json.loads(raw) if isinstance(raw, str) else None
+    except Exception:
+        logger.warning("Capability cache read failed", exc_info=True)
+        return None
+
+
+async def _cache_set(
+    redis_client: Any,
+    *,
+    binding: Any,
+    implementation: Any,
+    claims: dict[str, Any],
+    arguments: dict[str, Any],
+    value: Any,
+) -> None:
+    ttl = _cache_ttl(binding)
+    if redis_client is None or ttl <= 0:
+        return
+    try:
+        await redis_client.set(
+            _cache_key(binding, implementation, claims, arguments),
+            json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str),
+            ex=ttl,
+        )
+    except Exception:
+        logger.warning("Capability cache write failed", exc_info=True)
 
 
 def _apply_policy(arguments: dict[str, Any], policy: dict[str, Any], scope: dict[str, Any] | None) -> dict[str, Any]:
@@ -638,11 +868,12 @@ async def _finish(
     *,
     output: dict[str, Any] | None = None,
     error: str | None = None,
+    cache_hit: bool = False,
 ) -> None:
     await pool.execute(
         """
         UPDATE capability_invocations SET status=$2, latency_ms=$3,
-            output_summary=$4::jsonb, error_code=$5, finished_at=now()
+            output_summary=$4::jsonb, error_code=$5, cache_hit=$6, finished_at=now()
         WHERE id=$1
         """,
         invocation_id,
@@ -650,6 +881,7 @@ async def _finish(
         latency,
         json.dumps(output or {}),
         error,
+        cache_hit,
     )
 
 
@@ -660,9 +892,11 @@ async def _trace(
     binding: asyncpg.Record,
     status: str,
     latency: int,
+    *,
+    event: str = "connector_invoked",
 ) -> None:
-    event = {
-        "event": "connector_invoked",
+    trace_event = {
+        "event": event,
         "invocation_id": str(invocation_id),
         "capability": binding["capability_key"],
         "tool_name": binding["tool_alias"],
@@ -677,7 +911,7 @@ async def _trace(
           COALESCE(details->'capability_events', '[]'::jsonb) || $1::jsonb, true
         ) WHERE id=$2::uuid
         """,
-        json.dumps([event]),
+        json.dumps([trace_event]),
         execution_id,
     )
 

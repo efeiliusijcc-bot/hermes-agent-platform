@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -13,6 +14,7 @@ from app.capabilities.security import (
     verify_execution_capability_token,
 )
 from app.repositories.production import validate_agent_snapshot
+from app.runtime.base import RuntimeAdapter
 from app.skills.package import SkillLoadError, skill_contract, validate_skill_contract
 from app.capabilities.resolver import version_satisfies
 from app.management import (
@@ -127,6 +129,15 @@ def test_capability_semver_range() -> None:
     assert version_satisfies("1.4.2", ">=1.0.0 <2.0.0")
     assert not version_satisfies("2.0.0", ">=1.0.0 <2.0.0")
     assert not version_satisfies("1.4.2", "not-a-range")
+
+
+def test_only_runtime_with_hidden_token_dispatcher_advertises_capability_gateway() -> None:
+    pi = RuntimeAdapter.describe_features(SimpleNamespace(runtime_type="pi"))
+    hermes = RuntimeAdapter.describe_features(SimpleNamespace(runtime_type="hermes"))
+    deepseek = RuntimeAdapter.describe_features(SimpleNamespace(runtime_type="deepseek"))
+    assert pi.features["capability_gateway"] is True
+    assert hermes.features["capability_gateway"] is False
+    assert deepseek.features["capability_gateway"] is False
 
 
 def test_management_key_is_required_after_control_plane_cutover(monkeypatch: pytest.MonkeyPatch) -> None:

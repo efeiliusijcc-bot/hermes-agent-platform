@@ -113,4 +113,8 @@ def renew_capability_token(
 
 def _base64url_decode(value: str) -> bytes:
     padded = value + "=" * (-len(value) % 4)
-    return base64.b64decode(padded, altchars=b"-_", validate=True)
+    decoded = base64.b64decode(padded, altchars=b"-_", validate=True)
+    canonical = base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii")
+    if not hmac.compare_digest(canonical, value):
+        raise ValueError("non-canonical base64url encoding")
+    return decoded

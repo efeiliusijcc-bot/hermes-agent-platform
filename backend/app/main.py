@@ -138,6 +138,10 @@ async def _ensure_runtime_feature_profile(session, runtime) -> None:
     )
     features = {
         "tool_call": True,
+        # Pi owns a per-run dispatcher that keeps cap1 tokens outside the
+        # model context. Hermes 0.20 has static MCP headers, while the current
+        # DeepSeek Harness composition has no MCP/custom-tool plugin.
+        "capability_gateway": runtime.type == "pi",
         "structured_output": True,
         "streaming": True,
         "stop": True,

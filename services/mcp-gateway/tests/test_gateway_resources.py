@@ -6,10 +6,15 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("MCP_GATEWAY_SIGNING_KEY", "test-signing-key-that-is-at-least-32-chars")
 
-from hermes_mcp_gateway import capability_gateway, server
+from hermes_mcp_gateway import auth, capability_gateway, server
 
 
 class JsonObjectTests(unittest.TestCase):
+    def test_rejects_noncanonical_base64url_token_segments(self) -> None:
+        self.assertEqual(auth._base64url_decode("YQ"), b"a")
+        with self.assertRaises(ValueError):
+            auth._base64url_decode("YR")
+
     def test_normalizes_asyncpg_json_text(self) -> None:
         self.assertEqual(capability_gateway._json_object('{"quota_policy":{"calls_per_minute":5}}'), {
             "quota_policy": {"calls_per_minute": 5}
@@ -17,6 +22,52 @@ class JsonObjectTests(unittest.TestCase):
         self.assertEqual(capability_gateway._json_object({"ready": True}), {"ready": True})
         self.assertEqual(capability_gateway._json_object("[]"), {})
         self.assertEqual(capability_gateway._json_object("not-json"), {})
+
+    def test_cache_key_is_deterministic_and_scope_isolated(self) -> None:
+        binding = {
+            "id": "binding-a",
+            "capability_key": "knowledge.search",
+            "capability_version": "1.0.0",
+            "resource_scope_revision_id": "scope-a",
+            "side_effect": "READ_ONLY",
+            "cache_policy": '{"enabled":true,"ttl_seconds":90}',
+        }
+        implementation = {"connector_instance_revision_id": "connector-r1"}
+        claims = {"agent_id": "agent-a"}
+        first = capability_gateway._cache_key(
+            binding,
+            implementation,
+            claims,
+            {"query": "hello", "filters": {"year": 2026}},
+        )
+        reordered = capability_gateway._cache_key(
+            binding,
+            implementation,
+            claims,
+            {"filters": {"year": 2026}, "query": "hello"},
+        )
+        self.assertEqual(first, reordered)
+        self.assertEqual(capability_gateway._cache_ttl(binding), 90)
+
+        other_scope = {**binding, "resource_scope_revision_id": "scope-b"}
+        self.assertNotEqual(
+            first,
+            capability_gateway._cache_key(
+                other_scope,
+                implementation,
+                claims,
+                {"query": "hello", "filters": {"year": 2026}},
+            ),
+        )
+        self.assertNotEqual(
+            first,
+            capability_gateway._cache_key(
+                binding,
+                implementation,
+                {"agent_id": "agent-b"},
+                {"query": "hello", "filters": {"year": 2026}},
+            ),
+        )
 
 
 class GatewayResourceTests(unittest.IsolatedAsyncioTestCase):
@@ -49,6 +100,28 @@ class GatewayResourceTests(unittest.IsolatedAsyncioTestCase):
             redis_client.aclose.assert_awaited_once()
             self.assertIsNone(server.DATABASE_POOL)
             self.assertIsNone(server.REDIS_CLIENT)
+
+
+class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
+    def test_runtime_cannot_override_gateway_owned_fields(self) -> None:
+        with self.assertRaises(capability_gateway.GatewayError) as denied:
+            capability_gateway._apply_policy(
+                {"query": "hello", "nested": {"credential_ref": "forged"}},
+                {},
+                None,
+            )
+        self.assertEqual(denied.exception.code, "PERMISSION_DENIED")
+
+    async def test_metadata_address_is_rejected_after_dns_resolution(self) -> None:
+        resolved = [(2, 1, 6, "", ("169.254.169.254", 80))]
+        with patch.object(capability_gateway.socket, "getaddrinfo", return_value=resolved):
+            with self.assertRaises(capability_gateway.GatewayError) as denied:
+                await capability_gateway._validate_network(
+                    "http://metadata.internal/latest",
+                    "internal",
+                    {},
+                )
+        self.assertEqual(denied.exception.code, "PERMISSION_DENIED")
 
 
 if __name__ == "__main__":

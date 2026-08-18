@@ -73,6 +73,7 @@ class RuntimeAdapter(ABC):
             runtime_type=self.runtime_type,
             features={
                 "tool_call": True,
+                "capability_gateway": self.runtime_type == "pi",
                 "structured_output": True,
                 "streaming": True,
                 "stop": True,

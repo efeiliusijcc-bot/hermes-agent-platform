@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from collections.abc import AsyncIterator
 from typing import Any, Callable
 from uuid import UUID, uuid4
@@ -844,6 +844,16 @@ async def _prepare_agent_execution(
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Capability Gateway 尚未启用，当前 v2 Agent 不能调用外部能力",
+                )
+            frozen_digest = str(
+                version.resolution_digest
+                or (version.snapshot or {}).get("resolution_digest")
+                or ""
+            )
+            if frozen_digest:
+                capability_resolution = replace(
+                    capability_resolution,
+                    resolution_digest=frozen_digest,
                 )
             capability_token = issue_execution_capability_token(
                 execution_id=str(execution.id),
