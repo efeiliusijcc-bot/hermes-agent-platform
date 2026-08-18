@@ -28,6 +28,15 @@ def _timestamps() -> tuple[sa.Column, sa.Column]:
 
 
 def upgrade() -> None:
+    # Alembic's initial version table uses VARCHAR(32). Capability revision
+    # identifiers are intentionally descriptive and exceed that legacy limit.
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        existing_type=sa.String(length=32),
+        type_=sa.String(length=64),
+        existing_nullable=False,
+    )
     op.create_table(
         "capabilities",
         sa.Column("id", UUID, primary_key=True),
@@ -333,3 +342,10 @@ def downgrade() -> None:
     op.drop_table("connector_credentials")
     op.drop_table("capability_versions")
     op.drop_table("capabilities")
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        existing_type=sa.String(length=64),
+        type_=sa.String(length=32),
+        existing_nullable=False,
+    )
