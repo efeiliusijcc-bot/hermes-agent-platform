@@ -30,6 +30,12 @@ class RuntimeHealth:
 
 
 @dataclass(frozen=True)
+class RuntimeFeatureProfile:
+    runtime_type: str
+    features: dict[str, bool]
+
+
+@dataclass(frozen=True)
 class RuntimeContext:
     agent_id: str
     session_id: str
@@ -40,6 +46,8 @@ class RuntimeContext:
     tools: tuple[str, ...] = ()
     skills: tuple[str, ...] = ()
     metadata: dict[str, Any] | None = None
+    capability_tools: tuple[dict[str, Any], ...] = ()
+    capability_token: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -52,11 +60,24 @@ class RuntimeContext:
             "tools": list(self.tools),
             "skills": list(self.skills),
             "metadata": self.metadata or {},
+            "capability_tools": list(self.capability_tools),
+            "capability_token": self.capability_token,
         }
 
 
 class RuntimeAdapter(ABC):
     runtime_type: str
+
+    def describe_features(self) -> RuntimeFeatureProfile:
+        return RuntimeFeatureProfile(
+            runtime_type=self.runtime_type,
+            features={
+                "tool_call": True,
+                "structured_output": True,
+                "streaming": True,
+                "stop": True,
+            },
+        )
 
     @abstractmethod
     async def create_session(

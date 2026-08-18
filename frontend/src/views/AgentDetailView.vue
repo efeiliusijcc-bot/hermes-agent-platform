@@ -11,6 +11,7 @@ import StatusTag from '@/components/StatusTag.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { useAgentStore } from '@/stores/agents'
 import { useResourceStore } from '@/stores/resources'
+import { useManagementStore } from '@/stores/management'
 import { formatDate } from '@/utils/format'
 import {
   agentConfigurationLockMessage,
@@ -30,6 +31,7 @@ import type {
   ModelAdapterName,
   RegisteredModel,
   RuntimeType,
+  AgentEditorModel,
 } from '@/types/api'
 import { platformApi } from '@/api/platform'
 
@@ -39,6 +41,8 @@ const message = useMessage()
 const dialog = useDialog()
 const agentStore = useAgentStore()
 const resourceStore = useResourceStore()
+const managementStore = useManagementStore()
+const editorModel = ref<AgentEditorModel | null>(null)
 const agentId = computed(() => String(route.params.id))
 const dialogType = ref<'skills' | 'mcps' | 'knowledge' | null>(null)
 const saving = ref(false)
@@ -78,17 +82,13 @@ const versionTestInput = ref('')
 const versionTestOutput = ref('')
 const versionTesting = ref(false)
 const comparingVersion = ref<AgentVersion | null>(null)
-const activeTab = ref<'overview' | 'configuration' | 'versions' | 'conversation' | 'execution' | 'api' | 'artifacts' | 'logs'>('overview')
+const activeTab = ref<'overview' | 'configuration' | 'execution' | 'versions'>('overview')
 let hydratingConfiguration = false
 const detailTabs = [
   { key: 'overview', label: '概览' },
-  { key: 'configuration', label: '配置' },
+  { key: 'configuration', label: '构建' },
+  { key: 'execution', label: '运行' },
   { key: 'versions', label: '版本' },
-  { key: 'conversation', label: '聊天记录' },
-  { key: 'execution', label: '执行记录' },
-  { key: 'api', label: '接口' },
-  { key: 'artifacts', label: '产物' },
-  { key: 'logs', label: '日志' },
 ] as const
 
 const currentVersion = computed(() => versions.value.find((item) => item.status === 'published') || null)
@@ -186,6 +186,7 @@ async function load() {
     resourceStore.fetchAll(),
     platformApi.listRuntimes().then((value) => { runtimes.value = value }),
     platformApi.listModels().then((value) => { models.value = value }),
+    platformApi.getAgentEditor(agentId.value).then((value) => { editorModel.value = value }),
   ]).catch(() => undefined)
   if (agentStore.currentAgent) {
     hydratingConfiguration = true
@@ -505,13 +506,12 @@ onMounted(load)
       v-else-if="agentStore.currentAgent"
       class="detail-grid"
       :class="{
-        'detail-tab-main': ['versions', 'conversation'].includes(activeTab),
-        'detail-tab-aside': ['execution', 'api', 'artifacts', 'logs'].includes(activeTab),
+        'detail-tab-main': ['versions', 'execution'].includes(activeTab),
       }"
     >
       <div class="detail-stack">
         <AgentConversationPanel
-          v-if="activeTab === 'conversation'"
+          v-if="activeTab === 'execution'"
           :executions="executions"
           :loading="executionHistoryLoading"
           :history-error="executionHistoryError"
@@ -557,6 +557,22 @@ onMounted(load)
             <div class="definition-item"><dt>最近执行</dt><dd>{{ lastExecution ? formatDate(lastExecution.started_at) : '暂无执行' }}</dd></div>
             <div class="definition-item"><dt>成功率</dt><dd>{{ successRate }}</dd></div>
           </dl>
+        </section>
+
+        <section v-show="activeTab === 'configuration'" class="surface panel">
+          <div class="section-heading"><div><h2>能力与资源</h2><p>状态和发布条件全部来自 Console BFF Preflight</p></div><StatusTag :status="editorModel?.preflight.state || 'NEEDS_CONFIGURATION'" /></div>
+          <NAlert v-if="!managementStore.unlocked" type="warning" :bordered="false" style="margin:14px 0">当前为只读模式。解锁管理员模式后才能修改 Capability Binding。</NAlert>
+          <div v-if="editorModel?.sections.capabilities.length" class="binding-list" style="margin-top:14px">
+            <div v-for="item in editorModel.sections.capabilities" :key="item.binding_id" class="binding-row">
+              <div><strong>{{ item.label }}</strong><span>{{ item.key }}@{{ item.version }} / {{ item.source_label }} / {{ item.scope_summary }}</span></div>
+              <StatusTag :status="item.state" style="margin-left:auto" />
+            </div>
+          </div>
+          <div v-else class="version-empty">当前 Agent 没有 Capability Binding。不需要外部接口的 Agent 可以保持为空。</div>
+          <div v-if="editorModel?.preflight.issues.length" class="binding-list" style="margin-top:14px">
+            <div v-for="issue in editorModel.preflight.issues" :key="`${issue.code}-${issue.path}`" class="binding-row"><div><strong>{{ issue.message }}</strong><span class="mono">{{ issue.code }} / {{ issue.path }}</span></div></div>
+          </div>
+          <NButton style="margin-top:14px" secondary @click="router.push({ name: 'platform-connections' })">打开连接与能力管理</NButton>
         </section>
 
         <section v-show="activeTab === 'configuration'" class="surface panel">
@@ -645,7 +661,7 @@ onMounted(load)
             <div class="definition-item"><dt>Artifacts</dt><dd>{{ phase3Loading ? '-' : workspace?.artifact_count || artifacts.length }}</dd></div>
           </dl>
         </section>
-        <section v-show="activeTab === 'api'" class="surface panel">
+        <section v-show="activeTab === 'execution'" class="surface panel">
           <div class="section-heading"><div><h2>生产 API</h2><p>发布状态与授权均由 Phase 4 生产运行时管理</p></div><NIcon :component="Api" size="20" /></div>
           <dl class="definition-list" style="grid-template-columns: 1fr; gap: 10px"><div class="definition-item"><dt>Agent 状态</dt><dd>{{ agentStore.currentAgent.status }}</dd></div><div class="definition-item"><dt>API 开关</dt><dd>{{ agentStore.currentAgent.api_enabled ? '已开启' : '已关闭' }}</dd></div><div class="definition-item"><dt>默认响应</dt><dd>{{ agentStore.currentAgent.response_mode === 'stream' ? 'SSE Stream' : 'Sync JSON' }}</dd></div><div class="definition-item"><dt>Sync Endpoint</dt><dd class="mono">/api/public/agents/{{ agentId }}/run</dd></div><div class="definition-item"><dt>Stream Endpoint</dt><dd class="mono">/api/public/agents/{{ agentId }}/stream</dd></div><div class="definition-item"><dt>认证</dt><dd>API Client Key + Agent 授权绑定</dd></div></dl>
           <NButton style="margin-top: 14px" block @click="router.push({ name: 'apis' })">打开 API 管理</NButton>
@@ -688,7 +704,7 @@ onMounted(load)
           </div>
           <p v-else class="muted" style="font-size: 12px">未绑定知识源</p>
         </section>
-        <section v-show="activeTab === 'artifacts'" class="surface panel">
+        <section v-show="activeTab === 'execution'" class="surface panel">
           <div class="section-heading"><div><h2>Agent Artifacts</h2><p>{{ artifacts.length }} 个已登记产物</p></div><NButton text type="primary" @click="router.push({ name: 'artifacts' })">打开产物中心</NButton></div>
           <div v-if="phase3Loading" class="loading-stack"><div v-for="index in 3" :key="index" class="skeleton-line" /></div>
           <div v-else-if="artifacts.length" class="artifact-list">
@@ -699,7 +715,7 @@ onMounted(load)
           </div>
           <div v-else class="empty-state empty-state-compact"><div><h3>尚无 Artifact</h3><p>Agent 产生文件后，会显示在这里并支持受控下载。</p></div></div>
         </section>
-        <section v-show="activeTab === 'logs'" class="surface panel">
+        <section v-show="activeTab === 'execution'" class="surface panel">
           <div class="section-heading"><div><h2>Agent Logs</h2><p>来自 Execution History 的持久化运行记录</p></div><NButton text type="primary" @click="router.push({ name: 'executions' })">全部历史</NButton></div>
           <NAlert type="info" :bordered="false" style="margin-bottom: 14px">当前后端没有独立容器日志接口；此处只展示可审计的 Execution 状态、错误和时间。</NAlert>
           <div v-if="phase3Loading" class="loading-stack"><div v-for="index in 4" :key="index" class="skeleton-line" /></div>

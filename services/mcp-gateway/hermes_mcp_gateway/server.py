@@ -10,9 +10,18 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 import asyncpg
+import redis.asyncio as redis
 from mcp.server.fastmcp import Context, FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
-from hermes_mcp_gateway.auth import MCPAccessClaims, MCPAccessDenied, verify_mcp_access_token
+from hermes_mcp_gateway.auth import (
+    MCPAccessClaims,
+    MCPAccessDenied,
+    verify_capability_token,
+    verify_mcp_access_token,
+)
+from hermes_mcp_gateway.capability_gateway import invoke_capability, resolve_capabilities
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
@@ -31,10 +40,13 @@ ACCESS_TOKEN_TTL_SECONDS = int(os.environ.get("MCP_ACCESS_TOKEN_TTL_SECONDS", "3
 if not 60 <= ACCESS_TOKEN_TTL_SECONDS <= 3600:
     raise RuntimeError("MCP_ACCESS_TOKEN_TTL_SECONDS must be between 60 and 3600")
 READ_QUERY = re.compile(r"^(select|with)\b", re.IGNORECASE)
+DATABASE_POOL: asyncpg.Pool | None = None
+REDIS_CLIENT: redis.Redis | None = None
 
 
 @asynccontextmanager
 async def lifespan(_) -> AsyncIterator[dict[str, Any]]:
+    global DATABASE_POOL, REDIS_CLIENT
     FILES_ROOT.mkdir(parents=True, exist_ok=True)
     pool = await asyncpg.create_pool(
         host=os.environ.get("POSTGRES_HOST", "postgres"),
@@ -46,10 +58,22 @@ async def lifespan(_) -> AsyncIterator[dict[str, Any]]:
         max_size=5,
         command_timeout=10,
     )
+    redis_client = redis.Redis(
+        host=os.environ.get("REDIS_HOST", "redis"),
+        port=int(os.environ.get("REDIS_PORT", "6379")),
+        db=int(os.environ.get("REDIS_DB", "0")),
+        password=os.environ.get("REDIS_PASSWORD") or None,
+        decode_responses=True,
+    )
+    DATABASE_POOL = pool
+    REDIS_CLIENT = redis_client
     try:
-        yield {"pool": pool}
+        yield {"pool": pool, "redis": redis_client}
     finally:
+        await redis_client.aclose()
         await pool.close()
+        DATABASE_POOL = None
+        REDIS_CLIENT = None
 
 
 mcp = FastMCP(
@@ -66,8 +90,8 @@ mcp = FastMCP(
 
 @mcp.tool()
 async def filesystem_read(access_token: str, path: str, ctx: Context) -> str:
-    """Read one UTF-8 text file below the configured root. Pass the exact access_token supplied in the task."""
-    claims = await _authorize(access_token, ctx)
+    """Read one authorized UTF-8 text file below the configured root."""
+    claims = await _authorize(access_token, ctx, tool="filesystem_read")
     started_at = _timestamp()
     mcp_id = await _require_capability(
         ctx,
@@ -112,8 +136,8 @@ async def filesystem_read(access_token: str, path: str, ctx: Context) -> str:
 
 @mcp.tool()
 async def database_query(access_token: str, sql: str, ctx: Context) -> str:
-    """Run one read-only PostgreSQL SELECT/WITH query. Pass the exact access_token supplied in the task."""
-    claims = await _authorize(access_token, ctx)
+    """Run one authorized read-only PostgreSQL SELECT/WITH query."""
+    claims = await _authorize(access_token, ctx, tool="database_query")
     started_at = _timestamp()
     normalized = sql.strip().rstrip(";").strip()
     mcp_id = await _require_capability(
@@ -168,7 +192,9 @@ async def database_query(access_token: str, sql: str, ctx: Context) -> str:
         raise
 
 
-async def _authorize(access_token: str, ctx: Context) -> MCPAccessClaims:
+async def _authorize(access_token: str, ctx: Context, *, tool: str) -> MCPAccessClaims:
+    if access_token.startswith("cap1."):
+        return await _authorize_capability_token(access_token, ctx, tool=tool)
     execution_id = verify_mcp_access_token(access_token, SIGNING_KEY)
     pool: asyncpg.Pool = ctx.request_context.lifespan_context["pool"]
     record = await pool.fetchrow(
@@ -205,6 +231,117 @@ async def _authorize(access_token: str, ctx: Context) -> MCPAccessClaims:
         execution_id=execution_id,
         mcp=permissions,
     )
+
+
+async def _authorize_capability_token(
+    access_token: str,
+    ctx: Context,
+    *,
+    tool: str,
+) -> MCPAccessClaims:
+    claims = verify_capability_token(access_token, SIGNING_KEY)
+    redis_client: redis.Redis | None = ctx.request_context.lifespan_context.get("redis")
+    if redis_client is not None and await redis_client.exists(
+        f"hermes:capability-token:revoked:{claims['jti']}"
+    ):
+        raise MCPAccessDenied("access denied: capability token revoked")
+    pool: asyncpg.Pool = ctx.request_context.lifespan_context["pool"]
+    execution = await pool.fetchrow(
+        """
+        SELECT e.agent_id, e.agent_version_id, e.status, av.resolution_digest
+        FROM execution_logs e
+        JOIN agent_versions av ON av.id = e.agent_version_id
+        WHERE e.id = $1::uuid
+        """,
+        claims["execution_id"],
+    )
+    if (
+        execution is None
+        or execution["status"] != "running"
+        or execution["agent_id"] != claims["agent_id"]
+        or str(execution["agent_version_id"]) != claims["agent_version_id"]
+        or execution["resolution_digest"] != claims["resolution_digest"]
+    ):
+        raise MCPAccessDenied("access denied: capability execution does not match token")
+    rows = await pool.fetch(
+        """
+        SELECT b.id::text AS binding_id, c.key AS connector_key, o.path_or_tool
+        FROM agent_capability_bindings b
+        JOIN LATERAL (
+            SELECT value.* FROM capability_implementations value
+            WHERE value.status = 'active'
+              AND (
+                value.id = b.implementation_id
+                OR (b.implementation_id IS NULL AND value.capability_version_id = b.capability_version_id)
+              )
+            ORDER BY (value.id = b.implementation_id) DESC, value.priority, value.created_at
+            LIMIT 1
+        ) implementation ON TRUE
+        JOIN connector_operations o ON o.id = implementation.connector_operation_id
+        JOIN connectors c ON c.id = o.connector_id
+        WHERE b.agent_version_id = $1::uuid
+          AND b.enabled
+          AND b.id::text = ANY($2::text[])
+          AND o.protocol = 'mcp'
+          AND o.path_or_tool = $3
+        """,
+        claims["agent_version_id"],
+        claims["allowed_bindings"],
+        tool,
+    )
+    mapping = {"filesystem_read": "filesystem", "database_query": "database"}
+    capability = mapping.get(tool)
+    if capability is None:
+        raise MCPAccessDenied("access denied: unsupported platform MCP tool")
+    for row in rows:
+        connector_key = str(row["connector_key"])
+        if connector_key.startswith("legacy-mcp."):
+            return MCPAccessClaims(
+                agent_id=str(claims["agent_id"]),
+                execution_id=str(claims["execution_id"]),
+                mcp={
+                    capability: {
+                        "mcp_id": connector_key.removeprefix("legacy-mcp."),
+                        "permission": "read_only",
+                    }
+                },
+            )
+    raise MCPAccessDenied("access denied: MCP capability is not bound to this Agent Version")
+
+
+@mcp.custom_route("/internal/capabilities/invoke", methods=["POST"])
+async def capability_invoke(request: Request) -> JSONResponse:
+    if DATABASE_POOL is None:
+        return JSONResponse(
+            {"status": "FAILED", "error": {"code": "PROVIDER_UNAVAILABLE", "message": "Gateway 尚未就绪"}},
+            status_code=503,
+        )
+    return await invoke_capability(
+        request,
+        pool=DATABASE_POOL,
+        redis_client=REDIS_CLIENT,
+        signing_key=SIGNING_KEY,
+    )
+
+
+@mcp.custom_route("/internal/capabilities/resolve", methods=["POST"])
+async def capability_resolve(request: Request) -> JSONResponse:
+    if DATABASE_POOL is None:
+        return JSONResponse(
+            {"status": "FAILED", "error": {"code": "PROVIDER_UNAVAILABLE", "message": "Gateway 尚未就绪"}},
+            status_code=503,
+        )
+    return await resolve_capabilities(
+        request,
+        pool=DATABASE_POOL,
+        redis_client=REDIS_CLIENT,
+        signing_key=SIGNING_KEY,
+    )
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health(_: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok", "database": DATABASE_POOL is not None})
 
 
 async def _require_capability(

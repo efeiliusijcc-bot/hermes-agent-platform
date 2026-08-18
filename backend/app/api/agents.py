@@ -16,7 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.session import SessionFactory, get_session
-from app.db.models import Agent, AgentSession, Artifact, AgentSchemaVersion, ExecutionLog, agent_mcp
+from app.management import require_platform_management_key_for_capability_control
+from app.db.models import Agent, AgentSession, AgentVersion, Artifact, AgentSchemaVersion, ExecutionLog, agent_mcp
+from app.capabilities import issue_execution_capability_token, resolve_agent_capabilities
+from app.capabilities.resolver import CapabilityResolution
+from app.capabilities.security import verify_execution_capability_token
+from app.capabilities.revocation import revoke_execution_capability_token
 from app.memory import AgentMemoryError, AgentMemoryStore, get_memory_store
 from app.knowledge import KnowledgeServiceClient, KnowledgeServiceError
 from app.mcp import issue_mcp_access_token
@@ -68,7 +73,7 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("", response_model=AgentRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=AgentRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def create_agent(payload: AgentCreate, session: AsyncSession = Depends(get_session)) -> AgentRead:
     if payload.parent_agent_id:
         parent = await repository.get_agent(session, payload.parent_agent_id)
@@ -107,7 +112,7 @@ async def get_agent(agent_id: str, session: AsyncSession = Depends(get_session))
     return AgentRead.model_validate(agent)
 
 
-@router.put("/{agent_id}/schema", response_model=AgentRead)
+@router.put("/{agent_id}/schema", response_model=AgentRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def update_agent_schema(
     agent_id: str,
     payload: AgentSchemaUpdate,
@@ -134,7 +139,7 @@ async def update_agent_schema(
     return AgentRead.model_validate(await repository.update_agent_schema(session, agent, payload))
 
 
-@router.put("/{agent_id}/response-mode", response_model=AgentRead)
+@router.put("/{agent_id}/response-mode", response_model=AgentRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def update_agent_response_mode(
     agent_id: str,
     payload: AgentResponseModeUpdate,
@@ -149,7 +154,7 @@ async def update_agent_response_mode(
     )
 
 
-@router.put("/{agent_id}/configuration", response_model=AgentRead)
+@router.put("/{agent_id}/configuration", response_model=AgentRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def update_agent_configuration(
     agent_id: str,
     payload: AgentConfigurationUpdate,
@@ -190,7 +195,7 @@ async def update_agent_configuration(
     )
 
 
-@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def delete_agent(
     agent_id: str,
     session: AsyncSession = Depends(get_session),
@@ -262,6 +267,8 @@ class AgentExecutionContext:
     memory_scope: dict[str, Any]
     mcp_token: str = ""
     mcp_capabilities: dict[str, Any] = field(default_factory=dict)
+    capability_token: str = ""
+    capability_resolution: CapabilityResolution | None = None
     output_schema: dict[str, Any] | None = None
     trace_attempt: int = 0
     orchestration_session_id: UUID | None = None
@@ -303,11 +310,24 @@ async def _execution_runtime(
         capability_profile=getattr(context.agent, "capability_profile", {}) or {},
         tools=tuple(sorted(context.mcp_capabilities)),
         skills=tuple(sorted(skill.id for skill in context.loaded_skills)),
+        capability_tools=(
+            tuple(tool.as_dict() for tool in context.capability_resolution.tools)
+            if context.capability_resolution is not None
+            else ()
+        ),
+        capability_token=context.capability_token,
         metadata={
             "execution_id": str(context.execution.id),
             "mcp_gateway": get_settings().mcp_gateway_endpoint,
             "mcp_access_token": context.mcp_token,
             "mcp_capabilities": context.mcp_capabilities,
+            "capability_gateway": get_settings().capability_gateway_internal_url,
+            "capability_token": context.capability_token,
+            "capability_tools": (
+                [tool.as_dict() for tool in context.capability_resolution.tools]
+                if context.capability_resolution is not None
+                else []
+            ),
             "memory_mode": "platform-managed",
             "artifact_mode": "platform-managed",
             "runtime_config": {
@@ -804,6 +824,36 @@ async def _prepare_agent_execution(
     await session.commit()
     await session.refresh(execution)
 
+    capability_resolution: CapabilityResolution | None = None
+    capability_token = ""
+    if get_settings().capability_platform_enabled and agent_version_id is not None:
+        version = await session.get(AgentVersion, agent_version_id)
+        if version is not None and int(version.snapshot.get("format_version") or 1) == 2:
+            capability_resolution = await resolve_agent_capabilities(session, version)
+            if not capability_resolution.ready:
+                await _fail_execution(execution, session, ValueError("Capability Preflight failed"))
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "message": "Capability Preflight 未通过",
+                        "issues": [item.as_dict() for item in capability_resolution.issues],
+                    },
+                )
+            if capability_resolution.tools and not get_settings().capability_gateway_enabled:
+                await _fail_execution(execution, session, ValueError("Capability Gateway is disabled"))
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Capability Gateway 尚未启用，当前 v2 Agent 不能调用外部能力",
+                )
+            capability_token = issue_execution_capability_token(
+                execution_id=str(execution.id),
+                agent_id=agent.id,
+                agent_version_id=str(version.id),
+                runtime_id=str(getattr(agent, "runtime_id", None) or runtime_type),
+                allowed_bindings=[tool.binding_id for tool in capability_resolution.tools],
+                resolution_digest=capability_resolution.resolution_digest,
+            )
+
     await execution_repository.record_step(
         session,
         execution.id,
@@ -936,7 +986,11 @@ async def _prepare_agent_execution(
         source_recall_result: SourceRecallResult | None = None
         source_recall_error: str | None = None
         source_recall_summary: dict[str, Any] = {"enabled": False}
-        source_recall_options = _source_recall_options(loaded_skills, parameters=input_values)
+        source_recall_options = (
+            _source_recall_options(loaded_skills, parameters=input_values)
+            if capability_resolution is None and get_settings().legacy_vector_tool_enabled
+            else None
+        )
         if source_recall_options is not None:
             topic = str(input_values.get("topic") or payload.input).strip()
             try:
@@ -972,6 +1026,8 @@ async def _prepare_agent_execution(
             mcp_token,
             runtime_type=getattr(agent, "runtime_type", "hermes"),
         )
+        if capability_resolution is not None and capability_resolution.tools:
+            mcp_prompt += "\n" + _render_capability_prompt(capability_resolution)
         knowledge_prompt = _render_knowledge_prompt(
             knowledge_hits,
             source_recall_result=source_recall_result,
@@ -1002,6 +1058,33 @@ async def _prepare_agent_execution(
             "knowledge_loaded": [source.id for source in knowledge_sources],
             "knowledge_hits": knowledge_summary,
             "source_recall": source_recall_summary,
+            "capability_resolution": (
+                capability_resolution.as_dict() if capability_resolution is not None else None
+            ),
+            "capability_token_jti": (
+                verify_execution_capability_token(capability_token)["jti"]
+                if capability_token
+                else None
+            ),
+            "capability_events": (
+                [
+                    {
+                        "event": "capabilities_resolved",
+                        "status": "succeeded",
+                        "tool_count": len(capability_resolution.tools),
+                        "resolution_digest": capability_resolution.resolution_digest,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                    {
+                        "event": "capability_authorized",
+                        "status": "succeeded",
+                        "binding_ids": [tool.binding_id for tool in capability_resolution.tools],
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                ]
+                if capability_resolution is not None
+                else []
+            ),
             "memory_scope": memory_scope,
         }
         await session.commit()
@@ -1075,6 +1158,8 @@ async def _prepare_agent_execution(
         memory_scope=memory_scope,
         mcp_token=mcp_token,
         mcp_capabilities=mcp_capabilities,
+        capability_token=capability_token,
+        capability_resolution=capability_resolution,
         output_schema=output_schema,
         trace_attempt=retry_attempt,
         orchestration_session_id=orchestration_session.id,
@@ -1315,7 +1400,9 @@ async def _cancel_execution(execution: ExecutionLog, session: AsyncSession) -> N
         if orchestration_session is not None:
             orchestration_session.status = "cancelled"
             orchestration_session.finished_at = finished_at
+    details = execution.details if isinstance(execution.details, dict) else {}
     await session.commit()
+    await revoke_execution_capability_token(details)
     await execution_repository.cancel_running_steps(session, execution.id)
 
 
@@ -1439,7 +1526,7 @@ async def list_agent_skills(agent_id: str, session: AsyncSession = Depends(get_s
     return [SkillRead.model_validate(skill) for skill in sorted(agent.skills, key=lambda item: item.id)]
 
 
-@router.put("/{agent_id}/skills/{skill_id}", response_model=AgentSkillBindingRead)
+@router.put("/{agent_id}/skills/{skill_id}", response_model=AgentSkillBindingRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def bind_agent_skill(
     agent_id: str,
     skill_id: str,
@@ -1461,7 +1548,7 @@ async def bind_agent_skill(
     return AgentSkillBindingRead(agent_id=agent.id, skill_ids=sorted(item.id for item in agent.skills))
 
 
-@router.delete("/{agent_id}/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{agent_id}/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def unbind_agent_skill(
     agent_id: str,
     skill_id: str,
@@ -1487,7 +1574,7 @@ async def list_agent_mcp_servers(
     return [MCPServerRead.model_validate(server) for server in sorted(agent.mcp_servers, key=lambda item: item.id)]
 
 
-@router.put("/{agent_id}/mcp-servers/{mcp_id}", response_model=AgentMCPBindingRead)
+@router.put("/{agent_id}/mcp-servers/{mcp_id}", response_model=AgentMCPBindingRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def bind_agent_mcp_server(
     agent_id: str,
     mcp_id: str,
@@ -1509,7 +1596,7 @@ async def bind_agent_mcp_server(
     )
 
 
-@router.delete("/{agent_id}/mcp-servers/{mcp_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{agent_id}/mcp-servers/{mcp_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def unbind_agent_mcp_server(
     agent_id: str,
     mcp_id: str,
@@ -1538,7 +1625,7 @@ async def list_agent_knowledge_sources(
     ]
 
 
-@router.put("/{agent_id}/knowledge-sources/{source_id}", response_model=AgentKnowledgeBindingRead)
+@router.put("/{agent_id}/knowledge-sources/{source_id}", response_model=AgentKnowledgeBindingRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def bind_agent_knowledge_source(
     agent_id: str,
     source_id: str,
@@ -1558,7 +1645,7 @@ async def bind_agent_knowledge_source(
     )
 
 
-@router.delete("/{agent_id}/knowledge-sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{agent_id}/knowledge-sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def unbind_agent_knowledge_source(
     agent_id: str,
     source_id: str,
@@ -1588,18 +1675,30 @@ def _render_mcp_prompt(
             for kind, value in sorted(capabilities.items())
         ),
     ]
-    if runtime_type == "pi":
+    if runtime_type == "hermes":
+        # The upstream Hermes gateway currently has static MCP transport
+        # headers. Keep the historical mcp2 contract only for v1 compatibility;
+        # v2 Capability Tokens are never rendered into this prompt.
+        lines.append(f"Legacy Hermes MCP access_token for this execution: {access_token}")
+        lines.append("Use it only as the access_token tool argument and never include it in the answer.")
+    else:
         lines.append(
-            "The Pi Runtime injects the per-execution credential after model tool selection. "
+            "The Runtime injects the per-execution credential after model tool selection. "
             "Never request, provide, or print an access_token argument."
         )
-    else:
-        lines.extend(
-            [
-                "Every MCP tool call requires the exact access_token below. Pass it unchanged and never print it:",
-                access_token,
-            ]
-        )
+    return "\n".join(lines)
+
+
+def _render_capability_prompt(resolution: CapabilityResolution) -> str:
+    lines = [
+        "The following platform capabilities are available. Call them by tool name when needed:",
+    ]
+    for tool in resolution.tools:
+        lines.append(f"- {tool.tool_name}: {tool.description}")
+    lines.append(
+        "Connector endpoints, credentials, implementation ids, resource scopes, and authorization tokens "
+        "are injected by the platform and must never be requested or supplied as tool arguments."
+    )
     return "\n".join(lines)
 
 

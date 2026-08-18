@@ -59,6 +59,7 @@ class SkillPackageImporter:
             package_root = self._package_root(extract_root)
             manifest = self._read_manifest(package_root)
             skill_id, name, description, version, entry, runtime_support = self._validate_manifest(manifest)
+            validate_skill_contract(manifest)
             self._normalize_runtime_files(
                 package_root, skill_id, name, description, version, entry, manifest, runtime_support
             )
@@ -248,3 +249,67 @@ class SkillPackageImporter:
             }
         )
         config_path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def validate_skill_contract(manifest: dict[str, Any]) -> None:
+    spec = manifest.get("spec") if isinstance(manifest.get("spec"), dict) else manifest
+    execution_mode = spec.get("execution_mode", "autonomous")
+    if execution_mode not in {"autonomous", "workflow", "hybrid"}:
+        raise SkillLoadError("skill.yaml execution_mode must be autonomous, workflow, or hybrid")
+    runtime_requirements = spec.get("runtime_requirements", {})
+    if not isinstance(runtime_requirements, dict):
+        raise SkillLoadError("skill.yaml runtime_requirements must be an object")
+    required_features = runtime_requirements.get("required_features", [])
+    if not isinstance(required_features, list) or any(
+        not isinstance(item, str) or not item.strip() for item in required_features
+    ):
+        raise SkillLoadError("skill.yaml required_features must be a string array")
+    requirements = spec.get("capability_requirements", [])
+    if not isinstance(requirements, list):
+        raise SkillLoadError("skill.yaml capability_requirements must be an array")
+    aliases: set[str] = set()
+    for index, requirement in enumerate(requirements):
+        if not isinstance(requirement, dict):
+            raise SkillLoadError(f"capability_requirements[{index}] must be an object")
+        alias = requirement.get("alias")
+        capability = requirement.get("capability")
+        version_range = requirement.get("version", "*")
+        if not isinstance(alias, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,127}", alias):
+            raise SkillLoadError(f"capability_requirements[{index}].alias is invalid")
+        if alias in aliases:
+            raise SkillLoadError(f"duplicate capability requirement alias: {alias}")
+        aliases.add(alias)
+        if not isinstance(capability, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{1,254}", capability):
+            raise SkillLoadError(f"capability_requirements[{index}].capability is invalid")
+        if not isinstance(version_range, str) or not version_range.strip():
+            raise SkillLoadError(f"capability_requirements[{index}].version is invalid")
+        if requirement.get("failure_policy", "fail_closed") not in {
+            "fail_closed",
+            "continue_with_warning",
+        }:
+            raise SkillLoadError(f"capability_requirements[{index}].failure_policy is invalid")
+        minimum_calls = requirement.get("minimum_calls", 0)
+        if isinstance(minimum_calls, bool) or not isinstance(minimum_calls, int) or minimum_calls < 0:
+            raise SkillLoadError(f"capability_requirements[{index}].minimum_calls is invalid")
+    _reject_plaintext_secrets(manifest)
+
+
+def skill_contract(manifest: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]], str]:
+    spec = manifest.get("spec") if isinstance(manifest.get("spec"), dict) else manifest
+    runtime = spec.get("runtime_requirements") if isinstance(spec.get("runtime_requirements"), dict) else {}
+    required_features = [str(item) for item in runtime.get("required_features", [])]
+    requirements = [dict(item) for item in spec.get("capability_requirements", []) if isinstance(item, dict)]
+    return required_features, requirements, str(spec.get("execution_mode") or "autonomous")
+
+
+def _reject_plaintext_secrets(value: Any, path: str = "skill.yaml") -> None:
+    sensitive = {"api_key", "token", "password", "secret", "private_key", "connection_string"}
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if normalized in sensitive and item is not None and item != "" and item != "${CREDENTIAL_REF}":
+                raise SkillLoadError(f"{path}.{key} must not contain a plaintext credential")
+            _reject_plaintext_secrets(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_plaintext_secrets(item, f"{path}[{index}]")

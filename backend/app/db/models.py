@@ -843,6 +843,8 @@ class AgentVersion(Base):
     agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
     version: Mapped[str] = mapped_column(String(64), nullable=False)
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    snapshot_format_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    resolution_digest: Mapped[str | None] = mapped_column(String(71))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="development")
     description: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system")
@@ -897,3 +899,411 @@ class ModelRegistration(Base):
     @property
     def api_key_configured(self) -> bool:
         return bool(self.api_key_ciphertext)
+
+
+class Capability(Base):
+    __tablename__ = "capabilities"
+    __table_args__ = (
+        UniqueConstraint("namespace", "key", name="uq_capabilities_namespace_key"),
+        CheckConstraint(
+            "status IN ('draft', 'testing', 'published', 'deprecated', 'disabled')",
+            name="ck_capabilities_status",
+        ),
+        CheckConstraint("risk_level IN ('LOW', 'MEDIUM', 'HIGH')", name="ck_capabilities_risk_level"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    namespace: Mapped[str] = mapped_column(String(128), nullable=False, default="platform")
+    key: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    risk_level: Mapped[str] = mapped_column(String(16), nullable=False, default="LOW")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    owner_type: Mapped[str] = mapped_column(String(32), nullable=False, default="platform")
+    owner_id: Mapped[str | None] = mapped_column(String(128))
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CapabilityVersion(Base):
+    __tablename__ = "capability_versions"
+    __table_args__ = (
+        UniqueConstraint("capability_id", "version", name="uq_capability_versions_capability_version"),
+        CheckConstraint(
+            "status IN ('draft', 'testing', 'published', 'deprecated', 'disabled')",
+            name="ck_capability_versions_status",
+        ),
+        CheckConstraint(
+            "side_effect IN ('READ_ONLY', 'WRITE', 'DESTRUCTIVE', 'EXTERNAL_COMMUNICATION', 'LONG_RUNNING')",
+            name="ck_capability_versions_side_effect",
+        ),
+        CheckConstraint(
+            "idempotency IN ('SAFE_RETRY', 'IDEMPOTENT', 'NON_IDEMPOTENT')",
+            name="ck_capability_versions_idempotency",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    capability_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("capabilities.id", ondelete="RESTRICT"), nullable=False
+    )
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    output_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    ui_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    side_effect: Mapped[str] = mapped_column(String(32), nullable=False, default="READ_ONLY")
+    idempotency: Mapped[str] = mapped_column(String(32), nullable=False, default="SAFE_RETRY")
+    cache_policy: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    default_timeout_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=15000)
+    compatibility: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ConnectorCredential(Base):
+    __tablename__ = "connector_credentials"
+    __table_args__ = (
+        CheckConstraint(
+            "rotation_status IN ('active', 'rotation_due', 'revoked')",
+            name="ck_connector_credentials_rotation_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    credential_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    encrypted_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    masked_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    key_id: Mapped[str] = mapped_column(String(64), nullable=False, default="fernet-v1")
+    rotation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    last_rotated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Connector(Base):
+    __tablename__ = "connectors"
+    __table_args__ = (
+        UniqueConstraint("key", name="uq_connectors_key"),
+        CheckConstraint("type IN ('internal_rest', 'mcp')", name="ck_connectors_type"),
+        CheckConstraint("status IN ('draft', 'published', 'disabled')", name="ck_connectors_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    type: Mapped[str] = mapped_column(String(32), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    owner_type: Mapped[str] = mapped_column(String(32), nullable=False, default="platform")
+    owner_id: Mapped[str | None] = mapped_column(String(128))
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ConnectorInstance(Base):
+    __tablename__ = "connector_instances"
+    __table_args__ = (
+        UniqueConstraint("connector_id", "name", name="uq_connector_instances_connector_name"),
+        CheckConstraint("health_status IN ('unknown', 'healthy', 'degraded', 'offline')", name="ck_connector_instances_health"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), nullable=False, default="production")
+    current_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    health_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ConnectorInstanceRevision(Base):
+    __tablename__ = "connector_instance_revisions"
+    __table_args__ = (
+        UniqueConstraint("connector_instance_id", "revision", name="uq_connector_instance_revisions_revision"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_instance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_instances.id", ondelete="CASCADE"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    endpoint: Mapped[str] = mapped_column(Text, nullable=False)
+    auth_type: Mapped[str] = mapped_column(String(64), nullable=False, default="none")
+    credential_ref: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_credentials.id", ondelete="RESTRICT")
+    )
+    network_zone: Mapped[str] = mapped_column(String(64), nullable=False, default="internal")
+    connection_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    timeout_policy: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    retry_policy: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    health_check_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    config_digest: Mapped[str] = mapped_column(String(71), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ConnectorOperation(Base):
+    __tablename__ = "connector_operations"
+    __table_args__ = (
+        UniqueConstraint("connector_id", "operation_key", name="uq_connector_operations_connector_key"),
+        CheckConstraint("protocol IN ('internal_rest', 'mcp')", name="ck_connector_operations_protocol"),
+        CheckConstraint("status IN ('draft', 'published', 'disabled')", name="ck_connector_operations_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False
+    )
+    operation_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    protocol: Mapped[str] = mapped_column(String(32), nullable=False)
+    method: Mapped[str | None] = mapped_column(String(16))
+    path_or_tool: Mapped[str] = mapped_column(Text, nullable=False)
+    request_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    response_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    request_mapping: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    response_mapping: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_mapping: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    side_effect: Mapped[str] = mapped_column(String(32), nullable=False, default="READ_ONLY")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CapabilityImplementation(Base):
+    __tablename__ = "capability_implementations"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'disabled')", name="ck_capability_implementations_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    capability_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("capability_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    connector_operation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_operations.id", ondelete="RESTRICT"), nullable=False
+    )
+    connector_instance_revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_instance_revisions.id", ondelete="RESTRICT"), nullable=False
+    )
+    mapping_override: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    routing_weight: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class CapabilityResource(Base):
+    __tablename__ = "resources"
+    __table_args__ = (
+        UniqueConstraint("connector_instance_id", "key", name="uq_resources_connector_key"),
+        CheckConstraint("status IN ('active', 'disabled')", name="ck_resources_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    key: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    connector_instance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_instances.id", ondelete="CASCADE"), nullable=False
+    )
+    resource_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ResourceScope(Base):
+    __tablename__ = "resource_scopes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    current_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    owner_type: Mapped[str] = mapped_column(String(32), nullable=False, default="platform")
+    owner_id: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ResourceScopeRevision(Base):
+    __tablename__ = "resource_scope_revisions"
+    __table_args__ = (
+        UniqueConstraint("resource_scope_id", "revision", name="uq_resource_scope_revisions_revision"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    resource_scope_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("resource_scopes.id", ondelete="CASCADE"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    scope_definition: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    scope_digest: Mapped[str] = mapped_column(String(71), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class SkillVersion(Base):
+    __tablename__ = "skill_versions"
+    __table_args__ = (
+        UniqueConstraint("skill_id", "version", name="uq_skill_versions_skill_version"),
+        CheckConstraint("status IN ('draft', 'published', 'deprecated')", name="ck_skill_versions_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    skill_id: Mapped[str] = mapped_column(String(64), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    package_sha256: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="published")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class SkillCapabilityRequirement(Base):
+    __tablename__ = "skill_capability_requirements"
+    __table_args__ = (
+        UniqueConstraint("skill_version_id", "alias", name="uq_skill_capability_requirements_alias"),
+        CheckConstraint(
+            "failure_policy IN ('fail_closed', 'continue_with_warning')",
+            name="ck_skill_capability_requirements_failure_policy",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    skill_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("skill_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    alias: Mapped[str] = mapped_column(String(128), nullable=False)
+    capability_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    version_range: Mapped[str] = mapped_column(String(128), nullable=False, default="*")
+    required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    minimum_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_policy: Mapped[str] = mapped_column(String(32), nullable=False, default="fail_closed")
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class RuntimeFeatureProfile(Base):
+    __tablename__ = "runtime_feature_profiles"
+    __table_args__ = (
+        UniqueConstraint("runtime_registry_id", "runtime_version", name="uq_runtime_feature_profiles_runtime_version"),
+        CheckConstraint("health_status IN ('unknown', 'online', 'offline', 'disabled')", name="ck_runtime_feature_profiles_health"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    runtime_registry_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_runtimes.id", ondelete="CASCADE"), nullable=False
+    )
+    runtime_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    features: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    profile_digest: Mapped[str] = mapped_column(String(71), nullable=False)
+    health_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class AgentCapabilityBinding(Base):
+    __tablename__ = "agent_capability_bindings"
+    __table_args__ = (
+        UniqueConstraint("agent_version_id", "tool_alias", name="uq_agent_capability_bindings_alias"),
+        CheckConstraint("implementation_mode IN ('PINNED', 'DEFAULT_PRIORITY')", name="ck_agent_capability_bindings_mode"),
+        CheckConstraint("source_type IN ('direct', 'skill', 'workflow', 'template', 'legacy')", name="ck_agent_capability_bindings_source"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    tool_alias: Mapped[str] = mapped_column(String(128), nullable=False)
+    capability_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("capability_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    implementation_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="PINNED")
+    implementation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("capability_implementations.id", ondelete="RESTRICT")
+    )
+    resource_scope_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("resource_scope_revisions.id", ondelete="RESTRICT")
+    )
+    parameter_policy: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    quota_policy: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    approval_policy: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="direct")
+    source_ref_id: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class CapabilityInvocation(Base):
+    __tablename__ = "capability_invocations"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING', 'SUCCEEDED', 'FAILED', 'DENIED')",
+            name="ck_capability_invocations_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    execution_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("execution_logs.id", ondelete="CASCADE"), nullable=False
+    )
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="RESTRICT"), nullable=False)
+    agent_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_versions.id", ondelete="SET NULL")
+    )
+    binding_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_capability_bindings.id", ondelete="SET NULL")
+    )
+    capability_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    capability_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    tool_alias: Mapped[str] = mapped_column(String(128), nullable=False)
+    connector_instance_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_instance_revisions.id", ondelete="SET NULL")
+    )
+    resource_scope_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("resource_scope_revisions.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    input_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    output_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    cache_hit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ConnectorHealthCheck(Base):
+    __tablename__ = "connector_health_checks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_instance_revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_instance_revisions.id", ondelete="CASCADE"), nullable=False
+    )
+    operation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_operations.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

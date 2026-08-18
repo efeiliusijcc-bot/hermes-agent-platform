@@ -125,6 +125,8 @@ class AgentVersionRead(BaseModel):
     agent_id: str
     version: str
     snapshot: dict[str, Any]
+    snapshot_format_version: int = 1
+    resolution_digest: str | None = None
     status: AgentVersionStatus
     description: str | None
     created_by: str

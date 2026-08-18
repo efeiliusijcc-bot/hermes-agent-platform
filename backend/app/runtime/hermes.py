@@ -65,7 +65,7 @@ class HermesClient:
             runtime_options=runtime_options,
         )
         timeout = httpx.Timeout(self.timeout + 10, connect=10)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             created = await self._request_json(client, "POST", self.runs_url, headers=headers, json=payload)
             immediate_output = self._extract_output(created)
             status = self._extract_status(created)
@@ -125,7 +125,7 @@ class HermesClient:
             runtime_options=runtime_options,
         )
         timeout = httpx.Timeout(self.timeout + 10, connect=10)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             created = await self._request_json(client, "POST", self.runs_url, headers=headers, json=payload)
             run_id = self._extract_id(created)
             immediate_output = self._extract_output(created)

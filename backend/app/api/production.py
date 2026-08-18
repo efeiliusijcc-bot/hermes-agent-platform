@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db.models import Agent, AgentVersion
 from app.db.session import get_session
+from app.management import require_platform_management_key_for_capability_control
 from app.repositories import agents as agent_repository
 from app.repositories import production as repository
 from app.schemas.agent import AgentRead, AgentRunRequest, AgentRunResponse
@@ -47,8 +48,8 @@ LIFECYCLE_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
-@router.patch("/api/agents/{agent_id}/lifecycle", response_model=AgentRead)
-@router.put("/api/agents/{agent_id}/lifecycle", response_model=AgentRead, include_in_schema=False)
+@router.patch("/api/agents/{agent_id}/lifecycle", response_model=AgentRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.put("/api/agents/{agent_id}/lifecycle", response_model=AgentRead, include_in_schema=False, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def update_agent_lifecycle(
     agent_id: str,
     payload: LifecycleUpdate,
@@ -84,6 +85,7 @@ async def list_agent_versions(
     "/api/agents/{agent_id}/versions",
     response_model=AgentVersionRead,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_platform_management_key_for_capability_control)],
 )
 async def create_agent_version(
     agent_id: str,
@@ -118,7 +120,7 @@ async def get_agent_version(
     return AgentVersionRead.model_validate(await _version(session, agent_id, version))
 
 
-@router.patch("/api/agents/{agent_id}/versions/{version}", response_model=AgentVersionRead)
+@router.patch("/api/agents/{agent_id}/versions/{version}", response_model=AgentVersionRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def update_agent_version(
     agent_id: str,
     version: str,
@@ -142,7 +144,8 @@ async def update_agent_version(
 
 
 @router.patch(
-    "/api/agents/{agent_id}/versions/{version}/status", response_model=AgentVersionRead
+    "/api/agents/{agent_id}/versions/{version}/status", response_model=AgentVersionRead,
+    dependencies=[Depends(require_platform_management_key_for_capability_control)],
 )
 async def update_agent_version_status(
     agent_id: str,
@@ -160,7 +163,7 @@ async def update_agent_version_status(
     return AgentVersionRead.model_validate(value)
 
 
-@router.post("/api/agents/{agent_id}/publish", response_model=AgentVersionRead)
+@router.post("/api/agents/{agent_id}/publish", response_model=AgentVersionRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def publish_agent(
     agent_id: str,
     payload: AgentVersionCreate | None = None,
@@ -190,6 +193,33 @@ async def publish_agent(
             status_code=status.HTTP_409_CONFLICT,
             detail="only a Release Candidate Agent version can be published",
         )
+    if int((version.snapshot or {}).get("format_version") or version.snapshot_format_version or 1) == 2:
+        from app.capabilities.resolver import resolve_agent_capabilities
+
+        resolution = await resolve_agent_capabilities(session, version)
+        if not resolution.ready:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "Capability Preflight 未通过",
+                    "issues": [item.as_dict() for item in resolution.issues],
+                },
+            )
+        version.snapshot = {
+            **version.snapshot,
+            "capability_bindings": [tool.as_dict() for tool in resolution.tools],
+            "resource_scope_revisions": sorted(
+                {
+                    tool.resource_scope_revision_id
+                    for tool in resolution.tools
+                    if tool.resource_scope_revision_id
+                }
+            ),
+            "resolution_digest": resolution.resolution_digest,
+        }
+        version.snapshot_format_version = 2
+        version.resolution_digest = resolution.resolution_digest
+        await session.flush()
     try:
         runtime_agent, _ = await repository.build_version_runtime_agent(session, agent, version)
     except ValueError as exc:
@@ -210,7 +240,8 @@ async def publish_agent(
 
 
 @router.post(
-    "/api/agents/{agent_id}/versions/{version}/publish", response_model=AgentVersionRead
+    "/api/agents/{agent_id}/versions/{version}/publish", response_model=AgentVersionRead,
+    dependencies=[Depends(require_platform_management_key_for_capability_control)],
 )
 async def publish_agent_version(
     agent_id: str,
@@ -225,7 +256,8 @@ async def publish_agent_version(
 
 
 @router.post(
-    "/api/agents/{agent_id}/versions/{version}/run", response_model=AgentRunResponse
+    "/api/agents/{agent_id}/versions/{version}/run", response_model=AgentRunResponse,
+    dependencies=[Depends(require_platform_management_key_for_capability_control)],
 )
 async def run_agent_version(
     agent_id: str,
@@ -262,8 +294,8 @@ async def run_agent_version(
     )
 
 
-@router.post("/api/agents/{agent_id}/versions/{version}/rollback", response_model=AgentRead)
-@router.post("/api/agents/{agent_id}/rollback/{version}", response_model=AgentRead, include_in_schema=False)
+@router.post("/api/agents/{agent_id}/versions/{version}/rollback", response_model=AgentRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.post("/api/agents/{agent_id}/rollback/{version}", response_model=AgentRead, include_in_schema=False, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def rollback_agent(
     agent_id: str,
     version: str,

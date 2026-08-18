@@ -1,7 +1,11 @@
 import logging
+import hashlib
+import json
+import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api.agents import router as agents_router
@@ -15,10 +19,14 @@ from app.api.orchestration import router as orchestration_router
 from app.api.publications import management_router as publications_router, public_router, versioned_public_router
 from app.api.production import router as production_router
 from app.api.runtimes import router as runtimes_router
+from app.api.capabilities import router as capabilities_router
+from app.api.console import router as console_router
 from app.api.schema_versions import router as schema_versions_router
 from app.api.skills import router as skills_router
 from app.config import get_settings
 from app.db.session import SessionFactory, engine
+from app.db.models import RuntimeFeatureProfile
+from sqlalchemy import select
 from app.memory import get_memory_store
 from app.knowledge import KnowledgeServiceClient
 from app.task_queue import get_task_queue
@@ -104,6 +112,7 @@ async def _register_builtin_runtimes(session) -> None:
             endpoint=endpoint,
             config=config,
         )
+        await _ensure_runtime_feature_profile(session, value)
         if value.status == "disabled":
             continue
         try:
@@ -118,6 +127,39 @@ async def _register_builtin_runtimes(session) -> None:
         except RuntimeAdapterError as exc:
             await runtime_repository.record_health(session, value, online=False, error=str(exc))
             logger.warning("Runtime registered but offline: %s", name)
+
+
+async def _ensure_runtime_feature_profile(session, runtime) -> None:
+    existing = await session.scalar(
+        select(RuntimeFeatureProfile).where(
+            RuntimeFeatureProfile.runtime_registry_id == runtime.id,
+            RuntimeFeatureProfile.runtime_version == runtime.version,
+        )
+    )
+    features = {
+        "tool_call": True,
+        "structured_output": True,
+        "streaming": True,
+        "stop": True,
+        "runtime_type": runtime.type,
+    }
+    raw = json.dumps(features, sort_keys=True, separators=(",", ":"))
+    digest = f"sha256:{hashlib.sha256(raw.encode()).hexdigest()}"
+    if existing is None:
+        session.add(
+            RuntimeFeatureProfile(
+                runtime_registry_id=runtime.id,
+                runtime_version=runtime.version,
+                features=features,
+                profile_digest=digest,
+                health_status=runtime.status,
+            )
+        )
+    else:
+        existing.features = features
+        existing.profile_digest = digest
+        existing.health_status = runtime.status
+    await session.commit()
 
 
 async def _register_legacy_model(session) -> None:
@@ -148,6 +190,56 @@ async def _register_legacy_model(session) -> None:
 
 
 app = FastAPI(title=settings.app_name, version="0.4.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def protect_control_plane_writes(request: Request, call_next):
+    if (
+        settings.platform_management_api_key_enabled
+        and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        and _is_control_plane_write(request.url.path)
+    ):
+        configured = settings.platform_management_api_key
+        supplied = request.headers.get("X-Platform-Management-Key")
+        if configured is None:
+            return JSONResponse(
+                {"detail": "平台管理密钥未配置，控制台当前为只读模式"},
+                status_code=503,
+            )
+        if supplied is None or not secrets.compare_digest(
+            supplied,
+            configured.get_secret_value(),
+        ):
+            return JSONResponse({"detail": "平台管理密钥无效"}, status_code=401)
+    return await call_next(request)
+
+
+def _is_control_plane_write(path: str) -> bool:
+    if path.startswith("/api/public/") or path.startswith("/internal/"):
+        return False
+    if path.endswith("/preflight"):
+        return False
+    if path.startswith("/api/agents/") and (
+        path.endswith("/run") or path.endswith("/stream") or "/tasks" in path
+    ):
+        return False
+    return path == "/api/agents" or path.startswith(
+        (
+            "/api/console/",
+            "/api/agents/",
+            "/api/skills",
+            "/api/mcp-servers",
+            "/api/runtimes",
+            "/api/knowledge-sources",
+            "/api/capabilities",
+            "/api/capability-",
+            "/api/connectors",
+            "/api/connector-",
+            "/api/credentials",
+            "/api/resources",
+            "/api/resource-scopes",
+        )
+    )
 app.include_router(agents_router)
 app.include_router(executions_router)
 app.include_router(knowledge_sources_router)
@@ -163,6 +255,8 @@ app.include_router(orchestration_router)
 app.include_router(multi_agent_router)
 app.include_router(production_router)
 app.include_router(runtimes_router)
+app.include_router(capabilities_router)
+app.include_router(console_router)
 
 
 @app.get("/health", tags=["system"])

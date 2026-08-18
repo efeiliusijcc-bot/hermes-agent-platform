@@ -1,340 +1,182 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
-import { ArrowLeft, ArrowRight, Check, DeviceFloppy } from '@vicons/tabler'
+import { ArrowLeft, ArrowRight, DeviceFloppy, PlayerPlay, Rocket } from '@vicons/tabler'
 import { useRouter } from 'vue-router'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
 import { useAgentStore } from '@/stores/agents'
+import { useManagementStore } from '@/stores/management'
 import { useResourceStore } from '@/stores/resources'
-import type { Agent, AgentCreatePayload, AgentLifecycleStatus, AgentRuntime, AgentType, ModelAdapterName, RegisteredModel, ResponseMode, RuntimeType, WorkspaceType } from '@/types/api'
+import type { AgentCreatePayload, AgentRuntime, AgentType, CapabilityCatalogItem, CapabilityResolution, ModelAdapterName, RegisteredModel, ResourceScopeRecord, ResponseMode, RuntimeType, WorkspaceType } from '@/types/api'
 
 const router = useRouter()
 const message = useMessage()
 const agentStore = useAgentStore()
-const resourceStore = useResourceStore()
-const submitting = ref(false)
+const resources = useResourceStore()
+const management = useManagementStore()
 const step = ref(0)
-const existingAgents = ref<Agent[]>([])
+const saving = ref(false)
+const testing = ref(false)
+const publishing = ref(false)
+const createdAgentId = ref<string | null>(null)
 const runtimes = ref<AgentRuntime[]>([])
 const models = ref<RegisteredModel[]>([])
+const capabilities = ref<CapabilityCatalogItem[]>([])
+const scopes = ref<ResourceScopeRecord[]>([])
+const preflight = ref<CapabilityResolution | null>(null)
+const testResult = ref<string | null>(null)
+const testInput = ref('请根据已配置的能力完成一次最小测试。')
 
 const steps = [
-  { title: '基础信息', note: '名称、标识与职责' },
-  { title: 'Model', note: '模型和运行参数' },
-  { title: 'Skills', note: '绑定受控技能' },
-  { title: 'MCP', note: '绑定只读工具' },
-  { title: 'Schema', note: '输入输出契约' },
-  { title: 'Review', note: '核对并创建' },
+  { title: '定义 Agent', note: '名称、职责和系统指令' },
+  { title: '设置行为', note: 'Runtime、模型、Skill 和执行模式' },
+  { title: '能力与资源', note: '选择 Capability 和数据范围' },
+  { title: '测试并发布', note: '以后端 Preflight 结果为准' },
 ]
 
-interface FormModel {
-  id: string
-  name: string
-  description: string
-  agent_type: AgentType
-  parent_agent_id: string | null
-  role: string
-  system_prompt: string
-  model: string
-  model_adapter: ModelAdapterName
-  runtime_type: RuntimeType
-  runtime_id: string | null
-  workspace_type: WorkspaceType
-  required_tools: string[]
-  artifact_types: string[]
-  prompt_template: string
-  temperature: number
-  status: AgentLifecycleStatus
-  response_mode: ResponseMode
-  skillIds: string[]
-  mcpIds: string[]
-  inputSchema: string
-  outputSchema: string
-}
-
-const form = reactive<FormModel>({
-  id: '', name: '', description: '', agent_type: 'worker', parent_agent_id: null, role: '', system_prompt: '',
-  model: '', model_adapter: 'hermes', runtime_type: 'hermes', runtime_id: null,
-  workspace_type: 'document', required_tools: [], artifact_types: ['text', 'json', 'markdown', 'pdf', 'xlsx'],
-  prompt_template: '{{input}}', temperature: 0.1,
-  status: 'active', response_mode: 'sync', skillIds: [], mcpIds: [],
-  inputSchema: '{\n  "type": "object",\n  "properties": {}\n}',
-  outputSchema: '{\n  "type": "object",\n  "properties": {}\n}',
+const form = reactive({
+  id: '', name: '', description: '', agent_type: 'worker' as AgentType,
+  role: '', system_prompt: '', model: '', model_adapter: 'hermes' as ModelAdapterName,
+  runtime_type: 'hermes' as RuntimeType, runtime_id: null as string | null,
+  workspace_type: 'document' as WorkspaceType, response_mode: 'sync' as ResponseMode,
+  execution_mode: 'autonomous' as 'autonomous' | 'workflow' | 'hybrid',
+  skill_ids: [] as string[], capability_version_ids: [] as string[], scope_revision_id: null as string | null,
 })
 
 const idPattern = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/
-const skillOptions = computed(() => resourceStore.skills.map((skill) => ({
-  label: `${skill.name} · v${skill.version} · ${skill.runtime_support.join('/')}`,
-  value: skill.id,
-  disabled: !skill.runtime_support.includes(form.runtime_type),
-})))
-const runtimeOptions = computed(() => runtimes.value
-  .filter((runtime) => runtime.type === form.runtime_type && runtime.status !== 'disabled')
-  .map((runtime) => ({
-    label: `${runtime.name} · ${runtime.version} · ${runtime.status}`,
-    value: runtime.id,
-  })))
-const runtimeTypeOptions = computed(() => [
-  { label: 'Hermes Runtime', value: 'hermes' },
-  { label: 'Pi Runtime', value: 'pi' },
-  {
-    label: runtimes.value.some((runtime) => runtime.type === 'deepseek')
-      ? 'DeepSeek Harness'
-      : 'DeepSeek Harness · 未注册',
-    value: 'deepseek',
-    disabled: !runtimes.value.some((runtime) => runtime.type === 'deepseek' && runtime.status !== 'disabled'),
-  },
-])
-const workspaceTypeOptions = computed(() => [
-  { label: '文档工作区', value: 'document', disabled: form.runtime_type === 'deepseek' },
-  { label: '代码仓库工作区', value: 'repository' },
-])
-const artifactTypeOptions = [
-  'text', 'json', 'markdown', 'pdf', 'xlsx', 'code_patch', 'git_diff', 'test_report',
-].map((value) => ({ label: value, value }))
-const requiredToolOptions = ['filesystem', 'database'].map((value) => ({ label: value, value }))
-const selectedRuntime = computed(() => runtimes.value.find((item) => item.id === form.runtime_id) || null)
-const selectedModel = computed(() => models.value.find((item) => item.id === form.model) || null)
-const modelOptions = computed(() => models.value
-  .filter((item) => item.is_enabled)
-  .map((item) => ({
-    label: `${item.display_name} · ${item.provider}${item.is_default ? ' · 默认' : ''}`,
-    value: item.id,
-  })))
-const mcpOptions = computed(() => resourceStore.mcpServers.map((server) => ({ label: `${server.name} · ${server.config.kind}`, value: server.id })))
-const selectedSkills = computed(() => resourceStore.skills.filter((item) => form.skillIds.includes(item.id)))
-const selectedMCPs = computed(() => resourceStore.mcpServers.filter((item) => form.mcpIds.includes(item.id)))
-const managerOptions = computed(() => existingAgents.value
-  .filter((agent) => agent.agent_type === 'manager' && agent.status === 'active')
-  .map((agent) => ({ label: agent.name, value: agent.id })))
+const modelOptions = computed(() => models.value.filter((item) => item.is_enabled).map((item) => ({ label: `${item.display_name} / ${item.provider}`, value: item.id })))
+const runtimeOptions = computed(() => runtimes.value.filter((item) => item.type === form.runtime_type && item.status !== 'disabled').map((item) => ({ label: `${item.name} / ${item.version} / ${item.status}`, value: item.id })))
+const skillOptions = computed(() => resources.skills.map((item) => ({ label: `${item.name} / v${item.version}`, value: item.id, disabled: !item.runtime_support.includes(form.runtime_type) })))
+const capabilityOptions = computed(() => capabilities.value.map((item) => ({ label: `${item.label} / ${item.key}@${item.version}`, value: item.id })))
+const scopeOptions = computed(() => scopes.value.map((item) => ({ label: `${item.name} / ${item.resource_type}`, value: item.current_revision_id, disabled: !item.current_revision_id })))
 
-function parseSchema(value: string, label: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(value)
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`${label} 必须是 JSON 对象`)
-  return parsed as Record<string, unknown>
-}
+function warn(value: string): false { message.warning(value); return false }
 
-function validateStep(index = step.value): boolean {
+function validateCurrent(index = step.value): boolean {
   if (index === 0) {
-    if (!idPattern.test(form.id)) return warn('Agent ID 需为 3-64 位小写字母、数字或连字符，首尾不能为连字符')
-    if (!form.name.trim()) return warn('请填写 Agent 名称')
-    if (!form.role.trim()) return warn('请填写 Role；当前后端用 Role 表达职责分类')
-    if (!form.system_prompt.trim()) return warn('请填写 System Prompt')
+    if (!idPattern.test(form.id)) return warn('Agent ID 需为 3-64 位小写字母、数字或连字符')
+    if (!form.name.trim() || !form.role.trim() || !form.system_prompt.trim()) return warn('名称、职责和系统指令必须填写')
   }
   if (index === 1) {
-    if (!selectedModel.value?.is_enabled) return warn('请选择模型管理中已启用的模型')
-    if (form.runtime_id && selectedRuntime.value?.type !== form.runtime_type) return warn('Runtime 实例与 Runtime 类型不匹配')
-    if (form.runtime_type === 'deepseek' && selectedRuntime.value?.status !== 'online') return warn('DeepSeek Harness 必须绑定已注册且在线的 Runtime 实例')
-    if (form.runtime_type === 'deepseek' && form.workspace_type !== 'repository') return warn('DeepSeek Harness 只能使用代码仓库工作区')
-  }
-  if (index === 2 && selectedSkills.value.some((skill) => !skill.runtime_support.includes(form.runtime_type))) {
-    return warn(`存在不支持 ${form.runtime_type} Runtime 的 Skill`)
-  }
-  if (index === 4) {
-    try { parseSchema(form.inputSchema, 'Input Schema'); parseSchema(form.outputSchema, 'Output Schema') }
-    catch (error) { return warn((error as Error).message) }
+    if (!form.model || !form.runtime_id) return warn('请选择已启用模型和在线 Runtime')
+    if (form.runtime_type === 'deepseek' && form.workspace_type !== 'repository') return warn('DeepSeek Harness 必须使用代码仓库工作区')
   }
   return true
 }
 
-function warn(text: string): false {
-  message.warning(text)
-  return false
+async function next() {
+  if (!validateCurrent()) return
+  if (step.value === 2) return prepareDraft()
+  step.value = Math.min(3, step.value + 1)
 }
 
-function next() {
-  if (!validateStep()) return
-  step.value = Math.min(steps.length - 1, step.value + 1)
-}
-
-function previous() {
-  step.value = Math.max(0, step.value - 1)
-}
-
-async function submit() {
-  for (let index = 0; index < 5; index += 1) {
-    if (!validateStep(index)) { step.value = index; return }
-  }
-  submitting.value = true
+async function prepareDraft() {
+  if (!management.unlocked) return warn('请先使用页面右上角的管理员解锁功能')
+  saving.value = true
   try {
-    const modelConfig: Record<string, unknown> = { temperature: form.temperature }
-    const agent: AgentCreatePayload = {
-      id: form.id,
-      name: form.name.trim(),
-      description: form.description.trim() || null,
-      agent_type: form.agent_type,
-      parent_agent_id: form.parent_agent_id,
-      role: form.role.trim(),
-      system_prompt: form.system_prompt,
-      model_config: modelConfig,
-      model: form.model.trim(),
-      model_adapter: form.model_adapter,
-      runtime_type: form.runtime_type,
-      runtime_id: form.runtime_id,
-      runtime_config: {},
-      capability_profile: {
-        workspace_type: form.workspace_type,
-        required_tools: form.required_tools,
-        artifact_types: form.artifact_types,
-      },
-      prompt_template: form.prompt_template,
-      status: form.status,
-      response_mode: form.response_mode,
-      input_schema: parseSchema(form.inputSchema, 'Input Schema'),
-      output_schema: parseSchema(form.outputSchema, 'Output Schema'),
+    if (!createdAgentId.value) {
+      const payload: AgentCreatePayload = {
+        id: form.id, name: form.name.trim(), description: form.description.trim() || null,
+        agent_type: form.agent_type, role: form.role.trim(), system_prompt: form.system_prompt,
+        model_config: {}, model: form.model, model_adapter: form.model_adapter,
+        runtime_type: form.runtime_type, runtime_id: form.runtime_id, runtime_config: {},
+        capability_profile: {
+          workspace_type: form.workspace_type, required_tools: [],
+          artifact_types: form.runtime_type === 'deepseek' ? ['code_patch', 'git_diff', 'test_report'] : ['text', 'json', 'markdown', 'pdf', 'xlsx'],
+        },
+        prompt_template: '{{input}}', status: 'active', response_mode: form.response_mode,
+        input_schema: { type: 'object', properties: {}, additionalProperties: true }, output_schema: {},
+      }
+      const result = await agentStore.createAgentWorkflow({ agent: payload, skillIds: form.skill_ids, mcpIds: [] })
+      createdAgentId.value = result.agent.id
     }
-    const result = await agentStore.createAgentWorkflow({ agent, skillIds: form.skillIds, mcpIds: form.mcpIds })
-    if (result.bindingErrors.length) message.warning(`Agent 已创建，但部分绑定失败：${result.bindingErrors.join('；')}`, { duration: 8000 })
-    else message.success('Agent 已创建，配置与能力绑定完成')
-    await router.push({ name: 'agent-detail', params: { id: result.agent.id } })
-  } catch (error) {
-    message.error(getApiErrorMessage(error), { duration: 7000 })
-  } finally {
-    submitting.value = false
-  }
+    await platformApi.updateAgentEditorSection(createdAgentId.value, 'behavior', {
+      runtime_type: form.runtime_type, runtime_id: form.runtime_id, model: form.model,
+      model_adapter: form.model_adapter, response_mode: form.response_mode, execution_mode: form.execution_mode,
+    }, management.key)
+    const selected = capabilities.value.filter((item) => form.capability_version_ids.includes(item.id))
+    await platformApi.updateCapabilityBindings(createdAgentId.value, selected.map((item) => ({
+      tool_alias: item.key.replaceAll('.', '_').replaceAll('-', '_'),
+      capability_version_id: item.id, implementation_mode: 'DEFAULT_PRIORITY',
+      resource_scope_revision_id: form.scope_revision_id, parameter_policy: {},
+      quota_policy: { calls_per_execution: 20, max_concurrency: 2, calls_per_minute: 60 },
+      approval_policy: {}, source_type: 'direct',
+    })), management.key)
+    preflight.value = await platformApi.preflightAgent(createdAgentId.value)
+    step.value = 3
+    message.success('Agent Draft 已保存，Preflight 已完成')
+  } catch (cause) {
+    message.error(getApiErrorMessage(cause), { duration: 8000 })
+  } finally { saving.value = false }
+}
+
+async function runTest() {
+  if (!createdAgentId.value || preflight.value?.state !== 'READY') return
+  testing.value = true
+  testResult.value = null
+  try {
+    const result = await platformApi.testAgentDraft(createdAgentId.value, { input: testInput.value, session_id: `builder-${Date.now()}`, parameters: {} }, management.key)
+    testResult.value = result.output
+    message.success('测试执行完成')
+  } catch (cause) { message.error(getApiErrorMessage(cause), { duration: 8000 }) }
+  finally { testing.value = false }
+}
+
+async function publish() {
+  if (!createdAgentId.value || preflight.value?.state !== 'READY') return
+  publishing.value = true
+  try {
+    const result = await platformApi.publishAgentDraft(createdAgentId.value, management.key)
+    message.success(`${result.version} 已发布`)
+    await router.push({ name: 'agent-detail', params: { id: createdAgentId.value } })
+  } catch (cause) { message.error(getApiErrorMessage(cause), { duration: 8000 }) }
+  finally { publishing.value = false }
 }
 
 watch(() => form.model, () => {
-  if (selectedModel.value) form.model_adapter = selectedModel.value.adapter
+  const selected = models.value.find((item) => item.id === form.model)
+  if (selected) form.model_adapter = selected.adapter
 })
-
-watch(() => form.runtime_type, (runtimeType, previous) => {
-  if (selectedRuntime.value?.type !== runtimeType) form.runtime_id = null
-  const candidate = runtimes.value.find((runtime) => runtime.type === runtimeType && runtime.status === 'online')
-  if (candidate) form.runtime_id = candidate.id
-  if (runtimeType === 'deepseek') {
-    form.workspace_type = 'repository'
-    form.artifact_types = ['code_patch', 'git_diff', 'test_report']
-  } else if (previous === 'deepseek') {
-    form.workspace_type = 'document'
-    form.artifact_types = ['text', 'json', 'markdown', 'pdf', 'xlsx']
-  }
-  form.skillIds = form.skillIds.filter((id) => resourceStore.skills.find((skill) => skill.id === id)?.runtime_support.includes(runtimeType))
+watch(() => form.runtime_type, (value) => {
+  form.runtime_id = runtimes.value.find((item) => item.type === value && item.status === 'online')?.id || null
+  form.workspace_type = value === 'deepseek' ? 'repository' : 'document'
+  form.skill_ids = form.skill_ids.filter((id) => resources.skills.find((item) => item.id === id)?.runtime_support.includes(value))
 })
 
 onMounted(async () => {
-  resourceStore.fetchAll().catch(() => undefined)
-  platformApi.listAgents().then((value) => { existingAgents.value = value }).catch(() => undefined)
-  platformApi.listRuntimes().then((value) => {
-    runtimes.value = value
-    const candidate = value.find((runtime) => runtime.type === form.runtime_type && runtime.status === 'online')
-    if (candidate) form.runtime_id = candidate.id
-  }).catch(() => undefined)
-  try {
-    models.value = await platformApi.listModels(true)
-    const defaultModel = models.value.find((item) => item.is_default) || models.value[0]
-    if (defaultModel) form.model = defaultModel.id
-  } catch {
-    models.value = []
-  }
+  await resources.fetchAll().catch(() => undefined)
+  const [runtimeValues, modelValues, scopeValues, capabilityValues] = await Promise.all([
+    platformApi.listRuntimes(), platformApi.listModels(true), platformApi.listResourceScopes(), platformApi.listCapabilityCatalogGlobal(),
+  ])
+  runtimes.value = runtimeValues; models.value = modelValues; scopes.value = scopeValues
+  const selectedModel = modelValues.find((item) => item.is_default) || modelValues[0]
+  if (selectedModel) form.model = selectedModel.id
+  form.runtime_id = runtimeValues.find((item) => item.type === form.runtime_type && item.status === 'online')?.id || null
+  capabilities.value = capabilityValues
 })
 </script>
 
 <template>
   <div>
-    <PageHeader title="创建 Agent" description="按基础信息、模型、能力、契约和复核六步创建；最终严格调用现有 Agent 与绑定接口。">
-      <template #actions><NButton @click="router.push({ name: 'agents' })"><template #icon><NIcon :component="ArrowLeft" /></template>返回列表</NButton></template>
-    </PageHeader>
-
-    <div v-if="resourceStore.error" class="error-panel" style="margin-bottom: 16px">能力资源加载失败：{{ resourceStore.error }}</div>
-
-    <nav class="wizard-steps" aria-label="Agent 创建步骤">
-      <button v-for="(item, index) in steps" :key="item.title" type="button" :class="{ active: index === step, complete: index < step }" @click="index <= step && (step = index)">
-        <span>{{ index < step ? '✓' : index + 1 }}</span><div><strong>{{ item.title }}</strong><small>{{ item.note }}</small></div>
-      </button>
-    </nav>
-
-    <div class="wizard-layout">
-      <section class="surface wizard-panel">
-        <div class="wizard-heading"><span>步骤 {{ step + 1 }} / {{ steps.length }}</span><h2>{{ steps[step].title }}</h2><p>{{ steps[step].note }}</p></div>
-
-        <NForm label-placement="top" @submit.prevent="step === 5 ? submit() : next()">
-          <template v-if="step === 0">
-            <div class="form-grid">
-              <NFormItem label="Agent ID" required><NInput v-model:value="form.id" maxlength="64" placeholder="knowledge-analyst" /></NFormItem>
-              <NFormItem label="名称" required><NInput v-model:value="form.name" maxlength="255" placeholder="知识分析 Agent" /></NFormItem>
-              <NFormItem class="span-2" label="描述"><NInput v-model:value="form.description" type="textarea" :rows="3" placeholder="说明该 Agent 负责的业务任务" /></NFormItem>
-              <NFormItem label="Agent 类型"><NSelect v-model:value="form.agent_type" :options="[{label:'Manager Agent',value:'manager'},{label:'Worker Agent',value:'worker'}]" /></NFormItem>
-              <NFormItem label="上级 Manager"><NSelect v-model:value="form.parent_agent_id" clearable :options="managerOptions" placeholder="可选，用于父子关系" /></NFormItem>
-              <NFormItem label="Role / 职责分类" required><NInput v-model:value="form.role" placeholder="企业知识分析" /></NFormItem>
-              <NFormItem label="初始状态"><NSelect v-model:value="form.status" :options="[{label:'Active',value:'active'},{label:'Inactive',value:'inactive'}]" /></NFormItem>
-            </div>
-            <NFormItem label="System Prompt" required><NInput v-model:value="form.system_prompt" type="textarea" :rows="8" placeholder="写明职责、执行规则和禁止事项" /></NFormItem>
-            <NAlert type="info" :bordered="false">现有后端没有独立 Category 字段，因此职责分类写入 Role，不创建无法持久化的前端字段。</NAlert>
-          </template>
-
-          <template v-else-if="step === 1">
-            <div class="form-grid">
-              <NFormItem label="模型" required><NSelect v-model:value="form.model" filterable :options="modelOptions" placeholder="从模型管理选择已启用模型" /></NFormItem>
-              <NFormItem label="Provider / Adapter"><NInput :value="selectedModel ? `${selectedModel.provider} / ${selectedModel.adapter}` : '--'" disabled /></NFormItem>
-              <NFormItem label="Agent Runtime"><NSelect v-model:value="form.runtime_type" :options="runtimeTypeOptions" /></NFormItem>
-              <NFormItem label="Runtime 实例"><NSelect v-model:value="form.runtime_id" clearable :options="runtimeOptions" :placeholder="form.runtime_type === 'deepseek' ? 'DeepSeek 必须选择在线实例' : '未选择时使用类型默认端点'" /></NFormItem>
-              <NFormItem label="工作区类型"><NSelect v-model:value="form.workspace_type" :options="workspaceTypeOptions" /></NFormItem>
-              <NFormItem label="允许产物"><NSelect v-model:value="form.artifact_types" multiple :options="artifactTypeOptions" /></NFormItem>
-              <NFormItem class="span-2" label="平台必需工具"><NSelect v-model:value="form.required_tools" multiple clearable :options="requiredToolOptions" placeholder="可选；执行前由平台校验已绑定 MCP 能力" /></NFormItem>
-              <NFormItem label="默认响应模式"><NSelect v-model:value="form.response_mode" :options="[{label:'Sync JSON',value:'sync'},{label:'SSE Stream',value:'stream'}]" /></NFormItem>
-              <NFormItem label="Temperature"><NSlider v-model:value="form.temperature" :min="0" :max="2" :step="0.1" /></NFormItem>
-            </div>
-            <NFormItem label="Prompt Template"><NInput v-model:value="form.prompt_template" type="textarea" :rows="10" class="mono" /></NFormItem>
-            <NAlert type="info" :bordered="false">模板变量由后端解析；input、agent_id、model、current_time 为内置变量。</NAlert>
-          </template>
-
-          <template v-else-if="step === 2">
-            <NFormItem label="Select Skills"><NSelect v-model:value="form.skillIds" multiple filterable clearable :loading="resourceStore.loading" :options="skillOptions" placeholder="选择已注册 Skill" /></NFormItem>
-            <div v-if="selectedSkills.length" class="selection-list"><div v-for="skill in selectedSkills" :key="skill.id"><strong>{{ skill.name }}</strong><span>{{ skill.id }} · v{{ skill.version }}</span></div></div>
-            <div v-else class="schema-empty">没有选择 Skill。Agent 仍可创建，后续可在 Configuration 中绑定。</div>
-          </template>
-
-          <template v-else-if="step === 3">
-            <NFormItem label="Select MCP"><NSelect v-model:value="form.mcpIds" multiple filterable clearable :loading="resourceStore.loading" :options="mcpOptions" placeholder="选择已注册 MCP" /></NFormItem>
-            <NAlert type="warning" :bordered="false" style="margin-bottom: 14px">当前平台仅允许经 MCP Gateway 注册的 read_only filesystem/database 能力。</NAlert>
-            <NAlert v-if="form.runtime_type === 'deepseek'" type="info" :bordered="false" style="margin-bottom: 14px">官方 0.1.0-rc.6 SDK Runtime 组合未装载通用 MCP Client；当前代码操作使用容器内置 bash/filesystem。这里的 MCP 绑定仍由平台鉴权和审计，但不会伪装为 Harness 原生工具。</NAlert>
-            <div v-if="selectedMCPs.length" class="selection-list"><div v-for="server in selectedMCPs" :key="server.id"><strong>{{ server.name }}</strong><span>{{ server.config.kind }} · {{ server.permission }} · {{ server.status }}</span></div></div>
-            <div v-else class="schema-empty">没有选择 MCP。后续可在 Configuration 中绑定。</div>
-          </template>
-
-          <template v-else-if="step === 4">
-            <div class="schema-grid">
-              <NFormItem label="Input Schema"><NInput v-model:value="form.inputSchema" type="textarea" :rows="20" class="mono" /></NFormItem>
-              <NFormItem label="Output Schema"><NInput v-model:value="form.outputSchema" type="textarea" :rows="20" class="mono" /></NFormItem>
-            </div>
-            <NAlert type="info" :bordered="false">创建时写入真实 input_schema 和 output_schema；后端会继续执行 JSON Schema 校验。</NAlert>
-          </template>
-
-          <template v-else>
-            <div class="review-grid">
-              <section><h3>Agent</h3><dl><div><dt>ID</dt><dd class="mono">{{ form.id }}</dd></div><div><dt>名称</dt><dd>{{ form.name }}</dd></div><div><dt>类型</dt><dd>{{ form.agent_type }}</dd></div><div><dt>Role</dt><dd>{{ form.role }}</dd></div><div><dt>状态</dt><dd>{{ form.status }}</dd></div></dl></section>
-              <section><h3>Runtime</h3><dl><div><dt>Runtime</dt><dd>{{ form.runtime_type }}</dd></div><div><dt>实例</dt><dd>{{ selectedRuntime?.name || '类型默认端点' }}</dd></div><div><dt>版本</dt><dd>{{ selectedRuntime?.version || '--' }}</dd></div><div><dt>状态</dt><dd>{{ selectedRuntime?.status || '未注册' }}</dd></div><div><dt>工作区</dt><dd>{{ form.workspace_type }}</dd></div><div><dt>产物类型</dt><dd>{{ form.artifact_types.join(', ') }}</dd></div><div><dt>Model</dt><dd class="mono">{{ form.model }}</dd></div><div><dt>Adapter</dt><dd>{{ form.model_adapter }}</dd></div><div><dt>响应</dt><dd>{{ form.response_mode }}</dd></div><div><dt>Temperature</dt><dd>{{ form.temperature }}</dd></div></dl></section>
-              <section><h3>Capabilities</h3><dl><div><dt>Skills</dt><dd>{{ form.skillIds.length }}</dd></div><div><dt>MCP</dt><dd>{{ form.mcpIds.length }}</dd></div><div><dt>Input Schema</dt><dd>已配置</dd></div><div><dt>Output Schema</dt><dd>已配置</dd></div></dl></section>
-            </div>
-            <NAlert type="warning" :bordered="false">Agent 创建与 Skill/MCP 绑定不是同一后端事务；发生部分失败时会保留 Agent，并明确报告失败项。</NAlert>
-          </template>
-
-          <div class="wizard-actions">
-            <NButton :disabled="step === 0 || submitting" @click="previous"><template #icon><NIcon :component="ArrowLeft" /></template>上一步</NButton>
-            <NButton v-if="step < 5" type="primary" attr-type="submit">下一步<template #icon><NIcon :component="ArrowRight" /></template></NButton>
-            <NButton v-else type="primary" attr-type="submit" :loading="submitting"><template #icon><NIcon :component="DeviceFloppy" /></template>创建 Agent</NButton>
-          </div>
-        </NForm>
-      </section>
-
-      <aside class="surface sticky-summary">
-        <h2>配置摘要</h2>
-        <div class="summary-list">
-          <div class="summary-row"><span>ID</span><strong class="mono">{{ form.id || '待填写' }}</strong></div>
-          <div class="summary-row"><span>名称</span><strong>{{ form.name || '待填写' }}</strong></div>
-          <div class="summary-row"><span>类型</span><strong>{{ form.agent_type }}</strong></div>
-          <div class="summary-row"><span>Runtime</span><strong>{{ form.runtime_type }}</strong></div>
-          <div class="summary-row"><span>模型</span><strong class="mono">{{ form.model || '待填写' }}</strong></div>
-          <div class="summary-row"><span>响应</span><strong>{{ form.response_mode }}</strong></div>
-          <div class="summary-row"><span>Skill</span><strong>{{ form.skillIds.length }} 个</strong></div>
-          <div class="summary-row"><span>MCP</span><strong>{{ form.mcpIds.length }} 个</strong></div>
-        </div>
-        <div class="summary-note"><NIcon :component="Check" /> 每一步都使用现有后端可持久化字段。</div>
-      </aside>
-    </div>
+    <PageHeader title="创建 Agent" description="四步完成定义、行为、能力配置和发布检查。"><template #actions><NButton @click="router.push({ name: 'agents' })"><template #icon><NIcon :component="ArrowLeft" /></template>返回列表</NButton></template></PageHeader>
+    <NAlert v-if="!management.unlocked" type="warning" :bordered="false" style="margin-bottom:16px">当前为只读模式。创建 Agent 前请先在右上角解锁管理员模式。</NAlert>
+    <nav class="wizard-steps" aria-label="Agent 创建步骤"><button v-for="(item,index) in steps" :key="item.title" type="button" :class="{active:index===step,complete:index<step}" :disabled="index>step || Boolean(createdAgentId)" @click="index<=step && !createdAgentId && (step=index)"><span>{{ index<step ? '✓' : index+1 }}</span><div><strong>{{ item.title }}</strong><small>{{ item.note }}</small></div></button></nav>
+    <section class="surface wizard-panel">
+      <div class="wizard-heading"><span>步骤 {{ step+1 }} / 4</span><h2>{{ steps[step].title }}</h2><p>{{ steps[step].note }}</p></div>
+      <NForm label-placement="top" @submit.prevent="next">
+        <template v-if="step===0"><div class="form-grid"><NFormItem label="Agent ID" required><NInput v-model:value="form.id" :disabled="Boolean(createdAgentId)" placeholder="knowledge-analyst" /></NFormItem><NFormItem label="名称" required><NInput v-model:value="form.name" /></NFormItem><NFormItem label="Agent 类型"><NSelect v-model:value="form.agent_type" :options="[{label:'Manager',value:'manager'},{label:'Worker',value:'worker'}]" /></NFormItem><NFormItem label="职责" required><NInput v-model:value="form.role" /></NFormItem><NFormItem class="span-2" label="描述"><NInput v-model:value="form.description" type="textarea" /></NFormItem></div><NFormItem label="系统指令" required><NInput v-model:value="form.system_prompt" type="textarea" :rows="10" /></NFormItem></template>
+        <template v-else-if="step===1"><div class="form-grid"><NFormItem label="Runtime"><NSelect v-model:value="form.runtime_type" :options="[{label:'Hermes',value:'hermes'},{label:'Pi',value:'pi'},{label:'DeepSeek Harness',value:'deepseek'}]" /></NFormItem><NFormItem label="Runtime 实例" required><NSelect v-model:value="form.runtime_id" :options="runtimeOptions" /></NFormItem><NFormItem label="模型" required><NSelect v-model:value="form.model" filterable :options="modelOptions" /></NFormItem><NFormItem label="执行模式"><NSelect v-model:value="form.execution_mode" :options="[{label:'自主',value:'autonomous'},{label:'Workflow',value:'workflow'},{label:'混合',value:'hybrid'}]" /></NFormItem><NFormItem label="工作区"><NSelect v-model:value="form.workspace_type" :options="[{label:'文档',value:'document',disabled:form.runtime_type==='deepseek'},{label:'代码仓库',value:'repository'}]" /></NFormItem><NFormItem label="响应模式"><NSelect v-model:value="form.response_mode" :options="[{label:'同步 JSON',value:'sync'},{label:'流式 SSE',value:'stream'}]" /></NFormItem><NFormItem class="span-2" label="Skill"><NSelect v-model:value="form.skill_ids" multiple filterable :options="skillOptions" placeholder="可选，Skill 会声明所需能力" /></NFormItem></div></template>
+        <template v-else-if="step===2"><NFormItem label="Capability"><NSelect v-model:value="form.capability_version_ids" multiple filterable :options="capabilityOptions" placeholder="不需要外部能力时可留空" /></NFormItem><NFormItem label="资源范围"><NSelect v-model:value="form.scope_revision_id" clearable :options="scopeOptions" placeholder="需要数据隔离时选择固定 Revision" /></NFormItem><NAlert type="info" :bordered="false">Skill 与真实接口解耦。Endpoint、凭据和 Scope 都由 Gateway 注入，模型无法看到。</NAlert></template>
+        <template v-else><NAlert :type="preflight?.state==='READY' ? 'success' : 'warning'" :bordered="false" style="margin-bottom:16px">{{ preflight?.state==='READY' ? '发布检查通过，可以测试和发布。' : '发布检查未通过，请处理下列问题。' }}</NAlert><div v-if="preflight?.issues.length" class="preflight-list"><div v-for="item in preflight.issues" :key="`${item.code}-${item.path}`"><strong>{{ item.message }}</strong><span class="mono">{{ item.code }} / {{ item.path }}</span></div></div><NFormItem label="测试输入"><NInput v-model:value="testInput" type="textarea" :rows="5" /></NFormItem><div v-if="testResult" class="result-preview"><strong>测试输出</strong><pre>{{ testResult }}</pre></div></template>
+      </NForm>
+      <footer class="wizard-footer"><NButton v-if="step>0 && !createdAgentId" @click="step-=1">上一步</NButton><span /><NButton v-if="step<3" type="primary" :loading="saving" @click="next"><template #icon><NIcon :component="step===2 ? DeviceFloppy : ArrowRight" /></template>{{ step===2 ? '保存并检查' : '下一步' }}</NButton><template v-else><NButton :disabled="preflight?.state!=='READY'" :loading="testing" @click="runTest"><template #icon><NIcon :component="PlayerPlay" /></template>测试运行</NButton><NButton type="primary" :disabled="preflight?.state!=='READY'" :loading="publishing" @click="publish"><template #icon><NIcon :component="Rocket" /></template>发布 Agent</NButton></template></footer>
+    </section>
   </div>
 </template>
+
+<style scoped>
+.preflight-list{display:grid;gap:8px;margin-bottom:16px}.preflight-list>div{display:grid;gap:4px;padding:12px;border:1px solid var(--line);border-radius:8px}.preflight-list span{color:var(--muted);font-size:11px}.result-preview{margin:14px 0;padding:16px;border:1px solid var(--line);border-radius:8px;background:var(--surface-subtle)}.result-preview pre{overflow:auto;max-height:360px;white-space:pre-wrap}.wizard-footer{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:22px}.wizard-footer>span{flex:1}
+</style>

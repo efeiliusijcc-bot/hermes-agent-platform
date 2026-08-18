@@ -9,10 +9,26 @@ const props = defineProps<{
   values: Record<string, unknown>
   errors: Record<string, string>
   disabled?: boolean
+  uiSchema?: Record<string, unknown>
 }>()
 
 const emit = defineEmits<{ 'update:values': [value: Record<string, unknown>] }>()
-const fields = computed(() => normalizeSchemaFields(props.schema))
+const fields = computed(() => {
+  const values = normalizeSchemaFields(props.schema)
+  const order = Array.isArray(props.uiSchema?.order) ? props.uiSchema.order.map(String) : []
+  return [...values].sort((left, right) => {
+    const leftIndex = order.indexOf(left.key)
+    const rightIndex = order.indexOf(right.key)
+    return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex)
+  })
+})
+
+function uiField(key: string): Record<string, unknown> {
+  const values = props.uiSchema?.fields
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return {}
+  const field = (values as Record<string, unknown>)[key]
+  return field && typeof field === 'object' && !Array.isArray(field) ? field as Record<string, unknown> : {}
+}
 
 function update(key: string, value: unknown) {
   emit('update:values', { ...props.values, [key]: value })
@@ -23,10 +39,10 @@ function update(key: string, value: unknown) {
   <div v-if="fields.length" class="schema-form">
     <div v-for="field in fields" :key="field.key" class="schema-field">
       <label :for="`schema-${field.key}`">
-        {{ field.label }}
+        {{ String(uiField(field.key).label || field.label) }}
         <span v-if="field.required" class="required-mark">必填</span>
       </label>
-      <p v-if="field.description" class="schema-helper">{{ field.description }}</p>
+      <p v-if="uiField(field.key).help || field.description" class="schema-helper">{{ String(uiField(field.key).help || field.description) }}</p>
       <NSelect
         v-if="field.enumValues.length"
         :value="values[field.key]"
@@ -51,6 +67,15 @@ function update(key: string, value: unknown) {
         :precision="field.type === 'integer' ? 0 : undefined"
         :disabled="disabled"
         clearable
+        @update:value="update(field.key, $event)"
+      />
+      <NInput
+        v-else-if="uiField(field.key).widget === 'textarea'"
+        :id="`schema-${field.key}`"
+        :value="String(values[field.key] ?? '')"
+        type="textarea"
+        :rows="Number(uiField(field.key).rows || 4)"
+        :disabled="disabled || uiField(field.key).readonly === true"
         @update:value="update(field.key, $event)"
       />
       <NInput

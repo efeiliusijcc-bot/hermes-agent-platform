@@ -327,7 +327,7 @@ async def test_worker_converges_request_validation_failure_to_terminal_state(mon
     fake_session.rollback.assert_awaited_once()
 
 
-def test_pi_prompt_never_exposes_the_per_execution_mcp_token() -> None:
+def test_pi_hides_legacy_mcp_token_while_hermes_keeps_v1_compatibility() -> None:
     secret = "mcp2.execution.signature"
     capabilities = {
         "filesystem": {"mcp_id": "filesystem-mcp", "permission": "read_only"}
@@ -337,6 +337,8 @@ def test_pi_prompt_never_exposes_the_per_execution_mcp_token() -> None:
     assert secret not in pi_prompt
     assert "injects the per-execution credential" in pi_prompt
     assert secret in hermes_prompt
+    assert "Legacy Hermes MCP access_token" in hermes_prompt
+    assert "cap1." not in hermes_prompt
 
 
 @pytest.mark.asyncio
@@ -421,6 +423,7 @@ async def test_builtin_runtime_registration_checks_hermes_and_pi_health(monkeypa
 
     monkeypatch.setattr(main_module.runtime_repository, "ensure_runtime", ensure)
     monkeypatch.setattr(main_module.runtime_repository, "record_health", record)
+    monkeypatch.setattr(main_module, "_ensure_runtime_feature_profile", AsyncMock())
     monkeypatch.setattr(
         main_module,
         "get_runtime_adapter",

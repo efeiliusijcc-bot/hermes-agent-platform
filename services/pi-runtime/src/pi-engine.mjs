@@ -2,7 +2,7 @@ import { Agent } from '@earendil-works/pi-agent-core'
 import { createModels, createProvider, envApiKeyAuth } from '@earendil-works/pi-ai'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 
-import { loadMcpTools } from './mcp-tools.mjs'
+import { loadCapabilityTools, loadMcpTools } from './mcp-tools.mjs'
 
 export class PiRunCancelledError extends Error {
   constructor(message = 'Pi execution was cancelled') {
@@ -117,6 +117,12 @@ export class PiAgentEngine {
       capabilities,
       executionId: request.execution_id,
     })
+    const capabilityTools = loadCapabilityTools({
+      endpoint: typeof metadata.capability_gateway === 'string' ? metadata.capability_gateway : '',
+      token: typeof metadata.capability_token === 'string' ? metadata.capability_token : '',
+      tools: Array.isArray(metadata.capability_tools) ? metadata.capability_tools : [],
+      executionId: request.execution_id,
+    })
     const { models, model } = modelRuntime(this.config, request.model)
     const { systemPrompt, prompt } = splitMessages(request.messages)
     const trace = []
@@ -130,7 +136,7 @@ export class PiAgentEngine {
         systemPrompt,
         model,
         thinkingLevel: 'off',
-        tools: mcp.tools,
+        tools: [...mcp.tools, ...capabilityTools],
         messages: [],
       },
       sessionId: request.session_id,

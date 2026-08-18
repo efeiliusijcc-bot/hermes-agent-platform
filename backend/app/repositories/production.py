@@ -685,6 +685,12 @@ async def update_agent_version(
     if snapshot is not None:
         validate_agent_snapshot(snapshot)
         version.snapshot = snapshot
+        version.snapshot_format_version = int(snapshot.get("format_version") or 1)
+        version.resolution_digest = (
+            str(snapshot.get("resolution_digest"))
+            if snapshot.get("resolution_digest")
+            else None
+        )
     if description_set:
         version.description = description
     version.updated_at = datetime.now(timezone.utc)
@@ -713,8 +719,9 @@ async def transition_agent_version(
 
 
 def validate_agent_snapshot(snapshot: dict[str, Any]) -> None:
-    if int(snapshot.get("format_version") or 0) != 1:
-        raise ValueError("Agent Version snapshot format_version must be 1")
+    format_version = int(snapshot.get("format_version") or 0)
+    if format_version not in {1, 2}:
+        raise ValueError("Agent Version snapshot format_version must be 1 or 2")
     for field in ("prompt", "model", "schema", "runtime"):
         if not isinstance(snapshot.get(field), dict):
             raise ValueError(f"Agent Version snapshot {field} must be an object")
@@ -722,6 +729,25 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> None:
         values = snapshot.get(field)
         if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
             raise ValueError(f"Agent Version snapshot {field} must be a string array")
+    if format_version == 2:
+        for field in (
+            "skills",
+            "capability_bindings",
+            "resource_scope_revisions",
+            "policy_set_revisions",
+        ):
+            if not isinstance(snapshot.get(field, []), list):
+                raise ValueError(f"Agent Version snapshot {field} must be an array")
+        required_features = snapshot["runtime"].get("required_features", [])
+        if not isinstance(required_features, list) or any(
+            not isinstance(item, str) for item in required_features
+        ):
+            raise ValueError("Agent Version runtime.required_features must be a string array")
+        resolution_digest = snapshot.get("resolution_digest")
+        if resolution_digest is not None and (
+            not isinstance(resolution_digest, str) or not resolution_digest.startswith("sha256:")
+        ):
+            raise ValueError("Agent Version resolution_digest is invalid")
     prompt = snapshot["prompt"]
     model = snapshot["model"]
     runtime = snapshot["runtime"]
@@ -769,6 +795,12 @@ async def build_version_runtime_agent(
     schema = snapshot["schema"]
     runtime = snapshot["runtime"]
     skill_ids = [str(item) for item in snapshot["skill_ids"]]
+    if int(snapshot.get("format_version") or 1) == 2 and isinstance(snapshot.get("skills"), list):
+        skill_ids = [
+            str(item.get("skill_id"))
+            for item in snapshot["skills"]
+            if isinstance(item, dict) and item.get("skill_id")
+        ]
     mcp_ids = [str(item) for item in snapshot["mcp_ids"]]
     skills = list(
         await session.scalars(select(Skill).where(Skill.id.in_(skill_ids)).order_by(Skill.id))

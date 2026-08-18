@@ -13,6 +13,7 @@ export type RuntimeStatus = 'unknown' | 'online' | 'offline' | 'disabled'
 export type ModelProvider = 'qwen' | 'deepseek' | 'openai' | 'claude' | 'custom'
 export type ModelRegistryStatus = 'unknown' | 'online' | 'offline'
 export type LifecycleStatus = 'draft' | 'testing' | 'published' | 'deprecated' | 'disabled'
+export type CapabilityState = 'READY' | 'NEEDS_CONFIGURATION' | 'UNAVAILABLE' | 'DISABLED'
 
 export interface Agent {
   id: string
@@ -42,6 +43,154 @@ export interface Agent {
   current_version_id: string | null
   created_at: string
   updated_at: string
+}
+
+export interface PreflightIssue {
+  code: string
+  path: string
+  message: string
+  severity: 'error' | 'warning'
+}
+
+export interface ResolvedCapability {
+  binding_id: string
+  tool_name: string
+  capability_key: string
+  capability_version: string
+  description: string
+  input_schema: Record<string, unknown>
+  output_schema: Record<string, unknown>
+  implementation_id: string
+  connector_operation_id: string
+  connector_instance_revision_id: string
+  resource_scope_revision_id: string | null
+  parameter_policy: Record<string, unknown>
+  quota_policy: Record<string, unknown>
+  approval_policy: Record<string, unknown>
+}
+
+export interface CapabilityResolution {
+  agent_version_id?: string
+  format_version?: number
+  legacy?: boolean
+  state: CapabilityState
+  tools?: ResolvedCapability[]
+  issues: PreflightIssue[]
+  resolution_digest?: string
+  runtime_features?: Record<string, unknown>
+}
+
+export interface AgentEditorModel {
+  mode: { management_key_required: boolean; read_only_without_key: boolean }
+  agent: {
+    id: string
+    name: string
+    description: string | null
+    status: string
+    version: string | null
+    draft_version_id: string | null
+  }
+  sections: {
+    identity: { name: string; description: string | null; role: string; system_prompt: string }
+    behavior: {
+      runtime_type: RuntimeType
+      runtime_id: string | null
+      model: string
+      model_adapter: ModelAdapterName
+      response_mode: ResponseMode
+      execution_mode: 'autonomous' | 'workflow' | 'hybrid'
+    }
+    skills: Array<{ id: string; name: string; version: string }>
+    capabilities: Array<{
+      binding_id: string
+      key: string
+      label: string
+      description: string | null
+      version: string | null
+      state: CapabilityState
+      source_label: string
+      scope_summary: string
+      requires_user_action: boolean
+      advanced: Record<string, unknown>
+    }>
+    input_output: { input_schema: Record<string, unknown>; output_schema: Record<string, unknown> }
+  }
+  preflight: CapabilityResolution
+  actions: { can_test: boolean; can_publish: boolean }
+}
+
+export interface AvailableComponents {
+  skills: Array<{ id: string; name: string; version: string }>
+  capabilities: CapabilityCatalogItem[]
+  runtimes: Array<{ id: string; name: string; type: RuntimeType; version: string; status: RuntimeStatus }>
+}
+
+export interface CapabilityCatalogItem {
+  id: string
+  key: string
+  label: string
+  description: string | null
+  version: string
+  side_effect?: string
+  input_schema: Record<string, unknown>
+  ui_schema: Record<string, unknown>
+}
+
+export interface CapabilityBindingWrite {
+  tool_alias: string
+  capability_version_id: string
+  implementation_mode: 'PINNED' | 'DEFAULT_PRIORITY'
+  implementation_id?: string | null
+  resource_scope_revision_id?: string | null
+  parameter_policy?: Record<string, unknown>
+  quota_policy?: Record<string, unknown>
+  approval_policy?: Record<string, unknown>
+  enabled?: boolean
+  source_type?: 'direct' | 'skill' | 'workflow' | 'template' | 'legacy'
+  source_ref_id?: string | null
+}
+
+export interface PlatformConnection {
+  id: string
+  key: string
+  name: string
+  type: 'internal_rest' | 'mcp'
+  status: CapabilityState
+  capability_count: number
+  instances: number
+  updated_at: string
+}
+
+export interface CapabilityRecord {
+  id: string
+  namespace: string
+  key: string
+  display_name: string
+  description: string | null
+  risk_level: 'LOW' | 'MEDIUM' | 'HIGH'
+  status: LifecycleStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface CredentialRecord {
+  id: string
+  name: string
+  credential_type: string
+  masked_label: string
+  key_id: string
+  rotation_status: string
+  last_rotated_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ResourceScopeRecord {
+  id: string
+  name: string
+  resource_type: string
+  current_revision_id: string | null
+  created_at: string
 }
 
 export interface AgentCreatePayload {

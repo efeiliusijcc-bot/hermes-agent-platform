@@ -20,14 +20,20 @@ import {
   BoxModel,
   Plus,
   Settings,
+  Key,
+  Lock,
 } from '@vicons/tabler'
 
 import { useSystemStore } from '@/stores/system'
+import { useManagementStore } from '@/stores/management'
 
 const route = useRoute()
 const systemStore = useSystemStore()
+const managementStore = useManagementStore()
 const collapsed = ref(false)
 const mobileOpen = ref(false)
+const keyDialogOpen = ref(false)
+const managementKey = ref('')
 
 function renderIcon(icon: typeof Apps) {
   return () => h(NIcon, null, { default: () => h(icon) })
@@ -39,23 +45,24 @@ function renderLink(label: string, name: string) {
 
 const menuOptions: MenuOption[] = [
   { label: '工作台', key: 'workspace', type: 'group', children: [
-    { label: renderLink('运行总览', 'dashboard'), key: 'dashboard', icon: renderIcon(Apps) },
+    { label: renderLink('工作台', 'dashboard'), key: 'dashboard', icon: renderIcon(Apps) },
   ] },
-  { label: 'AGENT', key: 'agent-group', type: 'group', children: [
-    { label: renderLink('Agent 列表', 'agents'), key: 'agents', icon: renderIcon(Robot) },
-    { label: renderLink('创建 Agent', 'agent-create'), key: 'agent-create', icon: renderIcon(Plus) },
-    { label: renderLink('多 Agent 编排', 'multi-agent'), key: 'multi-agent', icon: renderIcon(GitBranch) },
+  { label: '智能体', key: 'agent-group', type: 'group', children: [
+    { label: renderLink('智能体列表', 'agents'), key: 'agents', icon: renderIcon(Robot) },
+    { label: renderLink('创建智能体', 'agent-create'), key: 'agent-create', icon: renderIcon(Plus) },
+    { label: renderLink('团队编排', 'multi-agent'), key: 'multi-agent', icon: renderIcon(GitBranch) },
   ] },
-  { label: '执行', key: 'execution-group', type: 'group', children: [
+  { label: '资源', key: 'resource-group', type: 'group', children: [
+    { label: renderLink('Skill', 'skills'), key: 'skills', icon: renderIcon(Hierarchy) },
+    { label: renderLink('MCP 兼容资源', 'mcps'), key: 'mcps', icon: renderIcon(PlugConnected) },
+    { label: renderLink('数据与产物', 'artifacts'), key: 'artifacts', icon: renderIcon(Archive) },
+  ] },
+  { label: '运行', key: 'execution-group', type: 'group', children: [
     { label: renderLink('执行历史', 'executions'), key: 'executions', icon: renderIcon(ListCheck) },
-    { label: renderLink('Trace Center', 'execution-trace'), key: 'execution-trace', icon: renderIcon(Activity) },
+    { label: renderLink('执行 Trace', 'execution-trace'), key: 'execution-trace', icon: renderIcon(Activity) },
   ] },
-  { label: '能力资源', key: 'resource-group', type: 'group', children: [
-    { label: renderLink('Skill Registry', 'skills'), key: 'skills', icon: renderIcon(Hierarchy) },
-    { label: renderLink('MCP Registry', 'mcps'), key: 'mcps', icon: renderIcon(PlugConnected) },
-    { label: renderLink('Artifacts', 'artifacts'), key: 'artifacts', icon: renderIcon(Archive) },
-  ] },
-  { label: '平台', key: 'platform-group', type: 'group', children: [
+  { label: '平台管理', key: 'platform-group', type: 'group', children: [
+    { label: renderLink('连接与能力', 'platform-connections'), key: 'platform-connections', icon: renderIcon(PlugConnected) },
     { label: renderLink('模型管理', 'models'), key: 'models', icon: renderIcon(BoxModel) },
     { label: renderLink('运行时管理', 'runtimes'), key: 'runtimes', icon: renderIcon(Server) },
     { label: renderLink('API Center', 'apis'), key: 'apis', icon: renderIcon(Api) },
@@ -73,6 +80,13 @@ const activeMenuKey = computed(() => {
 })
 
 const healthTimer = ref<number | null>(null)
+
+function unlockManagement() {
+  if (!managementKey.value.trim()) return
+  managementStore.unlock(managementKey.value)
+  managementKey.value = ''
+  keyDialogOpen.value = false
+}
 
 onMounted(() => {
   systemStore.fetchHealth().catch(() => undefined)
@@ -133,10 +147,30 @@ onBeforeUnmount(() => {
           <span class="health-indicator" />
           {{ systemStore.health ? 'Runtime online' : 'Runtime unavailable' }}
         </div>
+        <NButton v-if="managementStore.unlocked" size="small" quaternary @click="managementStore.lock()">
+          <template #icon><NIcon :component="Lock" /></template>
+          锁定管理模式
+        </NButton>
+        <NButton v-else size="small" secondary @click="keyDialogOpen = true">
+          <template #icon><NIcon :component="Key" /></template>
+          管理员解锁
+        </NButton>
       </header>
       <main class="app-main">
         <RouterView />
       </main>
     </div>
+    <NModal v-model:show="keyDialogOpen" preset="card" title="解锁管理模式" style="width: min(460px, calc(100vw - 32px))">
+      <p class="muted" style="margin: 0 0 16px; line-height: 1.6">密钥只保存在当前页面内存中，刷新或锁定后立即清除。</p>
+      <NFormItem label="平台管理密钥" required>
+        <NInput v-model:value="managementKey" type="password" show-password-on="click" placeholder="PLATFORM_MANAGEMENT_API_KEY" @keyup.enter="unlockManagement" />
+      </NFormItem>
+      <template #footer>
+        <div style="display: flex; justify-content: flex-end; gap: 10px">
+          <NButton @click="keyDialogOpen = false">取消</NButton>
+          <NButton type="primary" :disabled="!managementKey.trim()" @click="unlockManagement">解锁</NButton>
+        </div>
+      </template>
+    </NModal>
   </div>
 </template>

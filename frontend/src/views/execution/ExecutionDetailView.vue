@@ -12,6 +12,7 @@ import RuntimeMetrics from '@/components/execution/RuntimeMetrics.vue'
 import { useExecutionStore } from '@/stores/executions'
 import { formatDate } from '@/utils/format'
 import { formatJson } from '@/utils/executionStudio'
+import { platformApi } from '@/api/platform'
 
 type Section = 'overview' | 'input' | 'output' | 'artifacts' | 'trace' | 'logs'
 
@@ -24,6 +25,7 @@ const section = ref<Section>('overview')
 const execution = computed(() => executionStore.currentExecution)
 const active = computed(() => ['queued', 'running'].includes(execution.value?.status || ''))
 const newExecutionId = ref<string | null>(null)
+const capabilityTimeline = ref<Array<Record<string, unknown>>>([])
 let timer: number | null = null
 let alive = true
 
@@ -35,7 +37,11 @@ function stopTimer() {
 async function load() {
   stopTimer()
   try {
-    await executionStore.fetchExecution(executionId.value)
+    const [, consoleResult] = await Promise.all([
+      executionStore.fetchExecution(executionId.value),
+      platformApi.getConsoleExecution(executionId.value).catch(() => null),
+    ])
+    capabilityTimeline.value = consoleResult?.timeline || []
   } catch {
     return
   }
@@ -129,6 +135,12 @@ onBeforeUnmount(() => {
             <NButton type="primary" secondary @click="router.push({ name: 'trace-detail', params: { id: execution.id } })">
               <template #icon><NIcon :component="Activity" /></template>在 Trace Center 查看完整链路
             </NButton>
+            <div v-if="capabilityTimeline.length" class="binding-list" style="margin-top:16px">
+              <div v-for="item in capabilityTimeline" :key="String(item.id)" class="binding-row">
+                <div><strong>{{ item.label }}</strong><span>{{ item.tool_alias }} / {{ item.latency_ms ?? '--' }} ms</span></div>
+                <StatusTag :status="String(item.status)" style="margin-left:auto" />
+              </div>
+            </div>
           </section>
 
           <section v-show="section === 'input'" class="surface execution-detail-section">

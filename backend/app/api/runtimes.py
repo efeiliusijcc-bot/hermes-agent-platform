@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
+from app.management import require_platform_management_key_for_capability_control
 from app.repositories import runtimes as repository
 from app.runtime import RuntimeAdapterError, get_runtime_adapter
 from app.schemas.runtime import RuntimeCreate, RuntimeHealthRead, RuntimeRead, RuntimeType, RuntimeUpdate
@@ -16,7 +17,7 @@ from app.schemas.runtime import RuntimeCreate, RuntimeHealthRead, RuntimeRead, R
 router = APIRouter(prefix="/api/runtimes", tags=["runtimes"])
 
 
-@router.post("", response_model=RuntimeRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=RuntimeRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def create_runtime(
     payload: RuntimeCreate, session: AsyncSession = Depends(get_session)
 ) -> RuntimeRead:
@@ -48,7 +49,7 @@ async def get_runtime(
     return RuntimeRead.model_validate(value)
 
 
-@router.patch("/{runtime_id}", response_model=RuntimeRead)
+@router.patch("/{runtime_id}", response_model=RuntimeRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def update_runtime(
     runtime_id: UUID,
     payload: RuntimeUpdate,
@@ -64,7 +65,7 @@ async def update_runtime(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Runtime name already exists") from exc
 
 
-@router.post("/{runtime_id}/health", response_model=RuntimeHealthRead)
+@router.post("/{runtime_id}/health", response_model=RuntimeHealthRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
 async def check_runtime_health(
     runtime_id: UUID, session: AsyncSession = Depends(get_session)
 ) -> RuntimeHealthRead:

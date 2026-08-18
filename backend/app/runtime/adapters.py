@@ -67,7 +67,7 @@ class HermesRuntimeAdapter(RuntimeAdapter):
                 model_adapter=model_adapter,
                 agent_id=agent_id,
                 execution_id=execution_id,
-                runtime_options=runtime_options,
+                runtime_options=self._runtime_options(runtime_options, context),
             )
         except (HermesRuntimeError, ValueError) as exc:
             raise RuntimeAdapterError(str(exc)) from exc
@@ -92,7 +92,7 @@ class HermesRuntimeAdapter(RuntimeAdapter):
                 model_adapter=model_adapter,
                 agent_id=agent_id,
                 execution_id=execution_id,
-                runtime_options=runtime_options,
+                runtime_options=self._runtime_options(runtime_options, context),
             ):
                 yield event
         except (HermesRuntimeError, ValueError) as exc:
@@ -124,6 +124,16 @@ class HermesRuntimeAdapter(RuntimeAdapter):
             version=str(reported_version or self.version or "") or None,
             detail="Hermes Runtime is online",
         )
+
+    @staticmethod
+    def _runtime_options(
+        runtime_options: dict[str, Any] | None,
+        context: RuntimeContext | None,
+    ) -> dict[str, Any]:
+        values = dict(runtime_options or {})
+        if context is not None:
+            values["platform_context"] = context.as_dict()
+        return values
 
 
 def get_runtime_adapter(

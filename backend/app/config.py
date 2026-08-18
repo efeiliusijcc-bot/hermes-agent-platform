@@ -78,6 +78,17 @@ class Settings(BaseSettings):
     model_registry_encryption_key: SecretStr | None = None
     model_management_api_key: SecretStr | None = None
 
+    capability_platform_enabled: bool = False
+    capability_gateway_enabled: bool = False
+    console_bff_enabled: bool = False
+    legacy_mcp_binding_read_enabled: bool = True
+    legacy_vector_tool_enabled: bool = True
+    platform_management_api_key_enabled: bool = False
+    platform_management_api_key: SecretStr | None = None
+    execution_capability_token_ttl_seconds: int = Field(default=600, ge=300, le=900)
+    execution_capability_token_renew_before_seconds: int = Field(default=120, ge=30, le=300)
+    capability_gateway_internal_url: str = "http://mcp-gateway:8090/internal/capabilities/invoke"
+
     hermes_endpoint: str = "http://hermes-runtime:8642/v1"
     hermes_api_key: SecretStr
     hermes_model: str = "hermes-agent"

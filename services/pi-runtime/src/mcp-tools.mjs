@@ -64,6 +64,9 @@ export async function loadMcpTools({ endpoint, accessToken, capabilities, execut
         const result = await client.callTool(
           {
             name: tool.name,
+            // The legacy MCP contract still accepts the short-lived mcp2 token
+            // as a server-side argument. The schema exposed to the model is
+            // sanitized above, so the model can neither see nor supply it.
             arguments: { ...parameters, access_token: accessToken },
           },
           undefined,
@@ -84,4 +87,48 @@ export async function loadMcpTools({ endpoint, accessToken, capabilities, execut
     throw new Error(`Authorized MCP tools are unavailable: ${missing.join(', ')}`)
   }
   return { tools, close: () => client.close() }
+}
+
+export function loadCapabilityTools({ endpoint, token, tools, executionId }) {
+  if (!Array.isArray(tools) || tools.length === 0) return []
+  if (!endpoint || !token) throw new Error('Capability Gateway context is incomplete')
+  let accessToken = token
+  return tools.map((tool) => ({
+    name: String(tool.tool_name),
+    label: String(tool.tool_name),
+    description: String(tool.description || `Platform capability ${tool.capability_key}`),
+    parameters: sanitizeInputSchema(tool.input_schema),
+    executionMode: 'sequential',
+    execute: async (_toolCallId, parameters, signal) => {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          execution_id: executionId,
+          tool_name: tool.tool_name,
+          arguments: parameters || {},
+        }),
+        signal,
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload.status !== 'SUCCEEDED') {
+        throw new Error(payload?.error?.message || `Capability ${tool.tool_name} failed`)
+      }
+      if (typeof payload?.metadata?.token_renewal === 'string') {
+        accessToken = payload.metadata.token_renewal
+      }
+      return {
+        content: [{ type: 'text', text: JSON.stringify(payload.data ?? null) }],
+        details: {
+          tool: tool.tool_name,
+          execution_id: executionId,
+          invocation_id: payload.invocation_id,
+        },
+      }
+    },
+  }))
 }

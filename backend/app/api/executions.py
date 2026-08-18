@@ -14,6 +14,7 @@ from app.repositories import executions as repository
 from app.repositories import orchestration as orchestration_repository
 from app.repositories import runtimes as runtime_repository
 from app.runtime import RuntimeAdapterError, get_runtime_adapter
+from app.capabilities.revocation import revoke_execution_capability_token
 from app.schemas.execution import (
     ExecutionDetail,
     ExecutionListRead,
@@ -240,6 +241,7 @@ async def stop_execution(
         task.error = None
         task.finished_at = finished_at
     await session.commit()
+    await revoke_execution_capability_token(details)
     await repository.cancel_running_steps(session, execution.id)
     return ExecutionStopRead(
         execution_id=execution.id,
