@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import secrets
 from time import monotonic
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,18 +21,6 @@ from app.schemas.model_registration import (
 
 
 router = APIRouter(prefix="/api/models", tags=["model-registry"])
-
-
-def authorize_management_key(value: str | None) -> None:
-    configured = get_settings().model_management_api_key
-    if configured is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="模型管理密钥未配置",
-        )
-    expected = configured.get_secret_value()
-    if value is None or not secrets.compare_digest(value, expected):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="模型管理密钥无效")
 
 
 def get_cipher() -> ModelSecretCipher:
@@ -82,9 +69,7 @@ async def get_model(
 async def create_model(
     payload: ModelRegistrationCreate,
     session: AsyncSession = Depends(get_session),
-    management_key: str | None = Header(default=None, alias="X-Model-Management-Key"),
 ) -> ModelRegistrationRead:
-    authorize_management_key(management_key)
     try:
         value = await repository.create_model(session, payload, get_cipher())
     except IntegrityError as exc:
@@ -98,9 +83,7 @@ async def update_model(
     model_id: str,
     payload: ModelRegistrationUpdate,
     session: AsyncSession = Depends(get_session),
-    management_key: str | None = Header(default=None, alias="X-Model-Management-Key"),
 ) -> ModelRegistrationRead:
-    authorize_management_key(management_key)
     value = await require_model(session, model_id)
     if value.is_default and (payload.is_enabled is False or payload.is_default is False):
         raise HTTPException(
@@ -119,9 +102,7 @@ async def update_model(
 async def set_default_model(
     model_id: str,
     session: AsyncSession = Depends(get_session),
-    management_key: str | None = Header(default=None, alias="X-Model-Management-Key"),
 ) -> ModelRegistrationRead:
-    authorize_management_key(management_key)
     value = await require_model(session, model_id)
     return ModelRegistrationRead.model_validate(await repository.set_default(session, value))
 
@@ -130,9 +111,7 @@ async def set_default_model(
 async def test_model(
     model_id: str,
     session: AsyncSession = Depends(get_session),
-    management_key: str | None = Header(default=None, alias="X-Model-Management-Key"),
 ) -> ModelConnectivityRead:
-    authorize_management_key(management_key)
     value = await require_model(session, model_id)
     if not value.is_enabled:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="模型已停用")
@@ -189,9 +168,7 @@ async def test_model(
 async def delete_model(
     model_id: str,
     session: AsyncSession = Depends(get_session),
-    management_key: str | None = Header(default=None, alias="X-Model-Management-Key"),
 ) -> Response:
-    authorize_management_key(management_key)
     value = await require_model(session, model_id)
     if value.is_default:
         raise HTTPException(

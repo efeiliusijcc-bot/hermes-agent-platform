@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { NIcon, NInputNumber, NSwitch, useDialog, useMessage } from 'naive-ui'
-import { Key, Plus, Refresh, Robot, Search } from '@vicons/tabler'
+import { Plus, Refresh, Robot, Search } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
@@ -25,7 +25,6 @@ const query = ref('')
 const models = ref<RegisteredModel[]>([])
 const showEditor = ref(false)
 const editingId = ref<string | null>(null)
-const managementKey = ref('')
 
 const form = reactive({
   id: '',
@@ -82,12 +81,6 @@ async function load() {
   }
 }
 
-function requireManagementKey(): boolean {
-  if (managementKey.value.trim()) return true
-  message.warning('请先输入模型管理密钥；密钥只保存在当前页面内存中')
-  return false
-}
-
 function openCreate() {
   editingId.value = null
   Object.assign(form, {
@@ -118,7 +111,6 @@ function openEdit(model: RegisteredModel) {
 }
 
 async function save() {
-  if (!requireManagementKey()) return
   if (!form.id.trim() || !form.displayName.trim() || !form.baseUrl.trim() || !form.upstreamModel.trim()) {
     message.warning('请完整填写模型 ID、显示名称、地址和上游模型名')
     return
@@ -137,7 +129,7 @@ async function save() {
         is_enabled: form.enabled,
         timeout_seconds: form.timeoutSeconds,
         max_retries: form.maxRetries,
-      }, managementKey.value.trim())
+      })
     } else {
       const payload: ModelCreatePayload = {
         id: form.id.trim(),
@@ -152,7 +144,7 @@ async function save() {
         timeout_seconds: form.timeoutSeconds,
         max_retries: form.maxRetries,
       }
-      await platformApi.createModel(payload, managementKey.value.trim())
+      await platformApi.createModel(payload)
     }
     await load()
     showEditor.value = false
@@ -165,10 +157,9 @@ async function save() {
 }
 
 async function test(model: RegisteredModel) {
-  if (!requireManagementKey()) return
   testingId.value = model.id
   try {
-    const result = await platformApi.testModel(model.id, managementKey.value.trim())
+    const result = await platformApi.testModel(model.id)
     await load()
     message[result.status === 'online' ? 'success' : 'error'](
       `${result.detail}，${result.latency_ms} ms`,
@@ -182,9 +173,8 @@ async function test(model: RegisteredModel) {
 }
 
 async function setDefault(model: RegisteredModel) {
-  if (!requireManagementKey()) return
   try {
-    await platformApi.setDefaultModel(model.id, managementKey.value.trim())
+    await platformApi.setDefaultModel(model.id)
     await load()
     message.success(`${model.display_name} 已设为默认模型`)
   } catch (cause) {
@@ -193,7 +183,6 @@ async function setDefault(model: RegisteredModel) {
 }
 
 function remove(model: RegisteredModel) {
-  if (!requireManagementKey()) return
   dialog.warning({
     title: '删除模型配置',
     content: `确认删除 ${model.display_name}（${model.id}）？默认模型或仍被 Agent 使用的模型会被后端拒绝删除。`,
@@ -201,7 +190,7 @@ function remove(model: RegisteredModel) {
     negativeText: '取消',
     async onPositiveClick() {
       try {
-        await platformApi.deleteModel(model.id, managementKey.value.trim())
+        await platformApi.deleteModel(model.id)
         await load()
         message.success('模型配置已删除')
       } catch (cause) {
@@ -224,14 +213,8 @@ onMounted(load)
     </PageHeader>
 
     <NAlert type="warning" :bordered="false">
-      模型密钥在数据库中加密保存，接口永不回显。新增、修改、删除和真实调用测试需要管理密钥；管理密钥仅保存在当前页面内存，刷新或离开页面后清除。
+      模型 API Key 在数据库中加密保存，接口永不回显。模型配置修改会立即影响后续 Agent 调用。
     </NAlert>
-
-    <section class="surface management-key">
-      <div class="key-icon"><NIcon :component="Key" /></div>
-      <div><strong>模型管理密钥</strong><span>不是模型 API Key，也不是内部 Model Gateway Key</span></div>
-      <NInput v-model:value="managementKey" type="password" show-password-on="click" autocomplete="off" placeholder="输入 MODEL_MANAGEMENT_API_KEY" />
-    </section>
 
     <NAlert v-if="error" type="error" closable @close="error = ''">{{ error }}</NAlert>
 
@@ -303,11 +286,7 @@ onMounted(load)
 
 <style scoped>
 .model-page { display: grid; gap: 18px; }
-.management-key { display: grid; grid-template-columns: 42px minmax(220px, .8fr) minmax(300px, 1.2fr); align-items: center; gap: 14px; padding: 16px; }
-.key-icon, .model-icon { display: grid; place-items: center; border-radius: 12px; color: var(--brand); background: var(--brand-soft); }
-.key-icon { width: 42px; height: 42px; font-size: 20px; }
-.management-key strong, .management-key span { display: block; }
-.management-key span { margin-top: 4px; color: var(--text-muted); font-size: 11px; }
+.model-icon { display: grid; place-items: center; border-radius: 12px; color: var(--brand); background: var(--brand-soft); }
 .model-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .model-metrics article { padding: 16px 18px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--surface); }
 .model-metrics strong, .model-metrics span { display: block; }
@@ -333,6 +312,6 @@ onMounted(load)
 .switches label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .modal-actions { justify-content: flex-end; margin-top: 18px; }
 .mono { font-family: var(--font-mono); }
-@media (max-width: 900px) { .model-grid { grid-template-columns: 1fr; } .management-key { grid-template-columns: 42px 1fr; } .management-key .n-input { grid-column: 1 / -1; } }
+@media (max-width: 900px) { .model-grid { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .model-metrics { grid-template-columns: 1fr; } }
 </style>

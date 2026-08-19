@@ -51,7 +51,6 @@ onMounted(() => systemStore.fetchHealth().catch(() => undefined))
           <li>MCP 注册权限固定为 read_only。</li>
           <li>API Key 仅创建时展示一次，后续只显示前缀。</li>
           <li>Agent 发布后，生产配置通过 Version 管理。</li>
-          <li>模型写操作需要单独的 MODEL_MANAGEMENT_API_KEY。</li>
           <li>完整管理员登录与 RBAC 尚未提供，控制台仍应由可信网关保护。</li>
         </ul>
       </section>

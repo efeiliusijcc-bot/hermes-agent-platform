@@ -76,7 +76,6 @@ class Settings(BaseSettings):
     model_api_key: SecretStr | None = None
     model_name: str | None = None
     model_registry_encryption_key: SecretStr | None = None
-    model_management_api_key: SecretStr | None = None
 
     capability_platform_enabled: bool = False
     capability_gateway_enabled: bool = False

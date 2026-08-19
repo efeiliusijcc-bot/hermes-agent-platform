@@ -10,12 +10,10 @@ $COMPOSE exec -T agent-api python - <<'PY'
 import json
 import os
 import uuid
-import urllib.error
 import urllib.request
 
 
 API = "http://127.0.0.1:8000"
-MANAGEMENT_KEY = os.environ["MODEL_MANAGEMENT_API_KEY"]
 created_id = f"model-registry-smoke-{uuid.uuid4().hex[:8]}"
 agent_id = f"model-registry-agent-{uuid.uuid4().hex[:8]}"
 original_default = None
@@ -23,10 +21,8 @@ created = False
 created_agent = False
 
 
-def request(method, path, payload=None, key=MANAGEMENT_KEY):
+def request(method, path, payload=None):
     headers = {"Content-Type": "application/json"}
-    if key is not None:
-        headers["X-Model-Management-Key"] = key
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     value = urllib.request.Request(f"{API}{path}", data=body, headers=headers, method=method)
     with urllib.request.urlopen(value, timeout=240) as response:
@@ -35,18 +31,12 @@ def request(method, path, payload=None, key=MANAGEMENT_KEY):
 
 
 try:
-    _, models = request("GET", "/api/models", key=None)
+    _, models = request("GET", "/api/models")
     assert models, "model registry is empty"
     serialized = json.dumps(models)
     assert "api_key_ciphertext" not in serialized
     assert '"api_key"' not in serialized
     original_default = next((item for item in models if item["is_default"]), models[0])
-
-    try:
-        request("POST", f"/api/models/{original_default['id']}/test", key="wrong-key")
-        raise AssertionError("wrong management key was accepted")
-    except urllib.error.HTTPError as exc:
-        assert exc.code == 401, exc.code
 
     payload = {
         "id": created_id,
@@ -122,8 +112,8 @@ finally:
         except Exception:
             pass
 
-_, final_models = request("GET", "/api/models", key=None)
+_, final_models = request("GET", "/api/models")
 assert all(item["id"] != created_id for item in final_models)
 assert sum(1 for item in final_models if item["is_default"]) == 1
-print("Model registry CRUD, auth, encryption boundary, connectivity, gateway routing, and cleanup passed")
+print("Model registry CRUD, encryption boundary, connectivity, gateway routing, and cleanup passed")
 PY

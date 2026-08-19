@@ -83,7 +83,7 @@ describe('platformApi contract', () => {
     expect(patch).toHaveBeenCalledWith('/api/runtimes/runtime%20a', { status: 'disabled' })
   })
 
-  it('uses the model registry and protects mutations with the management key', async () => {
+  it('uses the model registry without a dedicated management key', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] })
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} })
     const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: {} })
@@ -94,21 +94,19 @@ describe('platformApi contract', () => {
       upstream_model: 'qwen-32b', api_key: 'upstream-secret', is_enabled: true,
       is_default: true, timeout_seconds: 180, max_retries: 2,
     }
-    const headers = { 'X-Model-Management-Key': 'management-secret' }
-
     await platformApi.listModels(true)
-    await platformApi.createModel(payload, 'management-secret')
-    await platformApi.updateModel('report model', { upstream_model: 'qwen-72b' }, 'management-secret')
-    await platformApi.setDefaultModel('report model', 'management-secret')
-    await platformApi.testModel('report model', 'management-secret')
-    await platformApi.deleteModel('report model', 'management-secret')
+    await platformApi.createModel(payload)
+    await platformApi.updateModel('report model', { upstream_model: 'qwen-72b' })
+    await platformApi.setDefaultModel('report model')
+    await platformApi.testModel('report model')
+    await platformApi.deleteModel('report model')
 
     expect(get).toHaveBeenCalledWith('/api/models', { params: { enabled_only: true } })
-    expect(post).toHaveBeenNthCalledWith(1, '/api/models', payload, { headers })
-    expect(patch).toHaveBeenCalledWith('/api/models/report%20model', { upstream_model: 'qwen-72b' }, { headers })
-    expect(post).toHaveBeenNthCalledWith(2, '/api/models/report%20model/default', undefined, { headers })
-    expect(post).toHaveBeenNthCalledWith(3, '/api/models/report%20model/test', undefined, { headers })
-    expect(remove).toHaveBeenCalledWith('/api/models/report%20model', { headers })
+    expect(post).toHaveBeenNthCalledWith(1, '/api/models', payload)
+    expect(patch).toHaveBeenCalledWith('/api/models/report%20model', { upstream_model: 'qwen-72b' })
+    expect(post).toHaveBeenNthCalledWith(2, '/api/models/report%20model/default')
+    expect(post).toHaveBeenNthCalledWith(3, '/api/models/report%20model/test')
+    expect(remove).toHaveBeenCalledWith('/api/models/report%20model')
   })
 
   it('uses the Phase 3 task, session and artifact endpoints', async () => {

@@ -29,12 +29,9 @@ Agent 创建页和 Agent 详情配置页只允许选择注册表中的启用模�
 
 ## 3. 密钥边界
 
-必须配置两个互不相同的密钥：
+必须配置 `MODEL_REGISTRY_ENCRYPTION_KEY`。它是 Fernet 主加密密钥，仅提供给 `agent-api` 和 `model-gateway`；数据库只保存认证加密后的模型 API Key。
 
-- `MODEL_REGISTRY_ENCRYPTION_KEY`：Fernet 主加密密钥，仅提供给 `agent-api` 和 `model-gateway`。数据库只保存认证加密后的模型 API Key。
-- `MODEL_MANAGEMENT_API_KEY`：保护模型新增、修改、删除、设默认和调用测试。控制台要求管理员手动输入，只保存在当前页面内存，刷新或离开页面即清除。
-
-内部 `MODEL_GATEWAY_API_KEY` 不能作为管理密钥输入浏览器。模型读取接口只返回 `api_key_configured`，永不返回明文密钥或密文。日志、Trace 和 Artifact 也不得记录上述密钥。
+模型管理不再使用独立管理密钥或浏览器 Header。内部 `MODEL_GATEWAY_API_KEY` 仍只用于运行时访问 Model Gateway，不能输入浏览器。模型读取接口只返回 `api_key_configured`，永不返回明文密钥或密文。日志、Trace 和 Artifact 也不得记录上述密钥。
 
 生成缺失密钥：
 
@@ -63,7 +60,7 @@ Agent 创建页和 Agent 详情配置页只允许选择注册表中的启用模�
 - `GET /api/models`
 - `GET /api/models/{model_id}`
 
-以下写操作必须携带 `X-Model-Management-Key`：
+以下写操作不再要求模型专用管理密钥：
 
 - `POST /api/models`
 - `PATCH /api/models/{model_id}`
@@ -86,4 +83,4 @@ docker compose -p hermes-agent-platform exec -T agent-api alembic current
 ./tests/model_registry.sh
 ```
 
-预期迁移头为 `0013_model_registry (head)`。验收至少包括：只读接口不含任何密钥字段、错误管理密钥返回 401、模型真实调用测试在线、Agent 同步与 SSE 各完成一次，以及修改上游模型名后网关确实使用新值。
+预期迁移头为 `0013_model_registry (head)`。验收至少包括：只读接口不含任何密钥字段、无模型专用管理 Header 可完成 CRUD、模型真实调用测试在线、Agent 同步与 SSE 各完成一次，以及修改上游模型名后网关确实使用新值。

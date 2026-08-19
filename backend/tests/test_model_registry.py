@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from inspect import signature
 
 import pytest
 from cryptography.fernet import Fernet
-from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.api.model_registrations import authorize_management_key
+from app.api.model_registrations import (
+    create_model,
+    delete_model,
+    set_default_model,
+    test_model as run_model_connectivity_test,
+    update_model,
+)
 from app.db.models import ModelRegistration
 from app.model_secrets import ModelSecretCipher, ModelSecretError
 from app.schemas.model_registration import ModelRegistrationCreate, ModelRegistrationRead
@@ -60,8 +66,12 @@ def test_model_endpoint_rejects_embedded_credentials() -> None:
         )
 
 
-def test_model_management_key_is_required() -> None:
-    authorize_management_key("test-model-management-api-key")
-    with pytest.raises(HTTPException) as error:
-        authorize_management_key("wrong-key")
-    assert error.value.status_code == 401
+def test_model_mutations_do_not_accept_a_dedicated_management_key() -> None:
+    for handler in (
+        create_model,
+        update_model,
+        set_default_model,
+        run_model_connectivity_test,
+        delete_model,
+    ):
+        assert "management_key" not in signature(handler).parameters

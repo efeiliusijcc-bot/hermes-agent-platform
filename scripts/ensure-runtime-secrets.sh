@@ -42,13 +42,6 @@ if ! grep -q '^MODEL_REGISTRY_ENCRYPTION_KEY=.' "$ENV_FILE"; then
   generated=1
 fi
 
-if ! grep -q '^MODEL_MANAGEMENT_API_KEY=.' "$ENV_FILE"; then
-  management_key=$(openssl rand -base64 48 | tr -d '\n')
-  printf '\nMODEL_MANAGEMENT_API_KEY=%s\n' "$management_key" >>"$ENV_FILE"
-  echo "Model management API key was generated without printing its value"
-  generated=1
-fi
-
 if [ "$generated" -eq 0 ]; then
   echo "Runtime secrets are already configured"
 fi
