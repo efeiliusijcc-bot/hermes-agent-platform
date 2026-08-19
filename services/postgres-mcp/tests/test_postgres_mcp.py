@@ -83,10 +83,15 @@ async def test_transaction_limits_pin_search_path_to_only_scoped_schemas() -> No
 
 
 def test_permissions_and_response_limit_fail_closed() -> None:
-    with pytest.raises(AccessDenied):
+    with pytest.raises(AccessDenied, match="PERMISSION_DENIED"):
         _require_permission({"permissions": {"describe": False}}, "describe")
     with pytest.raises(ValueError, match="响应大小"):
         _require_response_size({"rows": ["x" * 200]}, 32)
+
+
+def test_sql_policy_errors_carry_the_standard_gateway_code() -> None:
+    with pytest.raises(SQLPolicyError, match="INVALID_ARGUMENT"):
+        analyze_select("DELETE FROM public.items")
 
 
 def test_stored_json_objects_accept_asyncpg_jsonb_strings_and_reject_non_objects() -> None:

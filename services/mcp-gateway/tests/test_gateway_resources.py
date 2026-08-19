@@ -25,6 +25,23 @@ class JsonObjectTests(unittest.TestCase):
         self.assertEqual(capability_gateway._json_object("[]"), {})
         self.assertEqual(capability_gateway._json_object("not-json"), {})
 
+    def test_postgresql_mcp_error_marker_maps_to_standard_error(self) -> None:
+        result = SimpleNamespace(
+            content=[SimpleNamespace(
+                type="text",
+                text=(
+                    "Error executing tool db_select: "
+                    "HERMES_CAPABILITY_ERROR[PERMISSION_DENIED]: 对象 public.skills 不在 Scope"
+                ),
+            )],
+        )
+        error = capability_gateway._mcp_failure(result, "postgresql_mcp")
+        self.assertEqual(error.code, "PERMISSION_DENIED")
+        self.assertEqual(error.message, "对象 public.skills 不在 Scope")
+
+        unknown = capability_gateway._mcp_failure(result, "mcp")
+        self.assertEqual(unknown.code, "PROVIDER_UNAVAILABLE")
+
     def test_cache_key_is_deterministic_and_scope_isolated(self) -> None:
         binding = {
             "id": "binding-a",

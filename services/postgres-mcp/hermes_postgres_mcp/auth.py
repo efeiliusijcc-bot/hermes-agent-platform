@@ -10,7 +10,8 @@ from typing import Any
 
 
 class AccessDenied(ValueError):
-    pass
+    def __str__(self) -> str:
+        return f"HERMES_CAPABILITY_ERROR[PERMISSION_DENIED]: {super().__str__()}"
 
 
 def verify_capability_token(token: str, signing_key: str) -> dict[str, Any]:

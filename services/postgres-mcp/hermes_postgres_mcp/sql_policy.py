@@ -7,7 +7,8 @@ from pglast import ast, parse_sql
 
 
 class SQLPolicyError(ValueError):
-    pass
+    def __str__(self) -> str:
+        return f"HERMES_CAPABILITY_ERROR[INVALID_ARGUMENT]: {super().__str__()}"
 
 
 AGGREGATE_FUNCTIONS = {

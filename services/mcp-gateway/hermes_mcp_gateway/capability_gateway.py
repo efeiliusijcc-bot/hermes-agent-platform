@@ -50,6 +50,9 @@ PROTECTED_FIELDS = {
 }
 SAFE_HEADER = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,63}$")
 MAX_RESPONSE_BYTES = int(os.getenv("CAPABILITY_MAX_RESPONSE_BYTES", "2097152"))
+MCP_ERROR_MARKER = re.compile(
+    r"HERMES_CAPABILITY_ERROR\[([A-Z_]+)\]:\s*([^\r\n]+)"
+)
 
 
 class GatewayError(RuntimeError):
@@ -730,7 +733,7 @@ async def _invoke_provider(
                     await session.initialize()
                     result = await session.call_tool(str(provider["path_or_tool"]), request_data)
         if result.isError:
-            raise GatewayError("PROVIDER_UNAVAILABLE", "MCP Tool 返回错误")
+            raise _mcp_failure(result, str(provider["connector_type"]))
         texts = [item.text for item in result.content if getattr(item, "type", None) == "text"]
         if len(texts) == 1:
             try:
@@ -799,6 +802,19 @@ async def _invoke_provider(
         return json.loads(content)
     except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
         raise GatewayError("OUTPUT_INVALID", "Connector 返回的 JSON 无效") from exc
+
+
+def _mcp_failure(result: Any, connector_type: str) -> GatewayError:
+    if connector_type == "postgresql_mcp":
+        texts = [
+            str(item.text)
+            for item in getattr(result, "content", [])
+            if getattr(item, "type", None) == "text" and getattr(item, "text", None)
+        ]
+        match = MCP_ERROR_MARKER.search("\n".join(texts))
+        if match is not None and match.group(1) in STANDARD_ERRORS:
+            return GatewayError(match.group(1), match.group(2).strip()[:500])
+    return GatewayError("PROVIDER_UNAVAILABLE", "MCP Tool 返回错误")
 
 
 async def _read_limited_response(response: httpx.Response) -> bytes:
