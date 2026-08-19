@@ -179,4 +179,4 @@ cd /opt/hermes-agent-platform
 - 前后端和 Runtime 已安装依赖所在镜像；
 - `OFFLINE_IMAGES.txt`、内部 `SHA256SUMS`、外部归档 SHA-256。
 
-目标内网恢复必须使用 `docker load` 和 `--pull never`，不得执行 `docker build`、`pip install`、`npm install`、`git clone` 或任何在线镜像拉取。归档不加密，但不得包含源节点 `.env`、明文数据库密码、Execution Token 或历史密钥。
+目标内网恢复必须先 `docker load`，并在 Compose 启动前逐项确认全部镜像存在；不得执行 `docker build`、`pip install`、`npm install`、`git clone` 或任何在线镜像拉取。旧 Compose 不支持 `--pull never` 时，由启动前的完整镜像检查实现同样的失败关闭。归档不加密，但不得包含源节点 `.env`、明文数据库密码、Execution Token 或历史密钥。

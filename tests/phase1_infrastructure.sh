@@ -5,14 +5,16 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 PROJECT_NAME=${HERMES_COMPOSE_PROJECT_NAME:-hermes-agent-platform}
 COMPOSE="docker compose -p $PROJECT_NAME -f $PROJECT_ROOT/docker-compose.yml"
+. "$PROJECT_ROOT/scripts/compose-compat.sh"
+compose_compat_select_wait_mode
 
 test -f "$PROJECT_ROOT/.env" || {
   echo "missing deployment file: $PROJECT_ROOT/.env" >&2
   exit 1
 }
 
-$COMPOSE config --quiet
-$COMPOSE up -d --wait postgres redis minio
+compose_compat_config_check
+compose_compat_up_and_wait postgres redis minio
 
 postgres_id=$($COMPOSE ps -q postgres)
 redis_id=$($COMPOSE ps -q redis)
@@ -47,7 +49,7 @@ $COMPOSE run --rm minio-init
 $COMPOSE exec -T postgres bash -ec 'exec 3<>/dev/tcp/redis/6379; exec 4<>/dev/tcp/minio/9000'
 
 $COMPOSE restart postgres redis minio
-$COMPOSE up -d --wait postgres redis minio
+compose_compat_up_and_wait postgres redis minio
 
 test "$($COMPOSE exec -T postgres psql -At -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c "SELECT value FROM infrastructure_probe WHERE id = 1")" = "phase1-ok"
 test "$($COMPOSE exec -T redis sh -ec 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli GET hap:phase1:probe')" = "phase1-ok"

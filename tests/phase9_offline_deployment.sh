@@ -69,7 +69,8 @@ OFFLINE_EDGE_NETWORK_NAME=$VERIFY_EDGE_NETWORK \
 OFFLINE_PI_RUNTIME_NETWORK_NAME=$VERIFY_PI_RUNTIME_NETWORK \
 OFFLINE_DEEPSEEK_RUNTIME_NETWORK_NAME=$VERIFY_DEEPSEEK_RUNTIME_NETWORK \
 OFFLINE_DEEPSEEK_HARNESS_NETWORK_NAME=$VERIFY_DEEPSEEK_HARNESS_NETWORK \
-  "$VERIFY_ROOT/scripts/restore-offline-bundle.sh"
+OFFLINE_COMPOSE_WAIT_MODE=manual \
+    "$VERIFY_ROOT/scripts/restore-offline-bundle.sh"
 
 set -a
 . "$VERIFY_ROOT/.env"
@@ -99,7 +100,30 @@ AGENT_API_PORT=$VERIFY_PORT \
 HERMES_COMPOSE_PROJECT_NAME=$VERIFY_PROJECT \
   "$VERIFY_ROOT/tests/phase10_phase2_platform.sh"
 
-test "$($VERIFY_COMPOSE ps --status running -q | wc -l | tr -d ' ')" = "16"
+long_running_services="postgres redis minio knowledge-service source-recall-gateway model-gateway postgres-mcp mcp-gateway hermes-runtime pi-runtime deepseek-runtime deepseek-harness-core agent-api agent-worker frontend hermes-orchestrator"
+long_running_count=0
+for service in $long_running_services; do
+  container_id=$($VERIFY_COMPOSE ps -q "$service" | sed -n '1p')
+  test -n "$container_id" || {
+    echo "Missing long-running service: $service" >&2
+    exit 1
+  }
+  state=$(docker inspect --format '{{.State.Status}}' "$container_id")
+  health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id")
+  test "$state" = running || {
+    echo "Long-running service is not running: $service ($state/$health)" >&2
+    exit 1
+  }
+  case "$health" in
+    healthy|none) ;;
+    *)
+      echo "Long-running service is not ready: $service ($state/$health)" >&2
+      exit 1
+      ;;
+  esac
+  long_running_count=$((long_running_count + 1))
+done
+test "$long_running_count" = "16"
 curl -fsS "$VERIFY_API/health" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert all(value.get(key)=="ok" for key in ("status","database","memory","knowledge")), value'
 test "$(curl -fsS "$VERIFY_FRONTEND/frontend-health")" = "ok"
 curl -fsS "$VERIFY_FRONTEND/health" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert all(value.get(key)=="ok" for key in ("status","database","memory","knowledge")), value'

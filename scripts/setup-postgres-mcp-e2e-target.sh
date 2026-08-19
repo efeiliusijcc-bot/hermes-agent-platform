@@ -5,12 +5,14 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 PROJECT_NAME=${HERMES_COMPOSE_PROJECT_NAME:-hermes-agent-platform}
 TEST_NETWORK=${HERMES_POSTGRES_MCP_TEST_NETWORK_NAME:-hermes-agent-platform-postgres-mcp-test-target}
-COMPOSE="docker compose -p $PROJECT_NAME -f $PROJECT_ROOT/docker-compose.yml"
+COMPOSE="docker compose -p $PROJECT_NAME -f $PROJECT_ROOT/docker-compose.yml --profile postgres-mcp-e2e"
+. "$PROJECT_ROOT/scripts/compose-compat.sh"
+compose_compat_select_wait_mode
 
-$COMPOSE --profile postgres-mcp-e2e up -d --no-deps --wait --pull never postgres-mcp-test-db
+compose_compat_up_and_wait postgres-mcp-test-db
 
 postgres_mcp_id=$($COMPOSE ps -q postgres-mcp)
-test_postgres_id=$($COMPOSE --profile postgres-mcp-e2e ps -q postgres-mcp-test-db)
+test_postgres_id=$($COMPOSE ps -q postgres-mcp-test-db)
 test -n "$postgres_mcp_id" || {
   echo "postgres-mcp is not running" >&2
   exit 1

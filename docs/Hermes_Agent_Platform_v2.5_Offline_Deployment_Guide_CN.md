@@ -8,7 +8,7 @@
 >
 > 默认控制台端口：`18089`
 
-本手册对应包含 Capability Registry、PostgreSQL MCP、Hermes/Pi/DeepSeek Runtime、Agent Team、Execution/Trace/Artifact 的完整离线包。目标内网只需已有 Docker Engine、Docker Compose v2 和基础解压/校验工具；部署过程不执行镜像拉取、`docker build`、`pip install`、`npm install` 或 `git clone`。
+本手册对应包含 Capability Registry、PostgreSQL MCP、Hermes/Pi/DeepSeek Runtime、Agent Team、Execution/Trace/Artifact 的完整离线包。目标内网只需已有 Docker Engine、Docker Compose v2 和基础解压/校验工具；不要求 Compose 支持 `up --wait`、`config --quiet` 或 `run --pull`。部署过程不执行镜像拉取、`docker build`、`pip install`、`npm install` 或 `git clone`。
 
 ## 1. 交付物
 
@@ -32,7 +32,7 @@
 ## 2. 目标节点要求
 
 - Linux x86_64；
-- Docker Engine 和 `docker compose` v2；
+- Docker Engine 和 `docker compose` v2；允许使用没有 `up --wait` 的早期 v2 版本；
 - `tar`、`gzip`、`sha256sum`、`curl`；
 - 建议至少 20 GiB 可用空间，生产数据较多时应额外预留；
 - 当前用户可以运行 Docker；
@@ -137,7 +137,17 @@ OFFLINE_FRONTEND_PORT=18089 \
   ./scripts/restore-offline-bundle.sh
 ```
 
-恢复脚本会校验包内文件、确认镜像已加载、以 `--pull never` 启动服务，恢复 PostgreSQL、Redis、MinIO 和 Runtime 数据，并检查 Agent API、前端、Pi 与 DeepSeek Runtime。恢复期间不访问公网。
+恢复脚本会校验包内文件、加载 `images.tar`，并在启动前逐个 `docker image inspect` 确认 `OFFLINE_IMAGES.txt` 中的镜像全部存在。镜像不完整时会在 Compose 启动前失败；镜像完整时直接使用本地镜像，不执行拉取。随后脚本恢复 PostgreSQL、Redis、MinIO 和 Runtime 数据，并检查 Agent API、前端、Pi 与 DeepSeek Runtime。
+
+等待方式由脚本自动选择：Compose 支持 `up --wait` 时使用原生等待；不支持时使用 `docker inspect` 轮询容器状态与健康检查。手动轮询只等待 16 个长期服务，不把正常退出的 `hermes-init`、`minio-init` 误判为失败。需要强制验证低版本路径或延长等待时间时可执行：
+
+```sh
+OFFLINE_COMPOSE_WAIT_MODE=manual \
+OFFLINE_SERVICE_WAIT_TIMEOUT_SECONDS=600 \
+  ./scripts/restore-offline-bundle.sh
+```
+
+`OFFLINE_COMPOSE_WAIT_MODE` 可取 `auto`（默认）、`native`、`manual`；默认手动等待超时为 300 秒。
 
 源节点 Connector Credential 和模型 API Key 在 PostgreSQL dump 中只有密文，且离线包不带源 `MODEL_REGISTRY_ENCRYPTION_KEY`。使用新主密钥时，恢复后需要在“模型管理”和“数据库连接”页面重新录入对应凭据；API 不会回显旧密码。
 
@@ -239,7 +249,11 @@ docker compose logs --tail=200 model-gateway hermes-runtime pi-runtime deepseek-
 
 ### 不允许拉取镜像
 
-恢复命令已经使用 `--pull never`。若出现镜像缺失，说明 `images.tar` 不完整或镜像未成功 `docker load`，不要临时联网拉取；重新校验归档和 `OFFLINE_IMAGES.txt`。
+恢复脚本会先 `docker load`，再逐项检查 `OFFLINE_IMAGES.txt`。任何镜像缺失都会在启动前失败，因此兼容旧 Compose 时不依赖 `--pull never`。不要临时联网拉取；应重新校验归档和 `OFFLINE_IMAGES.txt`。
+
+### Compose 不支持 `--wait` 或 `config --quiet`
+
+无需升级或联网安装 Compose。默认 `auto` 会自动切换为手动健康轮询，并在 `config --quiet` 不可用时退回普通 `config` 校验。若仍报错，执行 `docker compose version` 并保留错误文本；不要把 `.env` 内容发出。
 
 ## 11. 运维边界
 

@@ -25,7 +25,9 @@ if [ "${HAP_VALIDATE_COMPOSE:-0}" = "1" ]; then
     echo "docker is required when HAP_VALIDATE_COMPOSE=1" >&2
     exit 1
   }
-  docker compose -p hermes-agent-platform -f "$PROJECT_ROOT/docker-compose.yml" config --quiet
+  COMPOSE="docker compose -p hermes-agent-platform -f $PROJECT_ROOT/docker-compose.yml"
+  . "$PROJECT_ROOT/scripts/compose-compat.sh"
+  compose_compat_config_check
 fi
 
 echo "Phase 0 validation passed"

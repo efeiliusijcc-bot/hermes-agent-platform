@@ -11,6 +11,7 @@ TARGET_EDGE_NETWORK=${OFFLINE_EDGE_NETWORK_NAME:-hermes-agent-platform-edge}
 TARGET_PI_RUNTIME_NETWORK=${OFFLINE_PI_RUNTIME_NETWORK_NAME:-hermes-agent-platform-pi-runtime}
 TARGET_DEEPSEEK_RUNTIME_NETWORK=${OFFLINE_DEEPSEEK_RUNTIME_NETWORK_NAME:-hermes-agent-platform-deepseek-runtime}
 TARGET_DEEPSEEK_HARNESS_NETWORK=${OFFLINE_DEEPSEEK_HARNESS_NETWORK_NAME:-hermes-agent-platform-deepseek-harness}
+LONG_RUNNING_SERVICES="postgres redis minio knowledge-service source-recall-gateway model-gateway postgres-mcp mcp-gateway hermes-runtime pi-runtime deepseek-runtime deepseek-harness-core agent-api agent-worker frontend hermes-orchestrator"
 
 test -f "$PROJECT_ROOT/.env" || {
   echo "Offline target is not configured; run ./scripts/configure-offline-env.sh first" >&2
@@ -51,6 +52,8 @@ export HERMES_PI_RUNTIME_NETWORK_NAME HERMES_DEEPSEEK_RUNTIME_NETWORK_NAME
 export HERMES_DEEPSEEK_HARNESS_NETWORK_NAME AGENT_API_PORT FRONTEND_PORT
 
 COMPOSE="docker compose -p $PROJECT_NAME -f $PROJECT_ROOT/docker-compose.yml"
+. "$PROJECT_ROOT/scripts/compose-compat.sh"
+compose_compat_select_wait_mode
 
 docker load --input "$PROJECT_ROOT/images.tar" >/dev/null
 while IFS= read -r image_ref; do
@@ -66,12 +69,12 @@ for data_name in hermes hermes-workspace deepseek-sessions mcp-files; do
 done
 "$PROJECT_ROOT/scripts/prepare-data-dirs.sh" >/dev/null
 
-$COMPOSE config --quiet
-$COMPOSE up -d --wait --pull never postgres redis minio
+compose_compat_config_check
+compose_compat_up_and_wait postgres redis minio
 
 REDIS_KEYS_FILE="$PROJECT_ROOT/offline-data/redis/keys.json"
 chmod 0444 "$REDIS_KEYS_FILE"
-if ! $COMPOSE run --rm --no-deps --pull never \
+if ! $COMPOSE run --rm --no-deps \
   -v "$REDIS_KEYS_FILE:/restore/keys.json:ro" \
   --entrypoint python agent-api - <<'PY'
 import base64
@@ -145,8 +148,8 @@ $COMPOSE exec -T postgres pg_restore \
   --no-privileges \
   --exit-on-error < "$PROJECT_ROOT/offline-data/postgres.dump"
 
-$COMPOSE run --rm --no-deps --pull never minio-init >/dev/null
-$COMPOSE run --rm --no-deps --pull never \
+$COMPOSE run --rm --no-deps minio-init >/dev/null
+$COMPOSE run --rm --no-deps \
   -v "$PROJECT_ROOT/offline-data/minio:/import:ro" \
   --entrypoint /bin/sh minio-init -ec '
     mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
@@ -154,9 +157,7 @@ $COMPOSE run --rm --no-deps --pull never \
     mc mirror --overwrite /import/knowledge local/knowledge >/dev/null
   '
 
-$COMPOSE up -d --wait --pull never \
-  postgres-mcp mcp-gateway hermes-runtime pi-runtime deepseek-runtime deepseek-harness-core \
-  agent-api agent-worker hermes-orchestrator frontend
+compose_compat_up_and_wait $LONG_RUNNING_SERVICES
 curl -fsS "http://127.0.0.1:$TARGET_API_PORT/health" >/dev/null
 curl -fsS "http://127.0.0.1:$TARGET_FRONTEND_PORT/frontend-health" >/dev/null
 curl -fsS "http://127.0.0.1:$TARGET_FRONTEND_PORT/health" >/dev/null

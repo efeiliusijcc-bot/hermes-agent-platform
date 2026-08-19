@@ -33,7 +33,7 @@
 
 ## 3. 在新内网节点导入
 
-新节点只需要预装兼容的 Docker Engine、Docker Compose、`tar`、`gzip`、`sha256sum` 和 `curl`。复制 `.tar.gz` 与同名 `.sha256` 后：
+新节点只需要预装兼容的 Docker Engine、Docker Compose v2、`tar`、`gzip`、`sha256sum` 和 `curl`。允许 Compose v2 不支持 `up --wait`、`config --quiet` 或 `run --pull`；恢复脚本会自动降级为 `docker inspect` 手动健康轮询。复制 `.tar.gz` 与同名 `.sha256` 后：
 
 ```sh
 sha256sum -c hermes-agent-platform-v1.0.0-*.tar.gz.sha256
@@ -45,7 +45,7 @@ cd /opt/hermes-agent-platform
 ./scripts/restore-offline-bundle.sh
 ```
 
-配置脚本先执行 `docker load`，再通过 `--network none` 的包内镜像生成目标节点新密钥，并现场接收内网模型地址、模型名和 API Key；这些值不会打印到终端。恢复脚本随后完成内部校验、`docker load`、持久目录准备、Redis RDB 放置与逻辑键恢复、PostgreSQL 恢复、MinIO 对象导入、服务启动和 API 健康检查，全程使用 `--pull never`。Redis 7 在 AOF 模式下不会直接采用外部 RDB，因此 RDB 作为完整备份保留，运行恢复使用带类型和 TTL 的逻辑快照。
+配置脚本先执行 `docker load`，再通过 `--network none` 的包内镜像生成目标节点新密钥，并现场接收内网模型地址、模型名和 API Key；这些值不会打印到终端。恢复脚本随后完成内部校验、`docker load`、逐镜像存在性检查、持久目录准备、Redis RDB 放置与逻辑键恢复、PostgreSQL 恢复、MinIO 对象导入、服务启动和 API 健康检查。镜像缺失会在 Compose 启动前失败，因此兼容旧 Compose 时不依赖 `--pull never`，也不会在线补拉镜像。Redis 7 在 AOF 模式下不会直接采用外部 RDB，因此 RDB 作为完整备份保留，运行恢复使用带类型和 TTL 的逻辑快照。
 
 ## 4. 116 隔离验收
 
@@ -63,4 +63,4 @@ Phase 9 在 116 使用以下完全独立的验证边界模拟新节点：
 ./tests/phase9_offline_deployment.sh /absolute/path/to/hermes-agent-platform-v1.0.0-*.tar.gz
 ```
 
-测试验证归档内外校验和、镜像导入、十六个长期服务健康、Pi/DeepSeek Runtime 自动注册与健康检查、前端静态页面与 API 同源代理、PostgreSQL/Redis/MinIO/文件/Harness Session 数据迁移，以及恢复后的 Knowledge Analyst 真实多源分析。测试还比较原 `hermes-agent-platform` 容器 ID，确保整个过程没有重建原部署。成功后只删除隔离验证项目和验证目录，保留原部署与离线包。
+测试强制设置 `OFFLINE_COMPOSE_WAIT_MODE=manual`，不调用 `up --wait`。它验证归档内外校验和、镜像导入、十六个长期服务状态与健康检查、Pi/DeepSeek Runtime 自动注册与健康检查、前端静态页面与 API 同源代理、PostgreSQL/Redis/MinIO/文件/Harness Session 数据迁移，以及恢复后的 Knowledge Analyst 真实多源分析。测试还比较原 `hermes-agent-platform` 容器 ID，确保整个过程没有重建原部署。成功后只删除隔离验证项目和验证目录，保留原部署与离线包。
