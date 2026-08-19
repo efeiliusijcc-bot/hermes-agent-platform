@@ -112,9 +112,18 @@ def test_two_concurrent_runs_share_alias_schema_but_dispatch_by_run_identity() -
     try:
         module.register_run("run-1", "run-1", context("execution-1", token("one")))
         module.register_run("run-2", "run-2", context("execution-2", token("two")))
-        agent = SimpleNamespace(tools=[], valid_tool_names=set())
+        agent = SimpleNamespace(
+            tools=[],
+            valid_tool_names=set(),
+            enabled_toolsets=["hermes-cli"],
+            disabled_toolsets=["mcp-hermes-platform", "browser"],
+            _tool_search_scope_cache=("stale", frozenset()),
+        )
         module.attach_run_tools(agent, "run-1")
         assert agent.tools[0]["function"]["name"] == "business_db_select"
+        assert agent.enabled_toolsets == ["hermes-cli", "mcp-hermes-platform"]
+        assert agent.disabled_toolsets == ["browser"]
+        assert agent._tool_search_scope_cache is None
         handler = registry.entries["business_db_select"].handler
         assert json.loads(handler({"sql": "SELECT 1"}, task_id="run-1")) == {"execution": "execution-1"}
         assert json.loads(handler({"sql": "SELECT 2"}, task_id="run-2")) == {"execution": "execution-2"}

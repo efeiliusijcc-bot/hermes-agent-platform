@@ -170,6 +170,16 @@ def attach_run_tools(agent: Any, run_id: str) -> None:
     valid = set(getattr(agent, "valid_tool_names", None) or ())
     valid.update(item["function"]["name"] for item in definitions)
     agent.valid_tool_names = valid
+    enabled = getattr(agent, "enabled_toolsets", None)
+    if enabled is not None and "mcp-hermes-platform" not in enabled:
+        agent.enabled_toolsets = [*enabled, "mcp-hermes-platform"]
+    disabled = getattr(agent, "disabled_toolsets", None)
+    if disabled is not None and "mcp-hermes-platform" in disabled:
+        agent.disabled_toolsets = [item for item in disabled if item != "mcp-hermes-platform"]
+    # Hermes caches the deferrable catalog by the effective toolset scope.
+    # The dynamic platform toolset is attached after Agent construction, so
+    # discard any catalog computed from the pre-attachment scope.
+    agent._tool_search_scope_cache = None
 
 
 def unregister_run(run_id: str) -> None:
