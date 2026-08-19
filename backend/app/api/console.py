@@ -209,8 +209,12 @@ async def agent_editor(
     capability_rows: list[dict[str, Any]] = []
     resolved_by_binding = {item.binding_id: item for item in resolution.tools} if resolution else {}
     for binding in bindings:
-        version = await session.get(CapabilityVersion, binding.capability_version_id)
-        capability = await session.get(Capability, version.capability_id) if version else None
+        capability_version = await session.get(CapabilityVersion, binding.capability_version_id)
+        capability = (
+            await session.get(Capability, capability_version.capability_id)
+            if capability_version
+            else None
+        )
         resolved = resolved_by_binding.get(str(binding.id))
         capability_rows.append(
             {
@@ -218,7 +222,7 @@ async def agent_editor(
                 "key": capability.key if capability else "unknown",
                 "label": capability.display_name if capability else "未知能力",
                 "description": capability.description if capability else None,
-                "version": version.version if version else None,
+                "version": capability_version.version if capability_version else None,
                 "state": "READY" if resolved else "NEEDS_CONFIGURATION",
                 "source_label": _source_label(binding.source_type),
                 "scope_summary": "已配置资源范围" if binding.resource_scope_revision_id else "未限制资源范围",
