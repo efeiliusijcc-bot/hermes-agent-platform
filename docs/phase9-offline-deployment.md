@@ -63,4 +63,4 @@ Phase 9 在 116 使用以下完全独立的验证边界模拟新节点：
 ./tests/phase9_offline_deployment.sh /absolute/path/to/hermes-agent-platform-v1.0.0-*.tar.gz
 ```
 
-测试验证归档内外校验和、镜像导入、十五个长期服务健康、Pi/DeepSeek Runtime 自动注册与健康检查、前端静态页面与 API 同源代理、PostgreSQL/Redis/MinIO/文件/Harness Session 数据迁移，以及恢复后的 Knowledge Analyst 真实多源分析。测试还比较原 `hermes-agent-platform` 容器 ID，确保整个过程没有重建原部署。成功后只删除隔离验证项目和验证目录，保留原部署与离线包。
+测试验证归档内外校验和、镜像导入、十六个长期服务健康、Pi/DeepSeek Runtime 自动注册与健康检查、前端静态页面与 API 同源代理、PostgreSQL/Redis/MinIO/文件/Harness Session 数据迁移，以及恢复后的 Knowledge Analyst 真实多源分析。测试还比较原 `hermes-agent-platform` 容器 ID，确保整个过程没有重建原部署。成功后只删除隔离验证项目和验证目录，保留原部署与离线包。

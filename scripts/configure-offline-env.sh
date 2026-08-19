@@ -47,7 +47,7 @@ test -n "$OFFLINE_MODEL_API_KEY" || { echo "模型 API Key 不能为空" >&2; ex
 generated=$(docker run --rm --network none "$GENERATOR_IMAGE" python -c '
 from cryptography.fernet import Fernet
 from secrets import token_urlsafe
-for _ in range(10):
+for _ in range(11):
     print(token_urlsafe(36))
 print(Fernet.generate_key().decode("ascii"))
 ')
@@ -61,8 +61,9 @@ PI_RUNTIME_API_KEY=$(printf '%s\n' "$generated" | sed -n '6p')
 DEEPSEEK_RUNTIME_API_KEY=$(printf '%s\n' "$generated" | sed -n '7p')
 MCP_GATEWAY_SIGNING_KEY=$(printf '%s\n' "$generated" | sed -n '8p')
 PLATFORM_MANAGEMENT_API_KEY=$(printf '%s\n' "$generated" | sed -n '9p')
-POSTGRES_MCP_TEST_ADMIN_PASSWORD=$(printf '%s\n' "$generated" | sed -n '10p')
-MODEL_REGISTRY_ENCRYPTION_KEY=${OFFLINE_MODEL_REGISTRY_ENCRYPTION_KEY:-$(printf '%s\n' "$generated" | sed -n '11p')}
+SOURCE_RECALL_GATEWAY_API_KEY=$(printf '%s\n' "$generated" | sed -n '10p')
+POSTGRES_MCP_TEST_ADMIN_PASSWORD=$(printf '%s\n' "$generated" | sed -n '11p')
+MODEL_REGISTRY_ENCRYPTION_KEY=${OFFLINE_MODEL_REGISTRY_ENCRYPTION_KEY:-$(printf '%s\n' "$generated" | sed -n '12p')}
 
 cp "$ENV_EXAMPLE" "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
@@ -94,6 +95,13 @@ set_value PI_RUNTIME_API_KEY "$PI_RUNTIME_API_KEY"
 set_value DEEPSEEK_RUNTIME_API_KEY "$DEEPSEEK_RUNTIME_API_KEY"
 set_value MCP_GATEWAY_SIGNING_KEY "$MCP_GATEWAY_SIGNING_KEY"
 set_value PLATFORM_MANAGEMENT_API_KEY "$PLATFORM_MANAGEMENT_API_KEY"
+set_value SOURCE_RECALL_ENABLED "false"
+set_value SOURCE_RECALL_GATEWAY_API_KEY "$SOURCE_RECALL_GATEWAY_API_KEY"
+set_value SOURCE_RECALL_UPSTREAM_ENDPOINT ""
+set_value SOURCE_RECALL_UPSTREAM_API_KEY ""
+set_value CAPABILITY_PLATFORM_ENABLED "true"
+set_value CAPABILITY_GATEWAY_ENABLED "true"
+set_value CONSOLE_BFF_ENABLED "true"
 set_value POSTGRES_MCP_TEST_ADMIN_PASSWORD "$POSTGRES_MCP_TEST_ADMIN_PASSWORD"
 set_value FRONTEND_BIND_HOST "${OFFLINE_FRONTEND_BIND_HOST:-0.0.0.0}"
 set_value AGENT_API_BIND_HOST "${OFFLINE_AGENT_API_BIND_HOST:-127.0.0.1}"
@@ -101,7 +109,8 @@ set_value AGENT_API_BIND_HOST "${OFFLINE_AGENT_API_BIND_HOST:-127.0.0.1}"
 unset generated POSTGRES_PASSWORD REDIS_PASSWORD MINIO_ROOT_PASSWORD
 unset MODEL_GATEWAY_API_KEY HERMES_API_KEY PI_RUNTIME_API_KEY
 unset DEEPSEEK_RUNTIME_API_KEY MCP_GATEWAY_SIGNING_KEY PLATFORM_MANAGEMENT_API_KEY
-unset POSTGRES_MCP_TEST_ADMIN_PASSWORD MODEL_REGISTRY_ENCRYPTION_KEY OFFLINE_MODEL_API_KEY
+unset SOURCE_RECALL_GATEWAY_API_KEY POSTGRES_MCP_TEST_ADMIN_PASSWORD
+unset MODEL_REGISTRY_ENCRYPTION_KEY OFFLINE_MODEL_API_KEY
 unset OFFLINE_MODEL_REGISTRY_ENCRYPTION_KEY
 
 echo "Offline .env created: $ENV_FILE"

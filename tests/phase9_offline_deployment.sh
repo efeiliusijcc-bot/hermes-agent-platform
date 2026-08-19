@@ -95,9 +95,9 @@ HERMES_COMPOSE_PROJECT_NAME=$VERIFY_PROJECT \
   "$VERIFY_ROOT/tests/phase10_phase2_platform.sh"
 
 test "$($VERIFY_COMPOSE ps --status running -q | wc -l | tr -d ' ')" = "16"
-curl -fsS "$VERIFY_API/health" | python3 -c 'import json,sys; assert json.load(sys.stdin)=={"status":"ok","database":"ok","memory":"ok","knowledge":"ok"}'
+curl -fsS "$VERIFY_API/health" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert all(value.get(key)=="ok" for key in ("status","database","memory","knowledge")), value'
 test "$(curl -fsS "$VERIFY_FRONTEND/frontend-health")" = "ok"
-curl -fsS "$VERIFY_FRONTEND/health" | python3 -c 'import json,sys; assert json.load(sys.stdin)=={"status":"ok","database":"ok","memory":"ok","knowledge":"ok"}'
+curl -fsS "$VERIFY_FRONTEND/health" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert all(value.get(key)=="ok" for key in ("status","database","memory","knowledge")), value'
 curl -fsS "$VERIFY_FRONTEND/api/agents" | python3 -c 'import json,sys; assert isinstance(json.load(sys.stdin), list)'
 curl -fsS -X POST "$VERIFY_API/api/runtimes/$(curl -fsS "$VERIFY_API/api/runtimes" | python3 -c 'import json,sys; print(next(v["id"] for v in json.load(sys.stdin) if v["type"]=="pi"))')/health" |
   python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["status"]=="online" and value["version"]=="0.84.2", value'
