@@ -20,6 +20,7 @@ from app.database_connections import (
     validate_scope,
 )
 from app.api.console import (
+    _capability_binding_display_context,
     _database_scope_context,
     _editor_version,
     _require_database_operation_permission,
@@ -27,9 +28,11 @@ from app.api.console import (
 from app.api.database_connections import require_database_console_bff
 from app.db.models import (
     AgentVersion,
+    CapabilityImplementation,
     Connector,
     ConnectorCredential,
     ConnectorInstance,
+    ConnectorInstanceRevision,
     ResourceScope,
     ResourceScopeRevision,
 )
@@ -196,6 +199,46 @@ async def test_agent_editor_falls_back_to_published_version_for_read_only_bindin
     selected, source = await _editor_version(session, agent, draft)  # type: ignore[arg-type]
     assert selected is draft and source == "draft"
     session.get.assert_awaited_once_with(AgentVersion, published_id)
+
+
+@pytest.mark.asyncio
+async def test_agent_editor_exposes_database_alias_connection_database_and_scope() -> None:
+    scope_revision_id, scope_id, implementation_id, connector_revision_id, instance_id = (
+        uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
+    )
+    binding = SimpleNamespace(
+        resource_scope_revision_id=scope_revision_id,
+        implementation_id=implementation_id,
+    )
+    values = {
+        (ResourceScopeRevision, scope_revision_id): SimpleNamespace(
+            resource_scope_id=scope_id,
+            scope_definition={"database": "business_db"},
+        ),
+        (ResourceScope, scope_id): SimpleNamespace(name="业务只读范围"),
+        (CapabilityImplementation, implementation_id): SimpleNamespace(
+            connector_instance_revision_id=connector_revision_id,
+        ),
+        (ConnectorInstanceRevision, connector_revision_id): SimpleNamespace(
+            connector_instance_id=instance_id,
+        ),
+        (ConnectorInstance, instance_id): SimpleNamespace(name="业务 PostgreSQL"),
+    }
+
+    async def get(model: type, identifier: object) -> object | None:
+        return values.get((model, identifier))
+
+    session = SimpleNamespace(get=AsyncMock(side_effect=get))
+    context = await _capability_binding_display_context(  # type: ignore[arg-type]
+        session,
+        binding,
+    )
+    assert context == {
+        "connection_name": "业务 PostgreSQL",
+        "database": "business_db",
+        "scope_name": "业务只读范围",
+        "scope_summary": "业务 PostgreSQL · business_db · 业务只读范围",
+    }
 
 
 @pytest.mark.asyncio

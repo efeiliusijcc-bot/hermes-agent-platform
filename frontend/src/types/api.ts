@@ -89,6 +89,8 @@ export interface AgentEditorModel {
     status: string
     version: string | null
     draft_version_id: string | null
+    display_version_id: string | null
+    version_source: 'draft' | 'published' | null
   }
   sections: {
     identity: { name: string; description: string | null; role: string; system_prompt: string }
@@ -103,12 +105,16 @@ export interface AgentEditorModel {
     skills: Array<{ id: string; name: string; version: string }>
     capabilities: Array<{
       binding_id: string
+      tool_alias: string
       key: string
       label: string
       description: string | null
       version: string | null
       state: CapabilityState
       source_label: string
+      connection_name: string | null
+      database: string | null
+      scope_name: string | null
       scope_summary: string
       requires_user_action: boolean
       advanced: Record<string, unknown>

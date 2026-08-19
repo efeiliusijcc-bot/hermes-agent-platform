@@ -92,6 +92,12 @@ const detailTabs = [
 ] as const
 
 const currentVersion = computed(() => versions.value.find((item) => item.status === 'published') || null)
+const displayedVersion = computed(() => editorModel.value?.agent.version || currentVersion.value?.version || null)
+const displayedVersionState = computed(() => {
+  if (editorModel.value?.agent.version_source === 'published') return '已发布版本（只读）'
+  if (editorModel.value?.agent.version_source === 'draft') return '草稿版本'
+  return '未发布'
+})
 const lastExecution = computed(() => executions.value[0] || null)
 const selectedRuntime = computed(() => {
   const configured = runtimes.value.find((item) => item.id === runtimeId.value)
@@ -483,7 +489,7 @@ onMounted(load)
     <section v-if="agentStore.currentAgent" class="agent-detail-commandbar surface">
       <div><span>Agent ID</span><strong class="mono">{{ agentStore.currentAgent.id }}</strong></div>
       <div><span>Status</span><StatusTag :status="agentStore.currentAgent.status" /></div>
-      <div><span>Version</span><strong class="mono">{{ currentVersion?.version || '未发布' }}</strong></div>
+      <div><span>Version</span><strong class="mono">{{ displayedVersion || '未发布' }} · {{ displayedVersionState }}</strong></div>
       <div><span>Model</span><strong class="mono">{{ agentStore.currentAgent.model }}</strong></div>
     </section>
 
@@ -551,7 +557,7 @@ onMounted(load)
             <div class="definition-item"><dt>上级 Agent</dt><dd class="mono">{{ agentStore.currentAgent.parent_agent_id || '--' }}</dd></div>
             <div class="definition-item"><dt>模型</dt><dd class="mono">{{ agentStore.currentAgent.model }}</dd></div>
             <div class="definition-item"><dt>Adapter</dt><dd class="mono">{{ agentStore.currentAgent.model_adapter }}</dd></div>
-            <div class="definition-item"><dt>Current Version</dt><dd class="mono">{{ currentVersion?.version || '未发布' }}</dd></div>
+            <div class="definition-item"><dt>Current Version</dt><dd class="mono">{{ displayedVersion || '未发布' }} · {{ displayedVersionState }}</dd></div>
             <div class="definition-item"><dt>创建时间</dt><dd>{{ formatDate(agentStore.currentAgent.created_at) }}</dd></div>
             <div class="definition-item"><dt>更新时间</dt><dd>{{ formatDate(agentStore.currentAgent.updated_at) }}</dd></div>
             <div class="definition-item"><dt>最近执行</dt><dd>{{ lastExecution ? formatDate(lastExecution.started_at) : '暂无执行' }}</dd></div>
@@ -564,7 +570,11 @@ onMounted(load)
           <NAlert v-if="!managementStore.unlocked" type="warning" :bordered="false" style="margin:14px 0">当前为只读模式。解锁管理员模式后才能修改 Capability Binding。</NAlert>
           <div v-if="editorModel?.sections.capabilities.length" class="binding-list" style="margin-top:14px">
             <div v-for="item in editorModel.sections.capabilities" :key="item.binding_id" class="binding-row">
-              <div><strong>{{ item.label }}</strong><span>{{ item.key }}@{{ item.version }} / {{ item.source_label }} / {{ item.scope_summary }}</span></div>
+              <div>
+                <strong class="mono">{{ item.tool_alias }}</strong>
+                <span>{{ item.label }} · {{ item.key }}@{{ item.version }} · {{ item.source_label }}</span>
+                <span>{{ item.connection_name || '通用连接' }} · {{ item.database || '无固定数据库' }} · {{ item.scope_name || item.scope_summary }}</span>
+              </div>
               <StatusTag :status="item.state" style="margin-left:auto" />
             </div>
           </div>

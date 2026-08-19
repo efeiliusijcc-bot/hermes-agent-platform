@@ -84,6 +84,51 @@ async def _database_scope_context(
     return definition, instance.current_revision_id
 
 
+async def _capability_binding_display_context(
+    session: AsyncSession,
+    binding: AgentCapabilityBinding,
+) -> dict[str, str | None]:
+    scope_revision = (
+        await session.get(ResourceScopeRevision, binding.resource_scope_revision_id)
+        if binding.resource_scope_revision_id
+        else None
+    )
+    scope = (
+        await session.get(ResourceScope, scope_revision.resource_scope_id)
+        if scope_revision is not None
+        else None
+    )
+    implementation = (
+        await session.get(CapabilityImplementation, binding.implementation_id)
+        if binding.implementation_id
+        else None
+    )
+    connector_revision = (
+        await session.get(
+            ConnectorInstanceRevision,
+            implementation.connector_instance_revision_id,
+        )
+        if implementation is not None
+        else None
+    )
+    connector_instance = (
+        await session.get(ConnectorInstance, connector_revision.connector_instance_id)
+        if connector_revision is not None
+        else None
+    )
+    scope_definition = scope_revision.scope_definition if scope_revision is not None else {}
+    database_name = scope_definition.get("database") if isinstance(scope_definition, dict) else None
+    values = {
+        "connection_name": connector_instance.name if connector_instance is not None else None,
+        "database": database_name if isinstance(database_name, str) else None,
+        "scope_name": scope.name if scope is not None else None,
+    }
+    values["scope_summary"] = " · ".join(value for value in values.values() if value) or (
+        "已配置资源范围" if binding.resource_scope_revision_id else "未限制资源范围"
+    )
+    return values
+
+
 def _require_database_operation_permission(
     definition: dict[str, Any],
     operation: str,
@@ -216,16 +261,18 @@ async def agent_editor(
             else None
         )
         resolved = resolved_by_binding.get(str(binding.id))
+        display_context = await _capability_binding_display_context(session, binding)
         capability_rows.append(
             {
                 "binding_id": str(binding.id),
+                "tool_alias": binding.tool_alias,
                 "key": capability.key if capability else "unknown",
                 "label": capability.display_name if capability else "未知能力",
                 "description": capability.description if capability else None,
                 "version": capability_version.version if capability_version else None,
                 "state": "READY" if resolved else "NEEDS_CONFIGURATION",
                 "source_label": _source_label(binding.source_type),
-                "scope_summary": "已配置资源范围" if binding.resource_scope_revision_id else "未限制资源范围",
+                **display_context,
                 "requires_user_action": resolved is None,
                 "advanced": {
                     "implementation_id": str(binding.implementation_id) if binding.implementation_id else None,
