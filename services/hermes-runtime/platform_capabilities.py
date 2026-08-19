@@ -257,6 +257,8 @@ def _post(endpoint: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
         with _OPENER.open(request, timeout=30) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read(MAX_RESPONSE_BYTES + 1)
     except (urllib.error.URLError, TimeoutError) as exc:
         raise PlatformCapabilityError("Capability Gateway is unavailable") from exc
     if len(raw) > MAX_RESPONSE_BYTES:

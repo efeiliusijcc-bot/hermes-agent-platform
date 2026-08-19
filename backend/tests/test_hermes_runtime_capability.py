@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import io
 import importlib.util
 import json
 import sys
 import time
+import urllib.error
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -143,3 +145,32 @@ def test_derived_image_is_pinned_and_patch_is_digest_guarded() -> None:
     assert "nousresearch/hermes-agent:v2026.8.3@sha256:" in dockerfile
     assert "EXPECTED_SHA256" in patcher and "digest mismatch" in patcher
     assert "hermes-agent-platform/hermes-runtime:capability-v1" in compose
+
+
+def test_gateway_http_error_preserves_bounded_json_error_payload() -> None:
+    module = load_module()
+    body = json.dumps({
+        "status": "FAILED",
+        "error": {"code": "INVALID_ARGUMENT", "message": "查询包含写操作或管理语句"},
+    }).encode()
+
+    class Opener:
+        def open(self, request, timeout):
+            raise urllib.error.HTTPError(
+                request.full_url,
+                422,
+                "Unprocessable Entity",
+                None,
+                io.BytesIO(body),
+            )
+
+    module._OPENER = Opener()
+    value = module._post(
+        "http://mcp-gateway:8090/internal/capabilities/invoke",
+        token("http-error"),
+        {"execution_id": "execution-1"},
+    )
+    assert value["error"] == {
+        "code": "INVALID_ARGUMENT",
+        "message": "查询包含写操作或管理语句",
+    }
