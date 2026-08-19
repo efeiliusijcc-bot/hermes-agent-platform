@@ -131,13 +131,13 @@ def test_capability_semver_range() -> None:
     assert not version_satisfies("1.4.2", "not-a-range")
 
 
-def test_only_runtime_with_hidden_token_dispatcher_advertises_capability_gateway() -> None:
+def test_platform_runtimes_with_hidden_token_dispatchers_advertise_capability_gateway() -> None:
     pi = RuntimeAdapter.describe_features(SimpleNamespace(runtime_type="pi"))
     hermes = RuntimeAdapter.describe_features(SimpleNamespace(runtime_type="hermes"))
     deepseek = RuntimeAdapter.describe_features(SimpleNamespace(runtime_type="deepseek"))
     assert pi.features["capability_gateway"] is True
-    assert hermes.features["capability_gateway"] is False
-    assert deepseek.features["capability_gateway"] is False
+    assert hermes.features["capability_gateway"] is True
+    assert deepseek.features["capability_gateway"] is True
 
 
 def test_management_key_is_required_after_control_plane_cutover(monkeypatch: pytest.MonkeyPatch) -> None:
