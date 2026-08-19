@@ -322,6 +322,7 @@ def test_offline_configuration_enables_capabilities_and_keeps_recall_upstream_em
     assert 'set_value SOURCE_RECALL_UPSTREAM_ENDPOINT ""' in script
     assert 'set_value SOURCE_RECALL_UPSTREAM_API_KEY ""' in script
     assert 'set_value SOURCE_RECALL_GATEWAY_API_KEY "$SOURCE_RECALL_GATEWAY_API_KEY"' in script
+    assert 'docker run --rm --network none --entrypoint python "$GENERATOR_IMAGE" -c' in script
     assert "CAPABILITY_PLATFORM_ENABLED=true" in environment
     assert "CAPABILITY_GATEWAY_ENABLED=true" in environment
     assert "CONSOLE_BFF_ENABLED=true" in environment

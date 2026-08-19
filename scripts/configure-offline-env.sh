@@ -44,7 +44,7 @@ test -n "$OFFLINE_MODEL_ENDPOINT" || { echo "模型地址不能为空" >&2; exit
 test -n "$OFFLINE_MODEL_NAME" || { echo "模型名称不能为空" >&2; exit 1; }
 test -n "$OFFLINE_MODEL_API_KEY" || { echo "模型 API Key 不能为空" >&2; exit 1; }
 
-generated=$(docker run --rm --network none "$GENERATOR_IMAGE" python -c '
+generated=$(docker run --rm --network none --entrypoint python "$GENERATOR_IMAGE" -c '
 from cryptography.fernet import Fernet
 from secrets import token_urlsafe
 for _ in range(11):
