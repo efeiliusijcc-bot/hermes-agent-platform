@@ -109,7 +109,24 @@ for entry in entries:
         client.hset(key, mapping={decoded(field): decoded(item) for field, item in value})
     elif kind == "zset" and value:
         client.zadd(key, {decoded(member): score for member, score in value})
-    elif kind not in {"list", "set", "hash", "zset"}:
+    elif kind == "stream":
+        for message in value:
+            client.xadd(
+                key,
+                {
+                    decoded(field): decoded(item)
+                    for field, item in message["fields"]
+                },
+                id=decoded(message["id"]).decode("ascii"),
+            )
+        for group in entry.get("groups", []):
+            client.xgroup_create(
+                key,
+                decoded(group["name"]),
+                id=decoded(group["last_delivered_id"]).decode("ascii"),
+                mkstream=True,
+            )
+    elif kind not in {"list", "set", "hash", "zset", "stream"}:
         raise RuntimeError(f"Unsupported Redis value type: {kind}")
     if entry["pttl"] > 0:
         client.pexpire(key, entry["pttl"])

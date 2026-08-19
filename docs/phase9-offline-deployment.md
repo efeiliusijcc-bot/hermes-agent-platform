@@ -9,7 +9,7 @@
 - 脱敏 `.env.example` 和目标节点离线配置脚本，不包含源节点 `.env`；
 - 模型注册表和 Connector Credential 的加密密文，但不包含源节点 `MODEL_REGISTRY_ENCRYPTION_KEY`；
 - PostgreSQL custom-format 逻辑备份；
-- Redis RDB 与支持 TTL 的逻辑键快照；
+- Redis RDB 与支持 TTL 的逻辑键快照；Stream 会恢复条目和 Consumer Group 游标，但不恢复源节点 pending consumer 的所有权，避免离线节点错误续跑源节点处理中任务；
 - MinIO `artifacts`、`knowledge` 两个 bucket 的对象镜像；
 - Hermes 数据目录、工作目录和 MCP 只读文件；
 - 已固化官方 `@earendil-works/pi-agent-core 0.84.2` 依赖的 `pi-runtime` 镜像；

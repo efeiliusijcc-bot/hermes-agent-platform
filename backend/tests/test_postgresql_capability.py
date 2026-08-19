@@ -312,6 +312,8 @@ def test_database_console_routes_and_incremental_migration_are_present() -> None
 def test_offline_configuration_enables_capabilities_and_keeps_recall_upstream_empty() -> None:
     script = Path("scripts/configure-offline-env.sh").read_text()
     environment = Path(".env.example").read_text()
+    exporter = Path("scripts/create-offline-bundle.sh").read_text()
+    restore = Path("scripts/restore-offline-bundle.sh").read_text()
 
     assert 'set_value CAPABILITY_PLATFORM_ENABLED "true"' in script
     assert 'set_value CAPABILITY_GATEWAY_ENABLED "true"' in script
@@ -323,6 +325,10 @@ def test_offline_configuration_enables_capabilities_and_keeps_recall_upstream_em
     assert "CAPABILITY_PLATFORM_ENABLED=true" in environment
     assert "CAPABILITY_GATEWAY_ENABLED=true" in environment
     assert "CONSOLE_BFF_ENABLED=true" in environment
+    assert "client.xrange(key)" in exporter
+    assert "client.xinfo_groups(key)" in exporter
+    assert "client.xadd(" in restore
+    assert "client.xgroup_create(" in restore
 
 
 def test_database_console_routes_follow_the_console_bff_feature_flag() -> None:

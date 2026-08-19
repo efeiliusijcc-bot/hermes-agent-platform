@@ -108,6 +108,24 @@ for key in sorted(client.scan_iter()):
             [encoded(member), score]
             for member, score in client.zrange(key, 0, -1, withscores=True)
         ]
+    elif kind == "stream":
+        entry["value"] = [
+            {
+                "id": encoded(message_id),
+                "fields": [
+                    [encoded(field), encoded(value)]
+                    for field, value in sorted(fields.items())
+                ],
+            }
+            for message_id, fields in client.xrange(key)
+        ]
+        entry["groups"] = [
+            {
+                "name": encoded(group[b"name"]),
+                "last_delivered_id": encoded(group[b"last-delivered-id"]),
+            }
+            for group in client.xinfo_groups(key)
+        ]
     else:
         raise RuntimeError(f"Unsupported Redis value type: {kind}")
     entries.append(entry)
@@ -153,6 +171,7 @@ deepseek_transport=json-rpc-2.0-via-private-unix-socket-dispatcher
 source_env_included=false
 target_env_generation=offline-network-none
 data_format=postgres-custom-dump,redis-rdb-and-logical,minio-object-mirror,bind-directory-copy
+redis_stream_restore=entries-and-groups-without-pending-consumer-ownership
 EOF
 
 (
