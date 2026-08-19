@@ -96,7 +96,7 @@ class CredentialRead(ORMModel):
 class ConnectorCreate(BaseModel):
     key: str = Field(pattern=r"^[a-z][a-z0-9_.-]{1,254}$")
     display_name: str = Field(min_length=1, max_length=255)
-    type: Literal["internal_rest", "mcp"]
+    type: Literal["internal_rest", "mcp", "postgresql_mcp"]
     description: str | None = None
 
 

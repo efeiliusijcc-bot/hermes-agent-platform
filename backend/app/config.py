@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     execution_capability_token_ttl_seconds: int = Field(default=600, ge=300, le=900)
     execution_capability_token_renew_before_seconds: int = Field(default=120, ge=30, le=300)
     capability_gateway_internal_url: str = "http://mcp-gateway:8090/internal/capabilities/invoke"
+    postgres_mcp_endpoint: str = "http://postgres-mcp:8091"
+    postgres_mcp_timeout_seconds: int = Field(default=30, ge=5, le=300)
 
     hermes_endpoint: str = "http://hermes-runtime:8642/v1"
     hermes_api_key: SecretStr

@@ -3,6 +3,9 @@
   "version": "0.1.0-rc.6",
   "private": true,
   "description": "Pinned official DeepSeek Harness SDK runtime closure for Hermes Agent Platform",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
   "dependencies": {
     "@deepseek-ai/dsh-agent-spine-demo": "0.1.0-rc.6",
     "@deepseek-ai/dsh-bash-local": "0.1.0-rc.6",

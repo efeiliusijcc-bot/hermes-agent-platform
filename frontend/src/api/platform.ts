@@ -61,6 +61,14 @@ import type {
   CredentialRecord,
   PlatformConnection,
   ResourceScopeRecord,
+  DatabaseConnectionPayload,
+  DatabaseConnectionDetail,
+  DatabaseConnectionSummary,
+  DatabaseDiscovery,
+  DatabaseEndpoint,
+  DatabaseOperation,
+  DatabaseResourceRecord,
+  DatabaseScopePayload,
 } from '@/types/api'
 
 export const platformApi = {
@@ -155,6 +163,120 @@ export const platformApi = {
     return data
   },
 
+  async listDatabaseConnections(): Promise<DatabaseConnectionSummary[]> {
+    const { data } = await apiClient.get<DatabaseConnectionSummary[]>('/api/console/platform/database-connections')
+    return data
+  },
+
+  async getDatabaseConnection(connectionId: string): Promise<DatabaseConnectionDetail> {
+    const { data } = await apiClient.get<DatabaseConnectionDetail>(
+      `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}`,
+    )
+    return data
+  },
+
+  async testDatabaseConnection(
+    endpoint: DatabaseEndpoint,
+    credential: { username: string; password: string },
+    managementKey: string,
+  ): Promise<DatabaseDiscovery> {
+    const { data } = await apiClient.post<DatabaseDiscovery>(
+      '/api/console/platform/database-connections/test',
+      { endpoint, credential },
+      { headers: { 'X-Platform-Management-Key': managementKey } },
+    )
+    return data
+  },
+
+  async createDatabaseConnection(payload: DatabaseConnectionPayload, managementKey: string): Promise<Record<string, unknown>> {
+    const { data } = await apiClient.post<Record<string, unknown>>(
+      '/api/console/platform/database-connections',
+      payload,
+      { headers: { 'X-Platform-Management-Key': managementKey } },
+    )
+    return data
+  },
+
+  async testSavedDatabaseConnection(connectionId: string, managementKey: string): Promise<DatabaseDiscovery> {
+    const { data } = await apiClient.post<DatabaseDiscovery>(
+      `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}/test`,
+      undefined,
+      { headers: { 'X-Platform-Management-Key': managementKey } },
+    )
+    return data
+  },
+
+  async updateDatabaseConnection(
+    connectionId: string,
+    payload: { name?: string; environment?: string; enabled?: boolean; endpoint?: DatabaseEndpoint },
+    managementKey: string,
+  ): Promise<DatabaseConnectionDetail> {
+    const { data } = await apiClient.patch<DatabaseConnectionDetail>(
+      `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}`,
+      payload,
+      { headers: { 'X-Platform-Management-Key': managementKey } },
+    )
+    return data
+  },
+
+  async discoverDatabaseConnection(connectionId: string, managementKey: string): Promise<DatabaseDiscovery> {
+    const { data } = await apiClient.post<DatabaseDiscovery>(
+      `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}/discover`,
+      undefined,
+      { headers: { 'X-Platform-Management-Key': managementKey } },
+    )
+    return data
+  },
+
+  async listDatabaseResources(connectionId: string): Promise<DatabaseResourceRecord[]> {
+    const { data } = await apiClient.get<DatabaseResourceRecord[]>(
+      `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}/resources`,
+    )
+    return data
+  },
+
+  async createDatabaseScope(connectionId: string, scope: DatabaseScopePayload, managementKey: string): Promise<Record<string, unknown>> {
+    const { data } = await apiClient.post<Record<string, unknown>>(
+      `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}/scopes`,
+      { scope },
+      { headers: { 'X-Platform-Management-Key': managementKey } },
+    )
+    return data
+  },
+
+  async replaceDatabaseCredential(
+    connectionId: string,
+    credential: { username: string; password: string },
+    managementKey: string,
+  ): Promise<{ credential_configured: boolean; masked_username: string; password_updated_at: string }> {
+    const { data } = await apiClient.post(
+      `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}/credentials/replace`,
+      credential,
+      { headers: { 'X-Platform-Management-Key': managementKey } },
+    )
+    return data
+  },
+
+  async disableDatabaseConnection(connectionId: string, managementKey: string): Promise<void> {
+    await apiClient.delete(
+      `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}`,
+      { headers: { 'X-Platform-Management-Key': managementKey } },
+    )
+  },
+
+  async updateDatabaseBindings(
+    agentId: string,
+    bindings: Array<{ scope_revision_id: string; tool_prefix: string; operations: DatabaseOperation[] }>,
+    managementKey: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const { data } = await apiClient.put<Array<Record<string, unknown>>>(
+      `/api/console/agents/${encodeURIComponent(agentId)}/database-bindings`,
+      { bindings },
+      { headers: { 'X-Platform-Management-Key': managementKey } },
+    )
+    return data
+  },
+
   async createCredential(payload: { name: string; credential_type: string; secret: string; masked_label?: string }, managementKey: string): Promise<CredentialRecord> {
     const { data } = await apiClient.post<CredentialRecord>('/api/credentials', payload, { headers: { 'X-Platform-Management-Key': managementKey } })
     return data
@@ -165,7 +287,7 @@ export const platformApi = {
     return data
   },
 
-  async createConnector(payload: { key: string; display_name: string; type: 'internal_rest' | 'mcp'; description?: string }, managementKey: string): Promise<{ id: string }> {
+  async createConnector(payload: { key: string; display_name: string; type: 'internal_rest' | 'mcp' | 'postgresql_mcp'; description?: string }, managementKey: string): Promise<{ id: string }> {
     const { data } = await apiClient.post<{ id: string }>('/api/connectors', payload, { headers: { 'X-Platform-Management-Key': managementKey } })
     return data
   },

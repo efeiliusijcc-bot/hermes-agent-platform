@@ -74,6 +74,8 @@ Phase 8 的 Knowledge Analyst Demo 配置、部署、调用和验收步骤见 [d
 
 Phase 9 的镜像导出、配置/数据迁移、新节点恢复和 116 隔离验收步骤见 [docs/phase9-offline-deployment.md](docs/phase9-offline-deployment.md)。
 
+PostgreSQL MCP 的内网网络接入、数据库连接向导、多库 Scope、三种 Runtime 验收和 116 部署步骤见 [docs/postgresql-mcp-deployment.md](docs/postgresql-mcp-deployment.md)。
+
 Phase 10 的 Agent Schema、Prompt Builder、Model Adapter、公开 API 与 SSE 契约见 [docs/phase2-registry-publication.md](docs/phase2-registry-publication.md)。
 
 Phase 3 的 Agent/Session/Workspace/Artifact 隔离、Task Queue、Worker Pool、模型并发保护和 116 独立验收步骤见 [docs/phase3-agent-isolation-concurrency.md](docs/phase3-agent-isolation-concurrency.md)。

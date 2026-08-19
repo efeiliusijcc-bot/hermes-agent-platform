@@ -10,6 +10,9 @@
     workspaceContext:
       maxBytes: 65536
 
+- id: platform-capabilities
+  name: '/opt/deepseek-harness/platform-capabilities.mjs'
+
 - id: llm-deepseek
   name: '@deepseek-ai/dsh-llm-deepseek'
   config:

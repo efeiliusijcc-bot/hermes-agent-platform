@@ -20,6 +20,8 @@ from app.db.models import (
     ConnectorInstance,
     ConnectorInstanceRevision,
     ConnectorOperation,
+    Connector,
+    ResourceScopeRevision,
     RuntimeFeatureProfile,
     SkillCapabilityRequirement,
     SkillVersion,
@@ -183,6 +185,29 @@ async def resolve_agent_capabilities(
                     message=f"能力 {capability.key} 的连接当前不可用",
                 )
             )
+        connector = await session.get(Connector, operation.connector_id)
+        scope_revision = (
+            await session.get(ResourceScopeRevision, binding.resource_scope_revision_id)
+            if binding.resource_scope_revision_id
+            else None
+        )
+        if connector is not None and connector.type == "postgresql_mcp":
+            if scope_revision is None:
+                issues.append(
+                    PreflightIssue(
+                        code="RESOURCE_SCOPE_REQUIRED",
+                        path=f"capability_bindings.{binding.tool_alias}.resource_scope_revision_id",
+                        message=f"数据库能力 {capability.key} 必须绑定单数据库 Scope Revision",
+                    )
+                )
+            elif str((scope_revision.scope_definition or {}).get("connector_revision_id")) != str(revision.id):
+                issues.append(
+                    PreflightIssue(
+                        code="RESOURCE_SCOPE_MISMATCH",
+                        path=f"capability_bindings.{binding.tool_alias}.resource_scope_revision_id",
+                        message=f"数据库能力 {capability.key} 的 Scope 与 Connector Revision 不匹配",
+                    )
+                )
         tools.append(
             ResolvedCapability(
                 binding_id=str(binding.id),

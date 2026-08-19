@@ -271,6 +271,61 @@ describe('platformApi contract', () => {
     })
   })
 
+  it('uses database connection BFF endpoints and keeps the management key in headers', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} })
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: {} })
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: [] })
+    const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: {} })
+    const endpoint = {
+      host: 'business-postgres', port: 5432, maintenance_database: 'postgres',
+      ssl_mode: 'disable' as const, connect_timeout_seconds: 5,
+    }
+    const scope = {
+      database: 'business_db', name: '业务库',
+      schemas: [{ name: 'public', tables: ['items'], views: ['item_report'] }],
+      allow_describe: true, allow_query: true, allow_preview: true, allow_aggregate: false,
+      max_rows: 200, statement_timeout_ms: 5000, lock_timeout_ms: 1000,
+      max_response_bytes: 2_097_152, requests_per_minute: 60,
+    }
+
+    await platformApi.listDatabaseConnections()
+    await platformApi.getDatabaseConnection('connection a')
+    await platformApi.testDatabaseConnection(endpoint, { username: 'reader', password: 'secret' }, 'manage-key')
+    await platformApi.updateDatabaseConnection('connection a', { endpoint }, 'manage-key')
+    await platformApi.discoverDatabaseConnection('connection a', 'manage-key')
+    await platformApi.listDatabaseResources('connection a')
+    await platformApi.createDatabaseScope('connection a', scope, 'manage-key')
+    await platformApi.replaceDatabaseCredential('connection a', { username: 'reader2', password: 'new-secret' }, 'manage-key')
+    await platformApi.updateDatabaseBindings('agent a', [{ scope_revision_id: 'scope-1', tool_prefix: 'business_db', operations: ['select'] }], 'manage-key')
+    await platformApi.disableDatabaseConnection('connection a', 'manage-key')
+
+    expect(get).toHaveBeenNthCalledWith(1, '/api/console/platform/database-connections')
+    expect(get).toHaveBeenNthCalledWith(2, '/api/console/platform/database-connections/connection%20a')
+    expect(get).toHaveBeenNthCalledWith(3, '/api/console/platform/database-connections/connection%20a/resources')
+    expect(post).toHaveBeenNthCalledWith(1, '/api/console/platform/database-connections/test', {
+      endpoint, credential: { username: 'reader', password: 'secret' },
+    }, { headers: { 'X-Platform-Management-Key': 'manage-key' } })
+    expect(post).toHaveBeenNthCalledWith(2, '/api/console/platform/database-connections/connection%20a/discover', undefined, {
+      headers: { 'X-Platform-Management-Key': 'manage-key' },
+    })
+    expect(post).toHaveBeenNthCalledWith(3, '/api/console/platform/database-connections/connection%20a/scopes', { scope }, {
+      headers: { 'X-Platform-Management-Key': 'manage-key' },
+    })
+    expect(post).toHaveBeenNthCalledWith(4, '/api/console/platform/database-connections/connection%20a/credentials/replace', {
+      username: 'reader2', password: 'new-secret',
+    }, { headers: { 'X-Platform-Management-Key': 'manage-key' } })
+    expect(patch).toHaveBeenCalledWith('/api/console/platform/database-connections/connection%20a', { endpoint }, {
+      headers: { 'X-Platform-Management-Key': 'manage-key' },
+    })
+    expect(put).toHaveBeenCalledWith('/api/console/agents/agent%20a/database-bindings', {
+      bindings: [{ scope_revision_id: 'scope-1', tool_prefix: 'business_db', operations: ['select'] }],
+    }, { headers: { 'X-Platform-Management-Key': 'manage-key' } })
+    expect(remove).toHaveBeenCalledWith('/api/console/platform/database-connections/connection%20a', {
+      headers: { 'X-Platform-Management-Key': 'manage-key' },
+    })
+  })
+
   it('parses fragmented SSE events without losing token boundaries', async () => {
     const encoder = new TextEncoder()
     const body = new ReadableStream<Uint8Array>({

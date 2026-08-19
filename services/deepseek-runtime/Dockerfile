@@ -8,6 +8,7 @@ WORKDIR /opt/deepseek-harness
 COPY services/deepseek-runtime/package.json services/deepseek-runtime/package-lock.json ./
 RUN npm ci --omit=dev \
     && npm cache clean --force
+COPY services/deepseek-runtime/platform-capabilities.mjs ./platform-capabilities.mjs
 
 FROM python:3.12.10-slim-bookworm
 

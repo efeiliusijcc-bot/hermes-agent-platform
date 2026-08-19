@@ -117,7 +117,7 @@ export class PiAgentEngine {
       capabilities,
       executionId: request.execution_id,
     })
-    const capabilityTools = loadCapabilityTools({
+    const capability = loadCapabilityTools({
       endpoint: typeof metadata.capability_gateway === 'string' ? metadata.capability_gateway : '',
       token: typeof metadata.capability_token === 'string' ? metadata.capability_token : '',
       tools: Array.isArray(metadata.capability_tools) ? metadata.capability_tools : [],
@@ -136,7 +136,7 @@ export class PiAgentEngine {
         systemPrompt,
         model,
         thinkingLevel: 'off',
-        tools: [...mcp.tools, ...capabilityTools],
+        tools: [...mcp.tools, ...capability.tools],
         messages: [],
       },
       sessionId: request.session_id,
@@ -184,7 +184,7 @@ export class PiAgentEngine {
     } finally {
       unsubscribe()
       signal.removeEventListener('abort', abort)
-      await mcp.close()
+      await Promise.allSettled([mcp.close(), capability.close()])
     }
   }
 }

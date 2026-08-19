@@ -1,0 +1,5 @@
+asyncpg==0.30.0
+cryptography==45.0.6
+mcp==1.28.1
+pglast==7.7
+redis==5.2.1

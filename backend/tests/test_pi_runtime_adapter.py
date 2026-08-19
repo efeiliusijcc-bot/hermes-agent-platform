@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+import yaml
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import configure_mappers
@@ -51,19 +52,19 @@ def test_pi_runtime_migration_and_control_plane_contract() -> None:
 
 def test_phase5_deploys_the_official_pi_core_as_an_internal_service() -> None:
     package = json.loads(Path("services/pi-runtime/package.json").read_text())
-    compose = Path("docker-compose.yml").read_text()
+    compose_text = Path("docker-compose.yml").read_text()
+    compose = yaml.safe_load(compose_text)
     dockerfile = Path("services/pi-runtime/Dockerfile").read_text()
     assert package["dependencies"]["@earendil-works/pi-agent-core"] == "0.84.2"
     assert package["dependencies"]["@earendil-works/pi-ai"] == "0.84.2"
-    assert "pi-runtime:" in compose
-    assert "hermes-agent-platform/pi-runtime:capability-v1" in compose
-    assert "MODEL_GATEWAY_ENDPOINT: http://model-gateway:8080/v1" in compose
-    assert "MCP_GATEWAY_ENDPOINT: http://mcp-gateway:8090/mcp" in compose
-    pi_service = compose.split("\n  pi-runtime:\n", 1)[1].split("\n  mcp-gateway:\n", 1)[0]
-    assert "ports:" not in pi_service
-    assert "- pi-runtime-internal" in pi_service
-    assert "- platform-internal" not in pi_service
-    assert "read_only: true" in pi_service
+    pi_service = compose["services"]["pi-runtime"]
+    assert pi_service["image"] == "hermes-agent-platform/pi-runtime:capability-v1"
+    assert pi_service["environment"]["MODEL_GATEWAY_ENDPOINT"] == "http://model-gateway:8080/v1"
+    assert pi_service["environment"]["MCP_GATEWAY_ENDPOINT"] == "http://mcp-gateway:8090/mcp"
+    assert "ports" not in pi_service
+    assert "pi-runtime-internal" in pi_service["networks"]
+    assert "platform-internal" not in pi_service["networks"]
+    assert pi_service["read_only"] is True
     assert "node:22.22-alpine" in dockerfile
 
 

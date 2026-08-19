@@ -22,15 +22,20 @@ from app.db.models import (
     Connector,
     ConnectorInstance,
     ConnectorInstanceRevision,
+    ConnectorOperation,
     ExecutionLog,
     ModelRegistration,
     Skill,
+    ResourceScope,
+    ResourceScopeRevision,
 )
 from app.db.session import get_session
 from app.management import management_mode, require_platform_management_key
 from app.repositories import production as production_repository
 from app.schemas.agent import AgentRunRequest
 from app.config import get_settings
+from app.database_connections import POSTGRES_MCP_TOOLS
+from app.schemas.database_connection import DatabaseAgentBindingsUpdate
 
 
 def require_console_bff() -> None:
@@ -43,6 +48,64 @@ router = APIRouter(
     tags=["console-bff"],
     dependencies=[Depends(require_console_bff)],
 )
+
+
+async def _database_scope_context(
+    session: AsyncSession,
+    scope_revision: ResourceScopeRevision,
+) -> tuple[dict[str, Any], UUID]:
+    scope = await session.get(ResourceScope, scope_revision.resource_scope_id)
+    if (
+        scope is None
+        or scope.resource_type != "postgresql_database"
+        or scope.owner_type != "connector_instance"
+    ):
+        raise HTTPException(status_code=422, detail="数据库 Binding 必须使用 PostgreSQL 数据库 Scope")
+    if scope.current_revision_id != scope_revision.id:
+        raise HTTPException(status_code=409, detail="数据库 Scope Revision 已过期，请选择当前 Revision")
+    try:
+        instance_id = UUID(scope.owner_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="数据库 Scope 所属连接无效") from exc
+    instance = await session.get(ConnectorInstance, instance_id)
+    connector = await session.get(Connector, instance.connector_id) if instance else None
+    if instance is None or connector is None or connector.type != "postgresql_mcp":
+        raise HTTPException(status_code=422, detail="数据库 Scope 未关联 PostgreSQL MCP 连接")
+    if not instance.enabled or instance.health_status != "healthy":
+        raise HTTPException(status_code=409, detail="数据库连接未启用或健康检查未通过")
+    definition = scope_revision.scope_definition or {}
+    revision_id = definition.get("connector_revision_id")
+    if (
+        not isinstance(revision_id, str)
+        or instance.current_revision_id is None
+        or revision_id != str(instance.current_revision_id)
+    ):
+        raise HTTPException(status_code=409, detail="数据库 Scope 与当前 Connector Revision 不匹配")
+    return definition, instance.current_revision_id
+
+
+def _require_database_operation_permission(
+    definition: dict[str, Any],
+    operation: str,
+) -> None:
+    required_permission = {
+        "describe_table": "describe",
+        "preview_table": "preview",
+        "select": "query",
+        "explain": "query",
+    }.get(operation)
+    permissions = definition.get("permissions")
+    if (
+        required_permission is not None
+        and (
+            not isinstance(permissions, dict)
+            or not bool(permissions.get(required_permission))
+        )
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=f"数据库 Scope 未授权工具 {operation}",
+        )
 
 
 @router.get("/workbench")
@@ -288,6 +351,56 @@ async def available_components(
             .order_by(Capability.display_name)
         )
     ).all()
+    database_scopes = (
+        await session.execute(
+            select(ResourceScope, ResourceScopeRevision)
+            .join(ResourceScopeRevision, ResourceScopeRevision.id == ResourceScope.current_revision_id)
+            .where(
+                ResourceScope.resource_type == "postgresql_database",
+                ResourceScope.owner_type == "connector_instance",
+            )
+            .order_by(ResourceScope.name)
+        )
+    ).all()
+    database_components: list[dict[str, Any]] = []
+    for scope, revision in database_scopes:
+        try:
+            instance_id = UUID(str(scope.owner_id))
+        except (ValueError, TypeError):
+            continue
+        instance = await session.get(ConnectorInstance, instance_id)
+        connector = await session.get(Connector, instance.connector_id) if instance else None
+        definition = revision.scope_definition or {}
+        if (
+            instance is None
+            or connector is None
+            or connector.type != "postgresql_mcp"
+            or not instance.enabled
+            or definition.get("connector_revision_id")
+            != (str(instance.current_revision_id) if instance.current_revision_id else None)
+        ):
+            continue
+        database_components.append(
+            {
+                "connection_id": str(instance.id),
+                "connection_name": instance.name,
+                "status": "READY" if instance.health_status == "healthy" else instance.health_status.upper(),
+                "scope_revision_id": str(revision.id),
+                "scope_name": scope.name,
+                "database": definition.get("database"),
+                "schemas": definition.get("schemas", {}),
+                "permissions": definition.get("permissions", {}),
+                "limits": definition.get("limits", {}),
+                "tools": [
+                    {
+                        "operation": operation,
+                        "suffix": operation,
+                        "label": specification["label"],
+                    }
+                    for operation, specification in POSTGRES_MCP_TOOLS.items()
+                ],
+            }
+        )
     return {
         "skills": [
             {"id": item.id, "name": item.name, "version": item.version}
@@ -315,7 +428,112 @@ async def available_components(
             }
             for item in await session.scalars(select(AgentRuntime).order_by(AgentRuntime.name))
         ],
+        "database_connections": database_components,
     }
+
+
+@router.put("/agents/{agent_id}/database-bindings")
+async def update_database_bindings(
+    agent_id: str,
+    payload: DatabaseAgentBindingsUpdate,
+    _: None = Depends(require_platform_management_key),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict[str, Any]]:
+    version = await _draft_version(session, agent_id, create=True)
+    assert version is not None
+    if version.status != "development":
+        raise HTTPException(status_code=409, detail="只有 Development Draft 可以修改数据库 Binding")
+    existing = list(
+        await session.scalars(
+            select(AgentCapabilityBinding).where(AgentCapabilityBinding.agent_version_id == version.id)
+        )
+    )
+    preserved: list[AgentCapabilityBinding] = []
+    for item in existing:
+        capability_version = await session.get(CapabilityVersion, item.capability_version_id)
+        capability = await session.get(Capability, capability_version.capability_id) if capability_version else None
+        if capability is not None and capability.key.startswith("database."):
+            await session.delete(item)
+        else:
+            preserved.append(item)
+    aliases = {item.tool_alias for item in preserved}
+    created: list[AgentCapabilityBinding] = []
+    for database_binding in payload.bindings:
+        try:
+            scope_revision_id = UUID(database_binding.scope_revision_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="数据库 Scope Revision ID 无效") from exc
+        scope = await session.get(ResourceScopeRevision, scope_revision_id)
+        if scope is None:
+            raise HTTPException(status_code=404, detail="数据库 Scope Revision 不存在")
+        definition, connector_revision_id = await _database_scope_context(session, scope)
+        for operation_key in database_binding.operations:
+            _require_database_operation_permission(definition, operation_key)
+            specification = POSTGRES_MCP_TOOLS[operation_key]
+            alias = f"{database_binding.tool_prefix}_{operation_key}"
+            if alias in aliases or len(alias) > 128:
+                raise HTTPException(status_code=422, detail=f"Tool Alias 冲突或过长：{alias}")
+            aliases.add(alias)
+            row = (
+                await session.execute(
+                    select(CapabilityVersion, CapabilityImplementation)
+                    .join(Capability, Capability.id == CapabilityVersion.capability_id)
+                    .join(
+                        CapabilityImplementation,
+                        CapabilityImplementation.capability_version_id == CapabilityVersion.id,
+                    )
+                    .join(
+                        ConnectorOperation,
+                        ConnectorOperation.id == CapabilityImplementation.connector_operation_id,
+                    )
+                    .where(
+                        Capability.key == specification["capability"],
+                        CapabilityVersion.version == "1.0.0",
+                        CapabilityVersion.status == "published",
+                        CapabilityImplementation.connector_instance_revision_id == connector_revision_id,
+                        CapabilityImplementation.status == "active",
+                        ConnectorOperation.path_or_tool == specification["tool"],
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if row is None:
+                raise HTTPException(status_code=409, detail=f"数据库能力 {operation_key} 没有当前连接实现")
+            capability_version, implementation = row
+            limits = definition.get("limits") if isinstance(definition.get("limits"), dict) else {}
+            value = AgentCapabilityBinding(
+                agent_version_id=version.id,
+                tool_alias=alias,
+                capability_version_id=capability_version.id,
+                implementation_mode="PINNED",
+                implementation_id=implementation.id,
+                resource_scope_revision_id=scope.id,
+                parameter_policy={},
+                quota_policy={
+                    "calls_per_execution": 100,
+                    "calls_per_minute": int(limits.get("requests_per_minute") or 60),
+                    "max_concurrency": 2,
+                },
+                approval_policy={},
+                enabled=True,
+                source_type="direct",
+                source_ref_id=str(scope.id),
+            )
+            session.add(value)
+            created.append(value)
+    await session.commit()
+    for item in created:
+        await session.refresh(item)
+    return [
+        {
+            "id": str(item.id),
+            "tool_alias": item.tool_alias,
+            "capability_version_id": str(item.capability_version_id),
+            "implementation_id": str(item.implementation_id),
+            "resource_scope_revision_id": str(item.resource_scope_revision_id),
+        }
+        for item in created
+    ]
 
 
 @router.post("/agents/{agent_id}/auto-configure")

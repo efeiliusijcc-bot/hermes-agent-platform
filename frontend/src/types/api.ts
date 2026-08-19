@@ -123,6 +123,133 @@ export interface AvailableComponents {
   skills: Array<{ id: string; name: string; version: string }>
   capabilities: CapabilityCatalogItem[]
   runtimes: Array<{ id: string; name: string; type: RuntimeType; version: string; status: RuntimeStatus }>
+  database_connections: DatabaseAvailableBinding[]
+}
+
+export interface DatabaseAvailableBinding {
+  connection_id: string
+  connection_name: string
+  status: string
+  scope_revision_id: string
+  scope_name: string
+  database: string
+  schemas: Record<string, { tables: string[]; views: string[] }>
+  permissions: Record<string, boolean>
+  limits: Record<string, number>
+  tools: Array<{ operation: DatabaseOperation; suffix: string; label: string }>
+}
+
+export type DatabaseOperation = 'list_schemas' | 'list_tables' | 'describe_table' | 'preview_table' | 'select' | 'explain'
+
+export interface DatabaseColumn {
+  name: string
+  type: string
+  udt: string
+  nullable: boolean
+}
+
+export interface DatabaseDiscoveredObject {
+  name: string
+  columns: DatabaseColumn[]
+}
+
+export interface DatabaseDiscoveredSchema {
+  name: string
+  tables: DatabaseDiscoveredObject[]
+  views: DatabaseDiscoveredObject[]
+}
+
+export interface DatabaseDiscovery {
+  status: 'READY' | 'UNAVAILABLE'
+  latency_ms: number
+  checks: Array<{ name: string; status: string; detail?: string }>
+  server: { version: string }
+  databases: Array<{ name: string; status: string; schemas: DatabaseDiscoveredSchema[]; error?: string }>
+  warnings: string[]
+}
+
+export interface DatabaseEndpoint {
+  host: string
+  port: number
+  maintenance_database: string
+  ssl_mode: 'disable' | 'prefer' | 'require' | 'verify-ca' | 'verify-full'
+  connect_timeout_seconds: number
+}
+
+export interface DatabaseScopePayload {
+  database: string
+  name?: string
+  schemas: Array<{ name: string; tables: string[]; views: string[] }>
+  allow_describe: boolean
+  allow_query: boolean
+  allow_preview: boolean
+  allow_aggregate: boolean
+  max_rows: number
+  statement_timeout_ms: number
+  lock_timeout_ms: number
+  max_response_bytes: number
+  requests_per_minute: number
+}
+
+export interface DatabaseConnectionPayload {
+  name: string
+  environment: 'development' | 'test' | 'production'
+  endpoint: DatabaseEndpoint
+  credential: { username: string; password: string }
+  scopes: DatabaseScopePayload[]
+}
+
+export interface DatabaseConnectionSummary {
+  id: string
+  name: string
+  environment: string
+  status: string
+  host: string
+  port: number
+  maintenance_database: string
+  scope_count: number
+  current_revision_id: string
+  updated_at: string
+}
+
+export interface DatabaseScopeRecord {
+  id: string
+  scope_id: string
+  name: string
+  revision: number
+  database: string
+  definition: DatabaseScopeDefinition
+  digest: string
+  created_at: string
+}
+
+export interface DatabaseScopeDefinition {
+  connector_instance_id: string
+  connector_revision_id: string
+  database: string
+  schemas: Record<string, { tables: string[]; views: string[] }>
+  permissions: Record<string, boolean>
+  limits: Record<string, number>
+}
+
+export interface DatabaseConnectionDetail extends DatabaseConnectionSummary {
+  enabled: boolean
+  endpoint: DatabaseEndpoint
+  credential: {
+    credential_configured: boolean
+    masked_username: string | null
+    password_updated_at: string | null
+  }
+  scopes: DatabaseScopeRecord[]
+}
+
+export interface DatabaseResourceRecord {
+  id: string
+  type: 'database' | 'schema' | 'table' | 'view'
+  key: string
+  name: string
+  metadata: Record<string, unknown>
+  status: string
 }
 
 export interface CapabilityCatalogItem {
@@ -154,7 +281,7 @@ export interface PlatformConnection {
   id: string
   key: string
   name: string
-  type: 'internal_rest' | 'mcp'
+  type: 'internal_rest' | 'mcp' | 'postgresql_mcp'
   status: CapabilityState
   capability_count: number
   instances: number

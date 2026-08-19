@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import unittest
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("MCP_GATEWAY_SIGNING_KEY", "test-signing-key-that-is-at-least-32-chars")
@@ -122,6 +124,63 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
                     {},
                 )
         self.assertEqual(denied.exception.code, "PERMISSION_DENIED")
+
+    async def test_postgresql_mcp_receives_authority_only_in_internal_headers(self) -> None:
+        captured: dict[str, object] = {}
+
+        @asynccontextmanager
+        async def transport(endpoint, *, http_client):
+            captured["endpoint"] = endpoint
+            captured["headers"] = dict(http_client.headers)
+            yield object(), object(), None
+
+        class Session:
+            def __init__(self, *_args): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *_args): return None
+            async def initialize(self): return None
+            async def call_tool(self, name, arguments):
+                captured["tool"] = name
+                captured["arguments"] = arguments
+                return SimpleNamespace(
+                    isError=False,
+                    content=[SimpleNamespace(type="text", text='{"rows":[]}')],
+                )
+
+        provider = {
+            "protocol": "mcp",
+            "connector_type": "postgresql_mcp",
+            "auth_type": "execution_capability",
+            "connection_config": {},
+            "endpoint": "http://postgres-mcp:8091/mcp",
+            "network_zone": "internal",
+            "timeout_policy": {"read_seconds": 5, "connect_seconds": 2},
+            "request_mapping": {},
+            "path_or_tool": "db_select",
+            "revision_id": "revision-1",
+        }
+        with (
+            patch.object(capability_gateway, "streamable_http_client", transport),
+            patch.object(capability_gateway, "ClientSession", Session),
+            patch.object(capability_gateway, "_validate_network", AsyncMock()),
+        ):
+            result = await capability_gateway._invoke_provider(
+                provider,
+                {"sql": "SELECT 1", "resource_scope": {"database": "hidden"}},
+                None,
+                "cap1.secret-token",
+                execution_id="execution-1",
+                binding_id="binding-1",
+                scope_revision_id="scope-1",
+                idempotency="SAFE_RETRY",
+            )
+        headers = {str(key).lower(): str(value) for key, value in captured["headers"].items()}
+        self.assertEqual(headers["authorization"], "Bearer cap1.secret-token")
+        self.assertEqual(headers["x-hermes-execution-id"], "execution-1")
+        self.assertEqual(headers["x-hermes-binding-id"], "binding-1")
+        self.assertEqual(captured["arguments"], {"sql": "SELECT 1"})
+        self.assertNotIn("access_token", captured["arguments"])
+        self.assertEqual(result, {"rows": []})
 
 
 if __name__ == "__main__":

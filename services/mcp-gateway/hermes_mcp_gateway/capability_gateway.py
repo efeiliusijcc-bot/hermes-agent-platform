@@ -115,6 +115,7 @@ async def resolve_capabilities(
                     }
                     for row in rows
                 ],
+                "metadata": {"token_renewal": _renewal(claims, signing_key)},
             }
         )
     except MCPAccessDenied as exc:
@@ -182,11 +183,13 @@ async def invoke_capability(
             """
             SELECT o.protocol, o.method, o.path_or_tool, o.request_mapping, o.response_mapping,
                    o.error_mapping, o.side_effect AS operation_side_effect,
+                   connector.type AS connector_type,
                    r.id AS revision_id, r.endpoint, r.auth_type, r.credential_ref,
                    r.network_zone, r.connection_config, r.timeout_policy, r.retry_policy,
                    i.enabled, i.health_status, cred.encrypted_payload,
                    scope.scope_definition
             FROM connector_operations o
+            JOIN connectors connector ON connector.id = o.connector_id
             JOIN connector_instance_revisions r ON r.id = $2::uuid
             JOIN connector_instances i ON i.id = r.connector_instance_id
             LEFT JOIN connector_credentials cred ON cred.id = r.credential_ref
@@ -291,12 +294,23 @@ async def invoke_capability(
                     },
                 }
             )
-        secret = _decrypt(provider["encrypted_payload"]) if provider["encrypted_payload"] else None
+        secret = (
+            _decrypt(provider["encrypted_payload"])
+            if provider["encrypted_payload"] and provider["connector_type"] != "postgresql_mcp"
+            else None
+        )
         result = await _invoke_provider(
             provider,
             scoped_arguments,
             secret,
             token,
+            execution_id=execution_id,
+            binding_id=str(binding["id"]),
+            scope_revision_id=(
+                str(binding["resource_scope_revision_id"])
+                if binding["resource_scope_revision_id"]
+                else None
+            ),
             idempotency=str(binding["idempotency"]),
         )
         mapped = _map_response(result, _json_object(provider["response_mapping"]))
@@ -670,6 +684,9 @@ async def _invoke_provider(
     secret: str | None,
     execution_token: str,
     *,
+    execution_id: str,
+    binding_id: str,
+    scope_revision_id: str | None,
     idempotency: str,
 ) -> Any:
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
@@ -691,8 +708,22 @@ async def _invoke_provider(
         connect=float(timeout_policy.get("connect_seconds") or 5),
     )
     if provider["protocol"] == "mcp":
+        if provider["connector_type"] == "postgresql_mcp":
+            if not scope_revision_id:
+                raise GatewayError("PERMISSION_DENIED", "PostgreSQL 能力缺少 Resource Scope")
+            request_data.pop("resource_scope", None)
+            headers.update(
+                {
+                    "Authorization": f"Bearer {execution_token}",
+                    "X-Hermes-Execution-Id": execution_id,
+                    "X-Hermes-Binding-Id": binding_id,
+                    "X-Hermes-Connector-Revision-Id": str(provider["revision_id"]),
+                    "X-Hermes-Scope-Revision-Id": scope_revision_id,
+                }
+            )
         if auth_type == "execution_capability":
-            request_data["access_token"] = execution_token
+            if provider["connector_type"] != "postgresql_mcp":
+                request_data["access_token"] = execution_token
         async with httpx.AsyncClient(headers=headers, timeout=timeout, trust_env=False) as mcp_http:
             async with streamable_http_client(endpoint, http_client=mcp_http) as (read, write, _):
                 async with ClientSession(read, write) as session:

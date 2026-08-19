@@ -21,6 +21,7 @@ from app.api.production import router as production_router
 from app.api.runtimes import router as runtimes_router
 from app.api.capabilities import router as capabilities_router
 from app.api.console import router as console_router
+from app.api.database_connections import router as database_connections_router
 from app.api.schema_versions import router as schema_versions_router
 from app.api.skills import router as skills_router
 from app.config import get_settings
@@ -36,6 +37,7 @@ from app.model_secrets import ModelSecretCipher
 from app.repositories import model_registrations as model_repository
 from app.repositories import runtimes as runtime_repository
 from app.runtime import RuntimeAdapterError, get_runtime_adapter
+from app.database_connections import ensure_postgres_builtins
 
 settings = get_settings()
 logging.basicConfig(
@@ -50,6 +52,7 @@ async def lifespan(_: FastAPI):
     async with SessionFactory() as session:
         await session.execute(text("SELECT 1"))
         await _register_legacy_model(session)
+        await ensure_postgres_builtins(session)
         if settings.runtime_auto_register:
             await _register_builtin_runtimes(session)
     memory_store = get_memory_store()
@@ -261,6 +264,7 @@ app.include_router(production_router)
 app.include_router(runtimes_router)
 app.include_router(capabilities_router)
 app.include_router(console_router)
+app.include_router(database_connections_router)
 
 
 @app.get("/health", tags=["system"])

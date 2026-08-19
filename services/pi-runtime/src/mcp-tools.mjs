@@ -89,18 +89,74 @@ export async function loadMcpTools({ endpoint, accessToken, capabilities, execut
   return { tools, close: () => client.close() }
 }
 
-export function loadCapabilityTools({ endpoint, token, tools, executionId }) {
-  if (!Array.isArray(tools) || tools.length === 0) return []
+function tokenExpiry(token) {
+  try {
+    const payload = JSON.parse(Buffer.from(String(token).split('.')[1] || '', 'base64url').toString('utf8'))
+    return Number.isInteger(payload?.exp) ? payload.exp : 0
+  } catch {
+    return 0
+  }
+}
+
+function resolveEndpoint(endpoint) {
+  return endpoint.endsWith('/invoke') ? `${endpoint.slice(0, -'/invoke'.length)}/resolve` : endpoint
+}
+
+export function loadCapabilityTools({ endpoint, token, tools, executionId, fetchImpl = fetch }) {
+  if (!Array.isArray(tools) || tools.length === 0) {
+    return { tools: [], close: async () => {} }
+  }
   if (!endpoint || !token) throw new Error('Capability Gateway context is incomplete')
   let accessToken = token
-  return tools.map((tool) => ({
+  let renewal
+  let closed = false
+
+  async function renewIfNeeded(force = false) {
+    if (closed) throw new Error('Capability dispatcher is closed')
+    const expiresAt = tokenExpiry(accessToken)
+    const now = Math.floor(Date.now() / 1000)
+    if (!force && expiresAt > now + 120) return
+    if (!renewal) {
+      renewal = (async () => {
+        const response = await fetchImpl(resolveEndpoint(endpoint), {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ execution_id: executionId }),
+        })
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok || payload.status !== 'SUCCEEDED') {
+          throw new Error(payload?.error?.message || 'Capability Token renewal failed')
+        }
+        if (typeof payload?.metadata?.token_renewal === 'string') {
+          accessToken = payload.metadata.token_renewal
+        }
+      })().finally(() => { renewal = undefined })
+    }
+    await renewal
+  }
+
+  const timer = setInterval(() => {
+    renewIfNeeded().catch(() => {})
+  }, 30_000)
+  timer.unref?.()
+
+  const runtimeTools = tools.map((tool) => ({
     name: String(tool.tool_name),
     label: String(tool.tool_name),
     description: String(tool.description || `Platform capability ${tool.capability_key}`),
     parameters: sanitizeInputSchema(tool.input_schema),
     executionMode: 'sequential',
     execute: async (_toolCallId, parameters, signal) => {
-      const response = await fetch(endpoint, {
+      try {
+        await renewIfNeeded()
+      } catch (error) {
+        if (tokenExpiry(accessToken) <= Math.floor(Date.now() / 1000)) throw error
+      }
+      const response = await fetchImpl(endpoint, {
         method: 'POST',
         headers: {
           Accept: 'application/json',
@@ -131,4 +187,13 @@ export function loadCapabilityTools({ endpoint, token, tools, executionId }) {
       }
     },
   }))
+  return {
+    tools: runtimeTools,
+    close: async () => {
+      closed = true
+      clearInterval(timer)
+      accessToken = ''
+      if (renewal) await renewal.catch(() => {})
+    },
+  }
 }

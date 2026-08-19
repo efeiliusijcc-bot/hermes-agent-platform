@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Menu2,
   PlugConnected,
+  Database,
   Robot,
   ListCheck,
   Server,
@@ -63,6 +64,7 @@ const menuOptions: MenuOption[] = [
   ] },
   { label: '平台管理', key: 'platform-group', type: 'group', children: [
     { label: renderLink('连接与能力', 'platform-connections'), key: 'platform-connections', icon: renderIcon(PlugConnected) },
+    { label: renderLink('数据库连接', 'database-connections'), key: 'database-connections', icon: renderIcon(Database) },
     { label: renderLink('模型管理', 'models'), key: 'models', icon: renderIcon(BoxModel) },
     { label: renderLink('运行时管理', 'runtimes'), key: 'runtimes', icon: renderIcon(Server) },
     { label: renderLink('API Center', 'apis'), key: 'apis', icon: renderIcon(Api) },

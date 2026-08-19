@@ -21,6 +21,10 @@ RUNTIME_API_KEY = _required_secret("DEEPSEEK_RUNTIME_API_KEY")
 MODEL_GATEWAY_API_KEY = _required_secret("MODEL_GATEWAY_API_KEY")
 CORE_ENDPOINT = os.getenv("DEEPSEEK_HARNESS_CORE_ENDPOINT", "http://deepseek-harness-core:8771").rstrip("/")
 MODEL_ENDPOINT = os.getenv("MODEL_GATEWAY_ENDPOINT", "http://model-gateway:8080").rstrip("/")
+CAPABILITY_ENDPOINT = os.getenv(
+    "CAPABILITY_GATEWAY_ENDPOINT",
+    "http://mcp-gateway:8090/internal/capabilities",
+).rstrip("/")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("DEEPSEEK_RUNTIME_REQUEST_TIMEOUT_SECONDS", "900"))
 MAX_REQUEST_BYTES = int(os.getenv("DEEPSEEK_RUNTIME_REQUEST_MAX_BYTES", "2097152"))
 
@@ -52,6 +56,23 @@ async def model_proxy(path: str, request: Request) -> StreamingResponse:
         request,
         f"{MODEL_ENDPOINT}/v1/{path}",
         authorization=f"Bearer {MODEL_GATEWAY_API_KEY}",
+    )
+
+
+@app.post("/capability/{operation}")
+async def capability_proxy(
+    operation: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> StreamingResponse:
+    if operation not in {"resolve", "invoke"}:
+        raise HTTPException(status_code=404, detail="unsupported Capability Gateway path")
+    if not authorization or not authorization.startswith("Bearer cap1."):
+        raise HTTPException(status_code=401, detail="missing Execution Capability Token")
+    return await _relay(
+        request,
+        f"{CAPABILITY_ENDPOINT}/{operation}",
+        authorization=authorization,
     )
 
 

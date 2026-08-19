@@ -30,6 +30,7 @@ from .harness import (
 
 logger = logging.getLogger("deepseek-runtime")
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+TOOL_ALIAS = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,127}$")
 TEST_COMMAND = re.compile(
     r"(?:^|[;&|]\s*|\s)(pytest|python\s+-m\s+(?:pytest|unittest)|npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+test|go\s+test|cargo\s+test|mvn\s+test|gradle\s+test)(?:\s|$)",
     re.IGNORECASE,
@@ -100,6 +101,7 @@ class Settings:
     session_root: Path
     model_base_url: str
     model_api_key: str
+    capability_gateway_endpoint: str
     provider: str
     runtime_bin: str | None
     cordis_config: str | None
@@ -135,6 +137,13 @@ class Settings:
                 ),
             ),
             model_api_key=model_api_key,
+            capability_gateway_endpoint=_http_url(
+                "CAPABILITY_GATEWAY_ENDPOINT",
+                os.getenv(
+                    "CAPABILITY_GATEWAY_ENDPOINT",
+                    "http://deepseek-runtime:8770/capability/invoke",
+                ),
+            ),
             provider=os.getenv("DEEPSEEK_HARNESS_PROVIDER", "deepseek-official"),
             runtime_bin=os.getenv("DEEPSEEK_HARNESS_RUNTIME_BIN") or None,
             cordis_config=os.getenv("DEEPSEEK_HARNESS_CORDIS_CONFIG") or None,
@@ -248,7 +257,7 @@ class RuntimeManager:
         async with self.lock:
             self._clean_sessions()
             session_id = str(uuid4())
-            value = RuntimeSessionState(id=session_id, context=dict(payload.context))
+            value = RuntimeSessionState(id=session_id, context=_session_context(payload.context))
             self.sessions[session_id] = value
             return value
 
@@ -288,6 +297,7 @@ class RuntimeManager:
             if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 128 <= max_tokens <= 131072:
                 raise HTTPException(status_code=422, detail="options.max_tokens is invalid")
             execution_uid = await self._execution_uid(workspace)
+            capability_token, capability_tools = _capability_context(payload.context)
             process = HarnessProcess(
                 cwd=workspace,
                 session_root=self.settings.session_root / session.id,
@@ -301,6 +311,10 @@ class RuntimeManager:
                 runtime_bin=self.settings.runtime_bin,
                 cordis_config=self.settings.cordis_config,
                 execution_uid=execution_uid,
+                capability_gateway_endpoint=self.settings.capability_gateway_endpoint,
+                capability_token=capability_token,
+                capability_tools=capability_tools,
+                execution_id=run_id,
             )
             run.process = process
             collector = EventCollector(run_id, emit)
@@ -364,7 +378,7 @@ class RuntimeManager:
             value = self.sessions.get(session_id)
             if value is None:
                 self._clean_sessions()
-                value = RuntimeSessionState(id=session_id, context=dict(context))
+                value = RuntimeSessionState(id=session_id, context=_session_context(context))
                 self.sessions[session_id] = value
             elif _session_identity(value.context) != _session_identity(context):
                 raise HTTPException(
@@ -412,6 +426,40 @@ class RuntimeManager:
         now = time.monotonic()
         for key in [key for key, expires_at in self.pending_stops.items() if expires_at <= now]:
             self.pending_stops.pop(key, None)
+
+
+def _session_context(context: dict[str, Any]) -> dict[str, Any]:
+    """Keep durable Runtime session identity without per-execution authority."""
+    value = dict(context)
+    value.pop("capability_token", None)
+    value.pop("capability_tools", None)
+    metadata = value.get("metadata")
+    if isinstance(metadata, dict):
+        sanitized = dict(metadata)
+        sanitized.pop("capability_token", None)
+        sanitized.pop("capability_tools", None)
+        value["metadata"] = sanitized
+    return value
+
+
+def _capability_context(context: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    metadata = context.get("metadata") if isinstance(context.get("metadata"), dict) else {}
+    raw_tools = context.get("capability_tools")
+    if not isinstance(raw_tools, list):
+        raw_tools = metadata.get("capability_tools")
+    tools = [item for item in (raw_tools or []) if isinstance(item, dict)]
+    if len(tools) > 100:
+        raise HTTPException(status_code=422, detail="too many Capability tools")
+    for tool in tools:
+        name = tool.get("tool_name")
+        schema = tool.get("input_schema")
+        if not isinstance(name, str) or not TOOL_ALIAS.fullmatch(name) or not isinstance(schema, dict):
+            raise HTTPException(status_code=422, detail="invalid Capability tool contract")
+    raw_token = context.get("capability_token") or metadata.get("capability_token") or ""
+    token = raw_token if isinstance(raw_token, str) else ""
+    if tools and not token:
+        raise HTTPException(status_code=422, detail="Capability Token is required")
+    return token, tools
 
 
 settings = Settings.load()

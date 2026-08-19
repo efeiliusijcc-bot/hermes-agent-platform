@@ -35,6 +35,9 @@ actual_checksum=$(sha256sum "$ARCHIVE" | awk '{print $1}')
 test "$expected_checksum" = "$actual_checksum"
 
 source_ids_before=$($SOURCE_COMPOSE ps -q | sort)
+set -a
+. "$PROJECT_ROOT/.env"
+set +a
 
 if [ -f "$VERIFY_ROOT/docker-compose.yml" ]; then
   (
@@ -50,6 +53,13 @@ fi
 rm -rf -- "$VERIFY_ROOT"
 mkdir -p "$VERIFY_ROOT"
 tar -xzf "$ARCHIVE" -C "$VERIFY_ROOT" --strip-components=1
+
+OFFLINE_MODEL_ENDPOINT=$MODEL_ENDPOINT \
+OFFLINE_MODEL_NAME=$MODEL_NAME \
+OFFLINE_MODEL_API_KEY=$MODEL_API_KEY \
+OFFLINE_MODEL_REGISTRY_ENCRYPTION_KEY=$MODEL_REGISTRY_ENCRYPTION_KEY \
+OFFLINE_FRONTEND_BIND_HOST=127.0.0.1 \
+  "$VERIFY_ROOT/scripts/configure-offline-env.sh"
 
 OFFLINE_PROJECT_NAME=$VERIFY_PROJECT \
 OFFLINE_AGENT_API_PORT=$VERIFY_PORT \
@@ -84,7 +94,7 @@ AGENT_API_PORT=$VERIFY_PORT \
 HERMES_COMPOSE_PROJECT_NAME=$VERIFY_PROJECT \
   "$VERIFY_ROOT/tests/phase10_phase2_platform.sh"
 
-test "$($VERIFY_COMPOSE ps --status running -q | wc -l | tr -d ' ')" = "15"
+test "$($VERIFY_COMPOSE ps --status running -q | wc -l | tr -d ' ')" = "16"
 curl -fsS "$VERIFY_API/health" | python3 -c 'import json,sys; assert json.load(sys.stdin)=={"status":"ok","database":"ok","memory":"ok","knowledge":"ok"}'
 test "$(curl -fsS "$VERIFY_FRONTEND/frontend-health")" = "ok"
 curl -fsS "$VERIFY_FRONTEND/health" | python3 -c 'import json,sys; assert json.load(sys.stdin)=={"status":"ok","database":"ok","memory":"ok","knowledge":"ok"}'

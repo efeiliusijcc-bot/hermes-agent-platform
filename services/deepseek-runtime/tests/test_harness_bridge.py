@@ -4,6 +4,10 @@ import asyncio
 import os
 import subprocess
 import textwrap
+import base64
+import json
+import socket
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +17,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from deepseek_runtime_service.gateway import RUNTIME_API_KEY, _authorize, _relay
+from deepseek_runtime_service.capability_dispatcher import CapabilityDispatcher
 from deepseek_runtime_service.harness import (
     HarnessProcess,
     _runtime_launch,
@@ -23,10 +28,12 @@ from deepseek_runtime_service.server import (
     EventCollector,
     RuntimeManager,
     SessionCreate,
+    _capability_context,
     _assign_workspace_owner,
     _collect_artifacts,
     _git_output,
     _tool_event_type,
+    _session_context,
     settings,
 )
 
@@ -46,6 +53,95 @@ def test_default_runtime_launch_uses_the_pinned_official_npm_carrier() -> None:
         "/opt/deepseek-harness/node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/packaged-bin.js",
     )
     assert config == "/app/cordis.yml"
+
+
+def _capability_token(expires_in: int = 600) -> str:
+    encoded = base64.urlsafe_b64encode(
+        json.dumps({"exp": int(time.time()) + expires_in}).encode()
+    ).rstrip(b"=").decode("ascii")
+    return f"cap1.{encoded}.signature"
+
+
+def test_runtime_session_drops_per_execution_token_but_keeps_identity() -> None:
+    token = _capability_token()
+    context = {
+        "agent_id": "agent-1",
+        "workspace": "/data/workspaces/agent-1/repository",
+        "capability_token": token,
+        "capability_tools": [{"tool_name": "business_db_select", "input_schema": {"type": "object"}}],
+        "metadata": {"capability_token": token, "capability_tools": []},
+    }
+    sanitized = _session_context(context)
+    assert sanitized["agent_id"] == "agent-1"
+    assert "capability_token" not in sanitized and "capability_tools" not in sanitized
+    assert "capability_token" not in sanitized["metadata"]
+    extracted_token, tools = _capability_context(context)
+    assert extracted_token == token and tools[0]["tool_name"] == "business_db_select"
+
+
+@pytest.mark.asyncio
+async def test_private_unix_dispatcher_hides_token_and_invokes_only_authorized_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _capability_token()
+    calls: list[dict[str, object]] = []
+
+    class Response:
+        is_success = True
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"status": "SUCCEEDED", "data": {"rows": [{"id": 1}]}, "invocation_id": "inv-1", "metadata": {}}
+
+    class Client:
+        def __init__(self, **_kwargs: object) -> None: pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args: object) -> None: return None
+        async def post(self, endpoint: str, **kwargs: object) -> Response:
+            calls.append({"endpoint": endpoint, **kwargs})
+            return Response()
+
+    monkeypatch.setattr(
+        "deepseek_runtime_service.capability_dispatcher.httpx.AsyncClient",
+        Client,
+    )
+    dispatcher = CapabilityDispatcher(
+        endpoint="http://deepseek-runtime:8770/capability/invoke",
+        execution_id="execution-1",
+        token=token,
+        tools=[{
+            "tool_name": "business_db_select",
+            "description": "query",
+            "input_schema": {"type": "object", "properties": {"sql": {"type": "string"}}},
+            "binding_id": "must-not-reach-node",
+        }],
+        timeout_seconds=5,
+    )
+    await dispatcher.start()
+    child = socket.socket(fileno=os.dup(dispatcher.child_fd))
+    child.setblocking(False)
+    dispatcher.child_spawned()
+    reader, writer = await asyncio.open_connection(sock=child)
+    try:
+        writer.write(b'{"id":"1","type":"list"}\n')
+        await writer.drain()
+        listed = json.loads(await reader.readline())
+        serialized = json.dumps(listed)
+        assert listed["tools"][0]["tool_name"] == "business_db_select"
+        assert "binding_id" not in serialized and token not in serialized
+
+        writer.write(b'{"id":"2","type":"invoke","tool_name":"business_db_select","arguments":{"sql":"SELECT 1"}}\n')
+        await writer.drain()
+        invoked = json.loads(await reader.readline())
+        assert invoked["ok"] is True and invoked["invocation_id"] == "inv-1"
+        assert calls[0]["headers"]["Authorization"] == f"Bearer {token}"
+        assert calls[0]["json"] == {
+            "execution_id": "execution-1", "tool_name": "business_db_select", "arguments": {"sql": "SELECT 1"},
+        }
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        await dispatcher.close()
 
 
 def test_builtin_python_unittest_is_normalized_as_a_test_run() -> None:

@@ -4,7 +4,7 @@ import test from 'node:test'
 
 import { validateToolArguments } from '@earendil-works/pi-ai'
 
-import { sanitizeInputSchema } from '../src/mcp-tools.mjs'
+import { loadCapabilityTools, sanitizeInputSchema } from '../src/mcp-tools.mjs'
 import { PiRunCancelledError } from '../src/pi-engine.mjs'
 import { createPiRuntimeServer } from '../src/server.mjs'
 
@@ -163,6 +163,52 @@ test('MCP schema hides the per-execution access token from the model', () => {
     }),
     /Validation failed/,
   )
+})
+
+test('Capability dispatcher renews in memory and sends only alias plus business arguments', async () => {
+  const token = (exp, marker) => `cap1.${Buffer.from(JSON.stringify({ exp, marker })).toString('base64url')}.signature`
+  const initial = token(Math.floor(Date.now() / 1000) + 30, 'initial')
+  const renewed = token(Math.floor(Date.now() / 1000) + 600, 'renewed')
+  const requests = []
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options })
+    if (url.endsWith('/resolve')) {
+      return {
+        ok: true,
+        json: async () => ({ status: 'SUCCEEDED', metadata: { token_renewal: renewed } }),
+      }
+    }
+    return {
+      ok: true,
+      json: async () => ({ status: 'SUCCEEDED', data: { rows: [{ id: 1 }] }, invocation_id: 'inv-1' }),
+    }
+  }
+  const dispatcher = loadCapabilityTools({
+    endpoint: 'http://mcp-gateway:8090/internal/capabilities/invoke',
+    token: initial,
+    executionId: 'execution-1',
+    fetchImpl,
+    tools: [{
+      tool_name: 'business_db_select',
+      capability_key: 'database.select',
+      description: 'query',
+      input_schema: {
+        type: 'object', properties: { sql: { type: 'string' } }, required: ['sql'],
+      },
+    }],
+  })
+  try {
+    assert.deepEqual(Object.keys(dispatcher.tools[0].parameters.properties), ['sql'])
+    const result = await dispatcher.tools[0].execute('call-1', { sql: 'SELECT 1' })
+    assert.equal(requests[0].url.endsWith('/resolve'), true)
+    assert.equal(requests[1].options.headers.Authorization, `Bearer ${renewed}`)
+    assert.deepEqual(JSON.parse(requests[1].options.body), {
+      execution_id: 'execution-1', tool_name: 'business_db_select', arguments: { sql: 'SELECT 1' },
+    })
+    assert.equal(result.details.invocation_id, 'inv-1')
+  } finally {
+    await dispatcher.close()
+  }
 })
 
 test('stop cancels a queued run without waiting for the active run', async () => {

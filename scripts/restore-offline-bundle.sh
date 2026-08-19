@@ -13,7 +13,7 @@ TARGET_DEEPSEEK_RUNTIME_NETWORK=${OFFLINE_DEEPSEEK_RUNTIME_NETWORK_NAME:-hermes-
 TARGET_DEEPSEEK_HARNESS_NETWORK=${OFFLINE_DEEPSEEK_HARNESS_NETWORK_NAME:-hermes-agent-platform-deepseek-harness}
 
 test -f "$PROJECT_ROOT/.env" || {
-  echo "Offline bundle is missing .env" >&2
+  echo "Offline target is not configured; run ./scripts/configure-offline-env.sh first" >&2
   exit 1
 }
 test -f "$PROJECT_ROOT/images.tar" || {
@@ -137,7 +137,9 @@ $COMPOSE run --rm --no-deps --pull never \
     mc mirror --overwrite /import/knowledge local/knowledge >/dev/null
   '
 
-$COMPOSE up -d --wait --pull never agent-api agent-worker hermes-orchestrator frontend
+$COMPOSE up -d --wait --pull never \
+  postgres-mcp mcp-gateway hermes-runtime pi-runtime deepseek-runtime deepseek-harness-core \
+  agent-api agent-worker hermes-orchestrator frontend
 curl -fsS "http://127.0.0.1:$TARGET_API_PORT/health" >/dev/null
 curl -fsS "http://127.0.0.1:$TARGET_FRONTEND_PORT/frontend-health" >/dev/null
 curl -fsS "http://127.0.0.1:$TARGET_FRONTEND_PORT/health" >/dev/null

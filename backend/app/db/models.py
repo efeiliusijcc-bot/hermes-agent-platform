@@ -993,7 +993,10 @@ class Connector(Base):
     __tablename__ = "connectors"
     __table_args__ = (
         UniqueConstraint("key", name="uq_connectors_key"),
-        CheckConstraint("type IN ('internal_rest', 'mcp')", name="ck_connectors_type"),
+        CheckConstraint(
+            "type IN ('internal_rest', 'mcp', 'postgresql_mcp')",
+            name="ck_connectors_type",
+        ),
         CheckConstraint("status IN ('draft', 'published', 'disabled')", name="ck_connectors_status"),
     )
 
@@ -1116,7 +1119,12 @@ class CapabilityImplementation(Base):
 class CapabilityResource(Base):
     __tablename__ = "resources"
     __table_args__ = (
-        UniqueConstraint("connector_instance_id", "key", name="uq_resources_connector_key"),
+        UniqueConstraint(
+            "connector_instance_id",
+            "resource_type",
+            "key",
+            name="uq_resources_connector_type_key",
+        ),
         CheckConstraint("status IN ('active', 'disabled')", name="ck_resources_status"),
     )
 
@@ -1306,4 +1314,5 @@ class ConnectorHealthCheck(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     error_code: Mapped[str | None] = mapped_column(String(64))
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

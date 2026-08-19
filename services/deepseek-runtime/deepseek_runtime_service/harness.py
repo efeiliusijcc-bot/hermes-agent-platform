@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .capability_dispatcher import CapabilityDispatcher
+
 
 JsonObject = dict[str, Any]
 EventCallback = Callable[[JsonObject], Awaitable[None]]
@@ -56,6 +58,10 @@ class HarnessProcess:
         runtime_bin: str | None = None,
         cordis_config: str | None = None,
         execution_uid: int | None = None,
+        capability_gateway_endpoint: str | None = None,
+        capability_token: str = "",
+        capability_tools: list[dict[str, Any]] | None = None,
+        execution_id: str = "",
     ) -> None:
         self.cwd = cwd
         self.session_root = session_root
@@ -69,6 +75,11 @@ class HarnessProcess:
         self.runtime_bin = runtime_bin
         self.cordis_config = cordis_config
         self.execution_uid = execution_uid
+        self.capability_gateway_endpoint = capability_gateway_endpoint
+        self.capability_token = capability_token
+        self.capability_tools = list(capability_tools or [])
+        self.execution_id = execution_id
+        self.capability_dispatcher: CapabilityDispatcher | None = None
         self.process: asyncio.subprocess.Process | None = None
         self._reader: asyncio.Task[None] | None = None
         self._stderr_reader: asyncio.Task[None] | None = None
@@ -104,6 +115,21 @@ class HarnessProcess:
             self.session_root.parent.chmod(self.session_root.parent.stat().st_mode | 0o001)
             _own_private_path(self.session_root, self.execution_uid)
             subprocess_identity = _subprocess_identity(self.session_root, self.execution_uid)
+        pass_fds: tuple[int, ...] = ()
+        if self.capability_tools:
+            if not self.capability_gateway_endpoint or not self.capability_token or not self.execution_id:
+                raise HarnessProtocolError("Capability Gateway context is incomplete")
+            self.capability_dispatcher = CapabilityDispatcher(
+                endpoint=self.capability_gateway_endpoint,
+                execution_id=self.execution_id,
+                token=self.capability_token,
+                tools=self.capability_tools,
+                timeout_seconds=self.request_timeout_seconds,
+            )
+            await self.capability_dispatcher.start()
+            capability_fd = self.capability_dispatcher.child_fd
+            env["HERMES_CAPABILITY_FD"] = str(capability_fd)
+            pass_fds = (capability_fd,)
         try:
             self.process = await asyncio.create_subprocess_exec(
                 *args,
@@ -113,10 +139,16 @@ class HarnessProcess:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
+                pass_fds=pass_fds,
                 **subprocess_identity,
             )
         except (OSError, FileNotFoundError) as exc:
+            if self.capability_dispatcher is not None:
+                self.capability_dispatcher.child_spawned()
+                await self.capability_dispatcher.close()
             raise HarnessTransportError(f"failed to start DeepSeek Harness: {exc}") from exc
+        if self.capability_dispatcher is not None:
+            self.capability_dispatcher.child_spawned()
         self._reader = asyncio.create_task(self._read_stdout())
         self._stderr_reader = asyncio.create_task(self._read_stderr())
         params: JsonObject = {
@@ -180,6 +212,9 @@ class HarnessProcess:
     async def close(self) -> None:
         process = self.process
         if process is None:
+            if self.capability_dispatcher is not None:
+                await self.capability_dispatcher.close()
+                self.capability_dispatcher = None
             return
         if process.returncode is None and not self._cancelled:
             try:
@@ -195,6 +230,9 @@ class HarnessProcess:
                 await process.wait()
         await self._finish_readers()
         self.process = None
+        if self.capability_dispatcher is not None:
+            await self.capability_dispatcher.close()
+            self.capability_dispatcher = None
 
     async def cancel(self) -> None:
         self._cancelled = True

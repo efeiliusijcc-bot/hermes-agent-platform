@@ -40,6 +40,8 @@ services:
         condition: service_healthy
       mcp-gateway:
         condition: service_healthy
+      postgres-mcp:
+        condition: service_healthy
       knowledge-service:
         condition: service_healthy
       source-recall-gateway:
@@ -128,6 +130,7 @@ services:
       PLATFORM_MANAGEMENT_API_KEY_ENABLED: ${PLATFORM_MANAGEMENT_API_KEY_ENABLED:-true}
       PLATFORM_MANAGEMENT_API_KEY: ${PLATFORM_MANAGEMENT_API_KEY:?PLATFORM_MANAGEMENT_API_KEY is required}
       CAPABILITY_GATEWAY_INTERNAL_URL: http://mcp-gateway:8090/internal/capabilities/invoke
+      POSTGRES_MCP_ENDPOINT: http://postgres-mcp:8091
       EXECUTION_CAPABILITY_TOKEN_TTL_SECONDS: ${EXECUTION_CAPABILITY_TOKEN_TTL_SECONDS:-600}
       EXECUTION_CAPABILITY_TOKEN_RENEW_BEFORE_SECONDS: ${EXECUTION_CAPABILITY_TOKEN_RENEW_BEFORE_SECONDS:-120}
     volumes:
@@ -430,7 +433,10 @@ services:
       - platform-internal
 
   hermes-runtime:
-    image: nousresearch/hermes-agent:v2026.8.3@sha256:16788311e2fa3035456bdc1bafb8ec2b1777db64ebf020af9bb7eb73c3712c9e
+    build:
+      context: .
+      dockerfile: services/hermes-runtime/Dockerfile
+    image: hermes-agent-platform/hermes-runtime:capability-v1
     restart: unless-stopped
     depends_on:
       hermes-init:
@@ -446,6 +452,8 @@ services:
       API_SERVER_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
       TERMINAL_CWD: /opt/data
       DEEPSEEK_API_KEY: ${MODEL_GATEWAY_API_KEY:?MODEL_GATEWAY_API_KEY is required}
+      CAPABILITY_GATEWAY_ENDPOINT: http://mcp-gateway:8090/internal/capabilities/invoke
+      HERMES_CAPABILITY_MAX_RESPONSE_BYTES: ${CAPABILITY_MAX_RESPONSE_BYTES:-2097152}
     command: ["gateway", "run"]
     volumes:
       - ./data/hermes:/opt/data
@@ -507,7 +515,7 @@ services:
       - pi-runtime-internal
 
   deepseek-runtime:
-    image: hermes-agent-platform/deepseek-runtime:phase8
+    image: hermes-agent-platform/deepseek-runtime:capability-v1
     restart: unless-stopped
     entrypoint: ["uvicorn", "deepseek_runtime_service.gateway:app", "--host", "0.0.0.0", "--port", "8770"]
     depends_on:
@@ -515,11 +523,14 @@ services:
         condition: service_healthy
       model-gateway:
         condition: service_healthy
+      mcp-gateway:
+        condition: service_healthy
     environment:
       DEEPSEEK_RUNTIME_API_KEY: ${DEEPSEEK_RUNTIME_API_KEY:?DEEPSEEK_RUNTIME_API_KEY is required}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:?MODEL_GATEWAY_API_KEY is required}
       DEEPSEEK_HARNESS_CORE_ENDPOINT: http://deepseek-harness-core:8771
       MODEL_GATEWAY_ENDPOINT: http://model-gateway:8080
+      CAPABILITY_GATEWAY_ENDPOINT: http://mcp-gateway:8090/internal/capabilities
       DEEPSEEK_RUNTIME_REQUEST_TIMEOUT_SECONDS: ${DEEPSEEK_RUNTIME_TIMEOUT_SECONDS:-900}
       DEEPSEEK_RUNTIME_REQUEST_MAX_BYTES: ${DEEPSEEK_RUNTIME_REQUEST_MAX_BYTES:-2097152}
     expose:
@@ -545,12 +556,13 @@ services:
     networks:
       - deepseek-runtime-internal
       - deepseek-harness-internal
+      - platform-internal
 
   deepseek-harness-core:
     build:
       context: .
       dockerfile: services/deepseek-runtime/Dockerfile
-    image: hermes-agent-platform/deepseek-runtime:phase8
+    image: hermes-agent-platform/deepseek-runtime:capability-v1
     restart: unless-stopped
     user: "0:0"
     environment:
@@ -558,6 +570,7 @@ services:
       WORKSPACE_ROOT: /data/workspaces
       DEEPSEEK_SESSION_ROOT: /data/deepseek-sessions
       MODEL_GATEWAY_ENDPOINT: http://deepseek-runtime:8770/model/v1
+      CAPABILITY_GATEWAY_ENDPOINT: http://deepseek-runtime:8770/capability/invoke
       DEEPSEEK_MODEL_PROXY_TOKEN: proxy-transport-only-not-a-secret
       DEEPSEEK_HARNESS_PROVIDER: ${DEEPSEEK_HARNESS_PROVIDER:-deepseek-official}
       DEEPSEEK_HARNESS_CORDIS_CONFIG: /app/cordis.yml
@@ -656,6 +669,76 @@ services:
     networks:
       - platform-internal
       - pi-runtime-internal
+
+  postgres-mcp:
+    build:
+      context: .
+      dockerfile: services/postgres-mcp/Dockerfile
+    image: hermes-agent-platform/postgres-mcp:capability-v1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MCP_GATEWAY_SIGNING_KEY: ${MCP_GATEWAY_SIGNING_KEY:?MCP_GATEWAY_SIGNING_KEY is required}
+      MODEL_REGISTRY_ENCRYPTION_KEY: ${MODEL_REGISTRY_ENCRYPTION_KEY:?MODEL_REGISTRY_ENCRYPTION_KEY is required}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      POSTGRES_MCP_DISCOVERY_CONCURRENCY: ${POSTGRES_MCP_DISCOVERY_CONCURRENCY:-4}
+      POSTGRES_MCP_DISCOVERY_MAX_DATABASES: ${POSTGRES_MCP_DISCOVERY_MAX_DATABASES:-100}
+      POSTGRES_MCP_MAX_RESPONSE_BYTES: ${POSTGRES_MCP_MAX_RESPONSE_BYTES:-2097152}
+    expose:
+      - "8091"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=2)"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - platform-internal
+
+  postgres-mcp-test-db:
+    profiles: ["postgres-mcp-e2e"]
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_MCP_TEST_ADMIN_PASSWORD:-postgres-mcp-e2e-admin}
+    volumes:
+      - postgres-mcp-test-data:/var/lib/postgresql/data
+      - ./tests/fixtures/postgres-mcp-init.sql:/docker-entrypoint-initdb.d/001-postgres-mcp-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - postgres-mcp-test-target
 
   knowledge-service:
     build:
@@ -800,3 +883,9 @@ networks:
   deepseek-harness-internal:
     name: ${HERMES_DEEPSEEK_HARNESS_NETWORK_NAME:-hermes-agent-platform-deepseek-harness}
     internal: true
+  postgres-mcp-test-target:
+    name: ${HERMES_POSTGRES_MCP_TEST_NETWORK_NAME:-hermes-agent-platform-postgres-mcp-test-target}
+    internal: true
+
+volumes:
+  postgres-mcp-test-data:

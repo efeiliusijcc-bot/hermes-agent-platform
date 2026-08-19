@@ -14,6 +14,9 @@ test -f "$PROJECT_ROOT/.env" || {
   echo "Missing runtime configuration: $PROJECT_ROOT/.env" >&2
   exit 1
 }
+set -a
+. "$PROJECT_ROOT/.env"
+set +a
 
 umask 077
 mkdir -p "$OUTPUT_DIR"
@@ -46,8 +49,7 @@ rsync -a \
   --exclude='dist/' \
   --exclude='artifacts/' \
   "$PROJECT_ROOT/" "$STAGE_ROOT/"
-cp "$PROJECT_ROOT/.env" "$STAGE_ROOT/.env"
-chmod 0600 "$STAGE_ROOT/.env"
+test -x "$STAGE_ROOT/scripts/configure-offline-env.sh"
 
 for data_name in hermes hermes-workspace deepseek-sessions mcp-files; do
   if [ -d "$PROJECT_ROOT/data/$data_name" ]; then
@@ -135,13 +137,16 @@ product=Hermes Agent Platform
 version=$VERSION
 created_at_utc=$CREATED_AT
 source_compose_project=$PROJECT_NAME
-hermes_release=v0.20.0
+hermes_release=v2026.8.3
 hermes_image=nousresearch/hermes-agent:v2026.8.3@sha256:16788311e2fa3035456bdc1bafb8ec2b1777db64ebf020af9bb7eb73c3712c9e
 pi_core_release=0.84.2
-pi_runtime_image=hermes-agent-platform/pi-runtime:phase5
+pi_runtime_image=hermes-agent-platform/pi-runtime:capability-v1
 deepseek_harness_release=0.1.0-rc.6
-deepseek_runtime_image=hermes-agent-platform/deepseek-runtime:phase8
-deepseek_transport=json-rpc-2.0-stdio-via-isolated-http-gateway
+deepseek_runtime_image=hermes-agent-platform/deepseek-runtime:capability-v1
+postgres_mcp_image=hermes-agent-platform/postgres-mcp:capability-v1
+deepseek_transport=json-rpc-2.0-via-private-unix-socket-dispatcher
+source_env_included=false
+target_env_generation=offline-network-none
 data_format=postgres-custom-dump,redis-rdb-and-logical,minio-object-mirror,bind-directory-copy
 EOF
 

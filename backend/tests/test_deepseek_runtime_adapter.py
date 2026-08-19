@@ -68,8 +68,14 @@ def test_deepseek_service_uses_official_jsonrpc_runtime_on_an_internal_network()
     assert "COPY --from=harness-runtime /usr/local/bin/node" in dockerfile
     assert "python:3.12.10-slim-bookworm" in dockerfile
     assert "COPY services/deepseek-runtime/cordis.yml" in dockerfile
+    assert "COPY services/deepseek-runtime/platform-capabilities.mjs ./platform-capabilities.mjs" in dockerfile
     assert "@deepseek-ai/dsh-sdk-jsonrpc-server" in cordis
+    assert "/opt/deepseek-harness/platform-capabilities.mjs" in cordis
     assert "thinking: disabled" in cordis
+    plugin = Path("services/deepseek-runtime/platform-capabilities.mjs").read_text()
+    assert "ctx.tools.register(defineTool" in plugin
+    assert "HERMES_CAPABILITY_FD" in plugin
+    assert "capability_token" not in plugin.lower()
 
 
 def test_runtime_migration_keeps_existing_platform_artifact_provenance() -> None:

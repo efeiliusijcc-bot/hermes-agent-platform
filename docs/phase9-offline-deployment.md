@@ -6,19 +6,20 @@
 
 - 当前平台源码、Compose、Skill、Demo 配置和运维脚本；
 - Compose 引用的全部 Docker 镜像，统一保存在 `images.tar`；
-- 运行 `.env` 配置；
-- 模型注册表、加密后的模型 API Key，以及能够解密这些密文的 `MODEL_REGISTRY_ENCRYPTION_KEY`；
+- 脱敏 `.env.example` 和目标节点离线配置脚本，不包含源节点 `.env`；
+- 模型注册表和 Connector Credential 的加密密文，但不包含源节点 `MODEL_REGISTRY_ENCRYPTION_KEY`；
 - PostgreSQL custom-format 逻辑备份；
 - Redis RDB 与支持 TTL 的逻辑键快照；
 - MinIO `artifacts`、`knowledge` 两个 bucket 的对象镜像；
 - Hermes 数据目录、工作目录和 MCP 只读文件；
 - 已固化官方 `@earendil-works/pi-agent-core 0.84.2` 依赖的 `pi-runtime` 镜像；
 - 已固化官方 DeepSeek Harness npm `0.1.0-rc.6` 依赖和锁文件的 DeepSeek Runtime 镜像、隔离网关和 Harness JSONL Session 数据目录；
+- PostgreSQL MCP 镜像、`0017` 迁移、数据库资源发现/Scope 管理前后端和隔离 E2E 种子数据；
 - 所有内部文件的 `SHA256SUMS` 与镜像清单。
 
-离线包包含模型、数据库、Redis 和 MinIO 密钥，必须按敏感配置文件管理。脚本以 `0600` 创建归档和校验文件，不得上传到公开制品库或提交到 Git。
+离线包不包含源节点的模型、数据库、Redis、MinIO、Runtime、签名或管理密钥。脚本仍以 `0600` 创建归档和校验文件，归档不加密，但不得上传到公开制品库或提交到 Git。
 
-模型注册表密文和 `MODEL_REGISTRY_ENCRYPTION_KEY` 必须成对迁移。恢复后不要直接生成新的主密钥，否则已有模型 API Key 无法解密；如交付包不允许携带源主密钥，则恢复后必须在模型管理页面逐项重新录入模型 API Key。
+目标节点默认生成新的 `MODEL_REGISTRY_ENCRYPTION_KEY`，因此备份内已有模型 API Key 和 Connector Credential 密文不可在目标节点解密。恢复后必须在模型管理页面重新录入模型 API Key，并在数据库连接/Connector 页面轮换凭据。历史 Snapshot、Trace 和 Audit 保留，但旧密文不会回显。若必须保留既有密文，可通过受控的独立渠道在执行配置脚本时设置 `OFFLINE_MODEL_REGISTRY_ENCRYPTION_KEY`；该主密钥仍不得放进离线归档、命令日志或公开制品库。
 
 ## 2. 在源节点导出
 
@@ -40,10 +41,11 @@ mkdir -p /opt/hermes-agent-platform
 tar -xzf hermes-agent-platform-v1.0.0-*.tar.gz \
   -C /opt/hermes-agent-platform --strip-components=1
 cd /opt/hermes-agent-platform
+./scripts/configure-offline-env.sh
 ./scripts/restore-offline-bundle.sh
 ```
 
-恢复脚本依次完成：内部校验、`docker load`、持久目录准备、Redis RDB 放置与逻辑键恢复、PostgreSQL 恢复、MinIO 对象导入、服务启动和 API 健康检查。Redis 7 在 AOF 模式下不会直接采用外部 RDB，因此 RDB 作为完整备份保留，运行恢复使用带类型和 TTL 的逻辑快照。
+配置脚本先执行 `docker load`，再通过 `--network none` 的包内镜像生成目标节点新密钥，并现场接收内网模型地址、模型名和 API Key；这些值不会打印到终端。恢复脚本随后完成内部校验、`docker load`、持久目录准备、Redis RDB 放置与逻辑键恢复、PostgreSQL 恢复、MinIO 对象导入、服务启动和 API 健康检查，全程使用 `--pull never`。Redis 7 在 AOF 模式下不会直接采用外部 RDB，因此 RDB 作为完整备份保留，运行恢复使用带类型和 TTL 的逻辑快照。
 
 ## 4. 116 隔离验收
 
