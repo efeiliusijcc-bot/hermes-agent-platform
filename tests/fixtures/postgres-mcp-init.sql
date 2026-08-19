@@ -54,10 +54,11 @@ GRANT SELECT ON public.skills, reporting.execution_summary, reporting.successful
 
 CREATE SCHEMA metrics;
 CREATE TABLE metrics.daily_usage (
-  usage_date date PRIMARY KEY,
+  usage_date date NOT NULL,
   agent_id text NOT NULL,
   invocation_count integer NOT NULL,
-  error_count integer NOT NULL
+  error_count integer NOT NULL,
+  PRIMARY KEY (usage_date, agent_id)
 );
 INSERT INTO metrics.daily_usage VALUES
   ('2026-08-17', 'manager-hermes', 12, 0),
