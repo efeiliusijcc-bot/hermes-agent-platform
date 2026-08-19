@@ -19,9 +19,14 @@ from app.database_connections import (
     scope_definition,
     validate_scope,
 )
-from app.api.console import _database_scope_context, _require_database_operation_permission
+from app.api.console import (
+    _database_scope_context,
+    _editor_version,
+    _require_database_operation_permission,
+)
 from app.api.database_connections import require_database_console_bff
 from app.db.models import (
+    AgentVersion,
     Connector,
     ConnectorCredential,
     ConnectorInstance,
@@ -175,6 +180,22 @@ def test_database_binding_rejects_tools_not_granted_by_scope() -> None:
     for operation in ("describe_table", "preview_table", "select", "explain"):
         with pytest.raises(HTTPException, match=operation):
             _require_database_operation_permission(definition, operation)
+
+
+@pytest.mark.asyncio
+async def test_agent_editor_falls_back_to_published_version_for_read_only_bindings() -> None:
+    published_id = uuid4()
+    published = SimpleNamespace(id=published_id, status="published")
+    agent = SimpleNamespace(current_version_id=published_id)
+    session = SimpleNamespace(get=AsyncMock(return_value=published))
+
+    selected, source = await _editor_version(session, agent, None)  # type: ignore[arg-type]
+    assert selected is published and source == "published"
+
+    draft = SimpleNamespace(id=uuid4(), status="development")
+    selected, source = await _editor_version(session, agent, draft)  # type: ignore[arg-type]
+    assert selected is draft and source == "draft"
+    session.get.assert_awaited_once_with(AgentVersion, published_id)
 
 
 @pytest.mark.asyncio

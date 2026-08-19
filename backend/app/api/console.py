@@ -197,14 +197,15 @@ async def agent_editor(
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent 不存在")
     draft = await _draft_version(session, agent_id, create=False)
-    resolution = await resolve_agent_capabilities(session, draft) if draft is not None else None
+    version, version_source = await _editor_version(session, agent, draft)
+    resolution = await resolve_agent_capabilities(session, version) if version is not None else None
     bindings = list(
         await session.scalars(
             select(AgentCapabilityBinding)
-            .where(AgentCapabilityBinding.agent_version_id == draft.id)
+            .where(AgentCapabilityBinding.agent_version_id == version.id)
             .order_by(AgentCapabilityBinding.tool_alias)
         )
-    ) if draft is not None else []
+    ) if version is not None else []
     capability_rows: list[dict[str, Any]] = []
     resolved_by_binding = {item.binding_id: item for item in resolution.tools} if resolution else {}
     for binding in bindings:
@@ -228,7 +229,7 @@ async def agent_editor(
                 },
             }
         )
-    preflight = await _console_preflight(session, agent, draft, resolution) if resolution else {
+    preflight = await _console_preflight(session, agent, version, resolution) if resolution else {
         "state": "NEEDS_CONFIGURATION",
         "issues": [{"code": "DRAFT_REQUIRED", "path": "agent", "message": "请先保存草稿", "severity": "error"}],
     }
@@ -239,8 +240,10 @@ async def agent_editor(
             "name": agent.name,
             "description": agent.description,
             "status": agent.status,
-            "version": draft.version if draft else None,
+            "version": version.version if version else None,
             "draft_version_id": str(draft.id) if draft else None,
+            "display_version_id": str(version.id) if version else None,
+            "version_source": version_source,
         },
         "sections": {
             "identity": {
@@ -255,7 +258,7 @@ async def agent_editor(
                 "model": agent.model,
                 "model_adapter": agent.model_adapter,
                 "response_mode": agent.response_mode,
-                "execution_mode": (draft.snapshot.get("execution_mode") if draft else None) or "autonomous",
+                "execution_mode": (version.snapshot.get("execution_mode") if version else None) or "autonomous",
             },
             "skills": [
                 {"id": item.id, "name": item.name, "version": item.version}
@@ -269,10 +272,23 @@ async def agent_editor(
         },
         "preflight": preflight,
         "actions": {
-            "can_test": preflight["state"] == "READY",
+            "can_test": preflight["state"] == "READY" and draft is not None,
             "can_publish": preflight["state"] == "READY" and draft is not None,
         },
     }
+
+
+async def _editor_version(
+    session: AsyncSession,
+    agent: Agent,
+    draft: AgentVersion | None,
+) -> tuple[AgentVersion | None, str | None]:
+    if draft is not None:
+        return draft, "draft"
+    if agent.current_version_id is None:
+        return None, None
+    published = await session.get(AgentVersion, agent.current_version_id)
+    return (published, "published") if published is not None else (None, None)
 
 
 @router.patch("/agents/{agent_id}/editor/{section}")
