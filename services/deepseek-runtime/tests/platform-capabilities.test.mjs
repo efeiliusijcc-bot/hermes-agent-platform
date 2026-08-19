@@ -37,7 +37,10 @@ test('Cordis plugin registers an alias and sends only business arguments over in
             description: 'query database',
             input_schema: {
               type: 'object',
-              properties: { sql: { type: 'string' } },
+              properties: {
+                sql: { type: 'string', minLength: 1, maxLength: 10_000 },
+                limit: { type: 'integer', minimum: 1, maximum: 200 },
+              },
               required: ['sql'],
               additionalProperties: false,
             },

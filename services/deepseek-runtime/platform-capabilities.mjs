@@ -75,13 +75,20 @@ function propertySpec(schema, required = false) {
     throw new Error(`Unsupported Capability input type: ${String(type)}`)
   }
   const value = { type, ...(required ? { required: true } : {}) }
-  for (const key of ['description', 'minimum', 'maximum', 'minLength', 'maxLength', 'minItems', 'maxItems']) {
+  // dsh-tools uses a deliberately smaller authoring DSL than JSON Schema.
+  // Runtime-only constraints are omitted here and enforced again by the
+  // Capability Gateway against the original frozen schema.
+  for (const key of ['description', 'title', 'default', 'examples']) {
     if (schema[key] !== undefined) value[key] = schema[key]
   }
   if (Array.isArray(schema.enum)) value.enum = [...schema.enum]
+  if (schema.const !== undefined) value.const = schema.const
   if (type === 'array') value.items = propertySpec(schema.items || { type: 'string' })
   if (type === 'object') {
     const requiredNames = new Set(Array.isArray(schema.required) ? schema.required : [])
+    value.additionalProperties = typeof schema.additionalProperties === 'boolean'
+      ? schema.additionalProperties
+      : false
     value.properties = Object.fromEntries(
       Object.entries(schema.properties || {}).map(([name, child]) => [name, propertySpec(child, requiredNames.has(name))]),
     )
