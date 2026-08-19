@@ -722,7 +722,7 @@ services:
 
   postgres-mcp-test-db:
     profiles: ["postgres-mcp-e2e"]
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:0.8.1-pg17
     restart: unless-stopped
     environment:
       POSTGRES_DB: postgres
