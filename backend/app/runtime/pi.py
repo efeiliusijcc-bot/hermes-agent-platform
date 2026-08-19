@@ -24,6 +24,7 @@ class PiRuntimeAdapter(RuntimeAdapter):
 
     runtime_type = "pi"
     runtime_label = "Pi"
+    health_version_field = "version"
 
     def __init__(
         self,
@@ -177,7 +178,7 @@ class PiRuntimeAdapter(RuntimeAdapter):
         status = str(payload.get("status") or "ok").lower()
         if status not in {"ok", "online", "healthy", "ready"}:
             raise RuntimeAdapterError(f"{self.runtime_label} Runtime is not healthy: {status}")
-        version = payload.get("version") or self.version
+        version = payload.get(self.health_version_field) or payload.get("version") or self.version
         return RuntimeHealth(
             status="online",
             version=str(version) if version else None,

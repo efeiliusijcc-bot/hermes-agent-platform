@@ -102,6 +102,25 @@ async def test_deepseek_adapter_requires_repository_workspace() -> None:
 
 
 @pytest.mark.asyncio
+async def test_deepseek_health_reports_the_pinned_harness_version() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/health"
+        return httpx.Response(
+            200,
+            json={"status": "ready", "version": "1.0.0", "harness_version": "0.1.0-rc.6"},
+        )
+
+    adapter = DeepSeekRuntimeAdapter(
+        endpoint="http://deepseek-runtime:8770",
+        version="0.1.0-rc.6",
+        transport=httpx.MockTransport(handler),
+    )
+    health = await adapter.health_check()
+    assert health.status == "online"
+    assert health.version == "0.1.0-rc.6"
+
+
+@pytest.mark.asyncio
 async def test_deepseek_adapter_maps_bridge_result_and_coding_artifacts() -> None:
     requests: list[httpx.Request] = []
 

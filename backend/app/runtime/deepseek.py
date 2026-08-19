@@ -24,6 +24,7 @@ class DeepSeekRuntimeAdapter(PiRuntimeAdapter):
 
     runtime_type = "deepseek"
     runtime_label = "DeepSeek"
+    health_version_field = "harness_version"
 
     @staticmethod
     def _default_endpoint(settings: Any) -> str | None:
