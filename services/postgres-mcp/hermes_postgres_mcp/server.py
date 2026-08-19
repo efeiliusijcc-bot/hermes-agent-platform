@@ -239,7 +239,7 @@ async def _load_revision(revision_id: UUID) -> dict[str, Any]:
     if row is None or row["encrypted_payload"] is None:
         raise ValueError("数据库连接 Revision 或凭据不存在")
     return {
-        "config": _object(row["connection_config"]),
+        "config": _stored_object(row["connection_config"]),
         "credential": _decrypt(str(row["encrypted_payload"])),
         "enabled": bool(row["enabled"]),
         "credential_epoch": row["last_rotated_at"].isoformat(),
@@ -442,13 +442,13 @@ async def _authorize(ctx: Context, tool: str) -> dict[str, Any]:
         or not row["enabled"]
     ):
         raise AccessDenied("数据库能力运行上下文不匹配或连接已停用")
-    scope = _object(row["scope_definition"])
+    scope = _stored_object(row["scope_definition"])
     if scope.get("connector_revision_id") != revision_id:
         raise AccessDenied("Scope 未绑定当前 Connector Revision")
     return {
         "revision_id": revision_id,
         "database": _required_text(scope, "database"),
-        "config": _object(row["connection_config"]),
+        "config": _stored_object(row["connection_config"]),
         "credential": _decrypt(str(row["encrypted_payload"])),
         "credential_epoch": row["last_rotated_at"].isoformat(),
         "scope": scope,
@@ -603,6 +603,18 @@ def _object(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("请求对象格式无效")
     return value
+
+
+def _stored_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("存储对象格式无效") from exc
+    try:
+        return _object(value)
+    except ValueError as exc:
+        raise ValueError("存储对象格式无效") from exc
 
 
 def _required_text(value: dict[str, Any], field: str) -> str:

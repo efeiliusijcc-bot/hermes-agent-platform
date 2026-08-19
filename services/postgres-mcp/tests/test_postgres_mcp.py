@@ -12,6 +12,7 @@ from hermes_postgres_mcp.auth import AccessDenied, verify_capability_token
 from hermes_postgres_mcp.server import (
     _require_permission,
     _require_response_size,
+    _stored_object,
     _timeouts,
     _validate_analysis,
 )
@@ -86,6 +87,15 @@ def test_permissions_and_response_limit_fail_closed() -> None:
         _require_permission({"permissions": {"describe": False}}, "describe")
     with pytest.raises(ValueError, match="响应大小"):
         _require_response_size({"rows": ["x" * 200]}, 32)
+
+
+def test_stored_json_objects_accept_asyncpg_jsonb_strings_and_reject_non_objects() -> None:
+    assert _stored_object({"database": "business_db"}) == {"database": "business_db"}
+    assert _stored_object('{"database":"analytics_db"}') == {"database": "analytics_db"}
+    with pytest.raises(ValueError, match="存储对象格式无效"):
+        _stored_object("[]")
+    with pytest.raises(ValueError, match="存储对象格式无效"):
+        _stored_object("not-json")
 
 
 def test_capability_token_signature_expiry_and_claims_are_enforced() -> None:
