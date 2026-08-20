@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from app.capabilities.policy import ParameterPolicyError, apply_parameter_policy
 from app.capabilities.security import (
@@ -18,6 +19,7 @@ from app.skills.package import SkillLoadError, skill_contract, validate_skill_co
 from app.capabilities.resolver import version_satisfies
 from app.config import Settings
 from app.main import app
+from app.schemas.capability import ConnectorUpdate
 
 
 def test_execution_capability_token_binds_version_scope_and_expiry() -> None:
@@ -140,3 +142,13 @@ def test_platform_runtimes_with_hidden_token_dispatchers_advertise_capability_ga
 def test_control_plane_has_no_browser_unlock_contract() -> None:
     assert "platform_management_api_key" not in Settings.model_fields
     assert "X-Platform-Management-Key" not in json.dumps(app.openapi())
+
+
+def test_connector_management_supports_metadata_updates_and_revision_reads() -> None:
+    value = ConnectorUpdate(display_name="内部知识检索", description="管理员可见说明", status="published")
+    assert value.status == "published"
+    with pytest.raises(ValidationError):
+        ConnectorUpdate(status="unknown")
+    paths = app.openapi()["paths"]
+    assert "patch" in paths["/api/connectors/{connector_id}"]
+    assert "get" in paths["/api/connector-instance-revisions/{revision_id}"]

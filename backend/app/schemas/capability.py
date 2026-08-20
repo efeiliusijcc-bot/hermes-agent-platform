@@ -100,6 +100,12 @@ class ConnectorCreate(BaseModel):
     description: str | None = None
 
 
+class ConnectorUpdate(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    status: Literal["draft", "published", "disabled"] | None = None
+
+
 class ConnectorRead(ORMModel):
     id: UUID
     key: str

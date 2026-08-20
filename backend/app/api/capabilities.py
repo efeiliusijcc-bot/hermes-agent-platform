@@ -10,7 +10,7 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from jsonschema import Draft202012Validator, SchemaError
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,6 +57,7 @@ from app.schemas.capability import (
     ConnectorRead,
     ConnectorRevisionCreate,
     ConnectorRevisionRead,
+    ConnectorUpdate,
     CredentialCreate,
     CredentialRead,
     CredentialRotate,
@@ -273,6 +274,20 @@ async def get_connector(
     return ConnectorRead.model_validate(await _required(session, Connector, connector_id, "连接不存在"))
 
 
+@router.patch("/api/connectors/{connector_id}", response_model=ConnectorRead)
+async def update_connector(
+    connector_id: UUID,
+    payload: ConnectorUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> ConnectorRead:
+    value = await _required(session, Connector, connector_id, "连接不存在")
+    for key, item in payload.model_dump(exclude_unset=True).items():
+        setattr(value, key, item)
+    await session.commit()
+    await session.refresh(value)
+    return ConnectorRead.model_validate(value)
+
+
 @router.post(
     "/api/connectors/{connector_id}/instances",
     response_model=ConnectorInstanceRead,
@@ -365,6 +380,16 @@ async def test_connector_revision(
     )
     await session.commit()
     return {"status": instance.health_status, "latency_ms": latency, "error_code": error_code}
+
+
+@router.get("/api/connector-instance-revisions/{revision_id}", response_model=ConnectorRevisionRead)
+async def get_connector_revision(
+    revision_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> ConnectorRevisionRead:
+    return ConnectorRevisionRead.model_validate(
+        await _required(session, ConnectorInstanceRevision, revision_id, "连接 Revision 不存在")
+    )
 
 
 @router.get("/api/connectors/{connector_id}/operations", response_model=list[ConnectorOperationRead])
@@ -539,9 +564,23 @@ async def update_draft_bindings(
     aliases = [item.tool_alias for item in payload.bindings]
     if len(aliases) != len(set(aliases)):
         raise HTTPException(status_code=422, detail="Tool Alias 不能重复")
-    await session.execute(
-        delete(AgentCapabilityBinding).where(AgentCapabilityBinding.agent_version_id == version.id)
+    existing = list(
+        await session.scalars(
+            select(AgentCapabilityBinding).where(AgentCapabilityBinding.agent_version_id == version.id)
+        )
     )
+    preserved_aliases: set[str] = set()
+    for binding in existing:
+        capability_version = await session.get(CapabilityVersion, binding.capability_version_id)
+        capability = await session.get(Capability, capability_version.capability_id) if capability_version else None
+        preserve = binding.source_type != "direct" or bool(capability and capability.key.startswith("database."))
+        if preserve:
+            preserved_aliases.add(binding.tool_alias)
+        else:
+            await session.delete(binding)
+    duplicate_preserved = preserved_aliases.intersection(aliases)
+    if duplicate_preserved:
+        raise HTTPException(status_code=422, detail=f"Tool Alias 与自动绑定冲突：{sorted(duplicate_preserved)[0]}")
     values: list[AgentCapabilityBinding] = []
     for item in payload.bindings:
         capability_version = await _required(session, CapabilityVersion, item.capability_version_id, "能力版本不存在")

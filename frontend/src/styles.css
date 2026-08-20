@@ -245,6 +245,12 @@ a { color: inherit; text-decoration: none; }
 .binding-row span { color: var(--muted); font-size: 10px; }
 .binding-icon { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 8px; color: var(--accent); background: var(--accent-soft); }
 .binding-edit { margin-left: auto; }
+.capability-binding-editor-list { display: grid; gap: 12px; margin-top: 16px; }
+.capability-binding-editor-list article { padding: 16px; }
+.capability-binding-editor-list article > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.capability-binding-editor-list article > header > div { display: grid; gap: 3px; }
+.capability-binding-editor-list article > header strong { font-size: 13px; }
+.capability-binding-editor-list article > header span { color: var(--muted); font-size: 10px; }
 
 .resource-list { display: grid; gap: 1px; overflow: hidden; }
 .resource-row { display: grid; grid-template-columns: 44px minmax(160px, 1fr) minmax(180px, 1.4fr) minmax(120px, .8fr); gap: 14px; align-items: center; padding: 15px 18px; background: var(--surface); }

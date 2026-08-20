@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NFormItem, NIcon, NModal, useDialog, useMessage } from 'naive-ui'
+import { NFormItem, NIcon, NInputNumber, NModal, useDialog, useMessage } from 'naive-ui'
 import { ArrowLeft, Hierarchy, Book2, Edit, PlugConnected, TestPipe, Api, GitBranch, Heartbeat, History } from '@vicons/tabler'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -8,7 +8,7 @@ import BindingDialog from '@/components/BindingDialog.vue'
 import AgentConversationPanel from '@/components/agent/AgentConversationPanel.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { getApiErrorMessage } from '@/api/client'
+import { apiClient, getApiErrorMessage } from '@/api/client'
 import { useAgentStore } from '@/stores/agents'
 import { useResourceStore } from '@/stores/resources'
 import { formatDate } from '@/utils/format'
@@ -31,6 +31,9 @@ import type {
   RegisteredModel,
   RuntimeType,
   AgentEditorModel,
+  CapabilityBindingWrite,
+  CapabilityCatalogItem,
+  ResourceScopeRecord,
 } from '@/types/api'
 import { platformApi } from '@/api/platform'
 
@@ -80,6 +83,21 @@ const versionTestInput = ref('')
 const versionTestOutput = ref('')
 const versionTesting = ref(false)
 const comparingVersion = ref<AgentVersion | null>(null)
+const capabilityBindingOpen = ref(false)
+const capabilityBindingLoading = ref(false)
+const capabilityBindingSaving = ref(false)
+const availableCapabilityCatalog = ref<CapabilityCatalogItem[]>([])
+const capabilityScopeRecords = ref<ResourceScopeRecord[]>([])
+const selectedCapabilityVersionIds = ref<string[]>([])
+
+interface EditableCapabilityBinding extends Omit<CapabilityBindingWrite, 'quota_policy'> {
+  key: string
+  label: string
+  version: string
+  quota_policy: { calls_per_execution: number; calls_per_minute: number; max_concurrency: number; [key: string]: unknown }
+}
+
+const editableCapabilityBindings = ref<EditableCapabilityBinding[]>([])
 const activeTab = ref<'overview' | 'configuration' | 'execution' | 'versions'>('overview')
 let hydratingConfiguration = false
 const detailTabs = [
@@ -158,6 +176,13 @@ const configurationLocked = computed(() => isAgentConfigurationLocked(
   agentStore.currentAgent?.current_version_id,
 ))
 const configurationLockReason = computed(() => agentConfigurationLockMessage(agentStore.currentAgent?.status))
+const capabilityBindingEditable = computed(() => editorModel.value?.agent.version_source === 'draft' && Boolean(editorModel.value.agent.draft_version_id))
+const capabilityCatalogOptions = computed(() => availableCapabilityCatalog.value
+  .filter((item) => !item.key.startsWith('database.'))
+  .map((item) => ({ label: `${item.label} · ${item.key}@${item.version}`, value: item.id })))
+const capabilityScopeOptions = computed(() => capabilityScopeRecords.value
+  .filter((item) => item.current_revision_id)
+  .map((item) => ({ label: `${item.name} · ${item.resource_type}`, value: item.current_revision_id as string })))
 const lifecycleOptions = computed(() => {
   const allowed: Record<AgentLifecycleStatus, AgentLifecycleStatus[]> = {
     active: ['inactive', 'archived'],
@@ -249,11 +274,126 @@ async function createVersion() {
   try {
     await platformApi.createAgentVersion(agentId.value, { notes: '控制台创建开发版本', created_by: 'control-center' })
     await loadProductionRuntime()
+    editorModel.value = await platformApi.getAgentEditor(agentId.value)
     message.success('Development Version 已创建')
   } catch (error) {
     message.error(getApiErrorMessage(error), { duration: 7000 })
   } finally {
     versionSaving.value = false
+  }
+}
+
+function defaultToolAlias(key: string): string {
+  const base = key.replaceAll('.', '_').replaceAll('-', '_').replace(/[^a-z0-9_.-]/g, '').slice(0, 120) || 'capability'
+  let candidate = base
+  let suffix = 2
+  const used = new Set(editableCapabilityBindings.value.map((item) => item.tool_alias))
+  while (used.has(candidate)) candidate = `${base}_${suffix++}`
+  return candidate
+}
+
+function syncCapabilitySelection(values: string[]) {
+  const selected = new Set(values)
+  editableCapabilityBindings.value = editableCapabilityBindings.value.filter((item) => selected.has(item.capability_version_id))
+  for (const versionId of values) {
+    if (editableCapabilityBindings.value.some((item) => item.capability_version_id === versionId)) continue
+    const capability = availableCapabilityCatalog.value.find((item) => item.id === versionId)
+    if (!capability) continue
+    editableCapabilityBindings.value.push({
+      key: capability.key,
+      label: capability.label,
+      version: capability.version,
+      tool_alias: defaultToolAlias(capability.key),
+      capability_version_id: capability.id,
+      implementation_mode: 'DEFAULT_PRIORITY',
+      implementation_id: null,
+      resource_scope_revision_id: null,
+      parameter_policy: {},
+      quota_policy: { calls_per_execution: 20, calls_per_minute: 60, max_concurrency: 2 },
+      approval_policy: {},
+      enabled: true,
+      source_type: 'direct',
+      source_ref_id: null,
+    })
+  }
+  selectedCapabilityVersionIds.value = values
+}
+
+async function openCapabilityBindingEditor() {
+  if (!capabilityBindingEditable.value) {
+    message.warning('请先创建 Development Version，再修改能力绑定')
+    return
+  }
+  capabilityBindingOpen.value = true
+  capabilityBindingLoading.value = true
+  try {
+    const [available, scopes, bindingResponse] = await Promise.all([
+      platformApi.getAvailableComponents(agentId.value),
+      platformApi.listResourceScopes(),
+      apiClient.get<CapabilityBindingWrite[]>(`/api/agents/${encodeURIComponent(agentId.value)}/draft/capability-bindings`),
+    ])
+    const catalog = [...available.capabilities]
+    const displayRows = new Map((editorModel.value?.sections.capabilities || []).map((item) => [item.binding_id, item]))
+    const directBindings = bindingResponse.data.filter((item) => item.source_type === 'direct').filter((item) => {
+      const display = displayRows.get(String((item as CapabilityBindingWrite & { id?: string }).id || ''))
+      return !display?.key.startsWith('database.')
+    })
+    for (const binding of directBindings) {
+      if (catalog.some((item) => item.id === binding.capability_version_id)) continue
+      const bindingId = String((binding as CapabilityBindingWrite & { id?: string }).id || '')
+      const display = displayRows.get(bindingId)
+      if (display && !display.key.startsWith('database.')) {
+        catalog.push({ id: binding.capability_version_id, key: display.key, label: display.label, description: display.description, version: display.version || '历史版本', input_schema: {}, ui_schema: {} })
+      }
+    }
+    availableCapabilityCatalog.value = catalog
+    capabilityScopeRecords.value = scopes
+    editableCapabilityBindings.value = directBindings.map((binding) => {
+      const capability = catalog.find((item) => item.id === binding.capability_version_id)
+      return {
+        ...binding,
+        key: capability?.key || 'unknown',
+        label: capability?.label || '历史 Capability',
+        version: capability?.version || 'unknown',
+        quota_policy: {
+          ...(binding.quota_policy || {}),
+          calls_per_execution: Number(binding.quota_policy?.calls_per_execution || 20),
+          calls_per_minute: Number(binding.quota_policy?.calls_per_minute || 60),
+          max_concurrency: Number(binding.quota_policy?.max_concurrency || 2),
+        },
+      }
+    })
+    selectedCapabilityVersionIds.value = editableCapabilityBindings.value.map((item) => item.capability_version_id)
+  } catch (error) {
+    message.error(getApiErrorMessage(error), { duration: 7000 })
+  } finally {
+    capabilityBindingLoading.value = false
+  }
+}
+
+async function saveAgentCapabilityBindings() {
+  const aliases = editableCapabilityBindings.value.map((item) => item.tool_alias.trim())
+  if (aliases.some((item) => !/^[a-z][a-z0-9_.-]{0,127}$/.test(item))) return message.warning('Tool Alias 必须以小写字母开头，只能包含小写字母、数字、点、横线和下划线')
+  if (new Set(aliases).size !== aliases.length) return message.warning('Tool Alias 不能重复')
+  capabilityBindingSaving.value = true
+  try {
+    await platformApi.updateCapabilityBindings(agentId.value, editableCapabilityBindings.value.map((item) => ({
+      tool_alias: item.tool_alias.trim(), capability_version_id: item.capability_version_id,
+      implementation_mode: item.implementation_mode, implementation_id: item.implementation_id || null,
+      resource_scope_revision_id: item.resource_scope_revision_id || null,
+      parameter_policy: item.parameter_policy || {}, quota_policy: item.quota_policy || {},
+      approval_policy: item.approval_policy || {}, enabled: item.enabled !== false,
+      source_type: 'direct', source_ref_id: item.source_ref_id || null,
+    })))
+    editorModel.value = await platformApi.getAgentEditor(agentId.value)
+    const preflight = await platformApi.preflightAgent(agentId.value)
+    editorModel.value.preflight = preflight
+    capabilityBindingOpen.value = false
+    message.success(preflight.state === 'READY' ? '能力绑定已保存，Preflight 通过' : '能力绑定已保存，请按 Preflight 提示补齐配置')
+  } catch (error) {
+    message.error(getApiErrorMessage(error), { duration: 7000 })
+  } finally {
+    capabilityBindingSaving.value = false
   }
 }
 
@@ -564,7 +704,15 @@ onMounted(load)
         </section>
 
         <section v-show="activeTab === 'configuration'" class="surface panel">
-          <div class="section-heading"><div><h2>能力与资源</h2><p>状态和发布条件全部来自 Console BFF Preflight</p></div><StatusTag :status="editorModel?.preflight.state || 'NEEDS_CONFIGURATION'" /></div>
+          <div class="section-heading">
+            <div><h2>能力与资源</h2><p>为 Development Version 选择 Capability、工具别名、Scope 和调用配额</p></div>
+            <div class="resource-actions">
+              <StatusTag :status="editorModel?.preflight.state || 'NEEDS_CONFIGURATION'" />
+              <NButton v-if="capabilityBindingEditable" size="small" type="primary" secondary @click="openCapabilityBindingEditor"><template #icon><NIcon :component="Edit" /></template>编辑能力绑定</NButton>
+              <NButton v-else size="small" secondary :loading="versionSaving" :disabled="agentStore.currentAgent?.status === 'archived'" @click="createVersion">创建 Development Version</NButton>
+            </div>
+          </div>
+          <NAlert v-if="!capabilityBindingEditable" type="info" :bordered="false" style="margin-bottom:14px">已发布 Agent 的能力绑定不可原地修改。创建 Development Version 后选择能力，测试并重新发布才会影响新执行。</NAlert>
           <div v-if="editorModel?.sections.capabilities.length" class="binding-list" style="margin-top:14px">
             <div v-for="item in editorModel.sections.capabilities" :key="item.binding_id" class="binding-row">
               <div>
@@ -746,6 +894,36 @@ onMounted(load)
       @update:show="dialogType = $event ? dialogType : null"
       @save="saveBindings"
     />
+
+    <NModal
+      v-model:show="capabilityBindingOpen"
+      preset="card"
+      title="编辑 Agent 能力绑定"
+      style="width: min(1080px, calc(100vw - 32px))"
+      :mask-closable="!capabilityBindingSaving"
+    >
+      <div v-if="capabilityBindingLoading" class="loading-stack"><div v-for="item in 4" :key="item" class="skeleton-line" /></div>
+      <template v-else>
+        <NAlert type="info" :bordered="false">这里只修改当前 Development Version。Skill / Workflow 自动绑定和数据库专用绑定会保留，不会被本次保存删除。</NAlert>
+        <NFormItem label="选择已发布 Capability" style="margin-top:16px">
+          <NSelect :value="selectedCapabilityVersionIds" multiple filterable clearable :options="capabilityCatalogOptions" placeholder="选择 Agent 可调用的能力" @update:value="syncCapabilitySelection" />
+        </NFormItem>
+        <div v-if="editableCapabilityBindings.length" class="capability-binding-editor-list">
+          <article v-for="binding in editableCapabilityBindings" :key="binding.capability_version_id" class="surface">
+            <header><div><strong>{{ binding.label }}</strong><span class="mono">{{ binding.key }}@{{ binding.version }}</span></div><StatusTag status="READY" /></header>
+            <div class="form-grid">
+              <NFormItem label="Tool Alias" required><NInput v-model:value="binding.tool_alias" /></NFormItem>
+              <NFormItem label="Resource Scope"><NSelect v-model:value="binding.resource_scope_revision_id" clearable filterable :options="capabilityScopeOptions" placeholder="无资源隔离时可留空" /></NFormItem>
+              <NFormItem label="每次执行最多调用"><NInputNumber v-model:value="binding.quota_policy.calls_per_execution" :min="1" :max="10000" /></NFormItem>
+              <NFormItem label="每分钟最多调用"><NInputNumber v-model:value="binding.quota_policy.calls_per_minute" :min="1" :max="10000" /></NFormItem>
+              <NFormItem label="最大并发"><NInputNumber v-model:value="binding.quota_policy.max_concurrency" :min="1" :max="100" /></NFormItem>
+            </div>
+          </article>
+        </div>
+        <div v-else class="empty-state empty-state-compact"><div><h3>当前不绑定通用 Capability</h3><p>无外部能力的 Agent 可以保持为空。数据库能力使用独立数据库 Scope 绑定。</p></div></div>
+      </template>
+      <template #footer><div class="dialog-actions"><NButton @click="capabilityBindingOpen = false">取消</NButton><NButton type="primary" :loading="capabilityBindingSaving" :disabled="capabilityBindingLoading" @click="saveAgentCapabilityBindings">保存并执行 Preflight</NButton></div></template>
+    </NModal>
 
     <NModal
       :show="editingVersion !== null"

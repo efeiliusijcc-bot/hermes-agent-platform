@@ -3,14 +3,15 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('naive-ui', () => ({
-  NFormItem: { template: '<label><slot /></label>' },
+  NFormItem: { props: ['label'], template: '<label>{{ label }}<slot /></label>' },
   NIcon: { template: '<span><slot /></span>' },
-  NModal: { template: '<div><slot /></div>' },
+  NModal: { template: '<div><slot /><slot name="footer" /></div>' },
   useDialog: () => ({ warning: vi.fn() }),
   useMessage: () => ({ success: vi.fn(), warning: vi.fn(), error: vi.fn() }),
 }))
 
 import { platformApi } from '@/api/platform'
+import { apiClient } from '@/api/client'
 import router from '@/router'
 import type { Agent, AgentEditorModel } from '@/types/api'
 import AgentDetailView from './AgentDetailView.vue'
@@ -99,53 +100,61 @@ const editor: AgentEditorModel = {
   actions: { can_test: false, can_publish: false },
 }
 
+function mockDetailRequests(editorModel: AgentEditorModel) {
+  vi.spyOn(platformApi, 'getAgent').mockResolvedValue(agent)
+  vi.spyOn(platformApi, 'listAgentSkills').mockResolvedValue([])
+  vi.spyOn(platformApi, 'listAgentMCPServers').mockResolvedValue([])
+  vi.spyOn(platformApi, 'listAgentKnowledgeSources').mockResolvedValue([])
+  vi.spyOn(platformApi, 'listSkills').mockResolvedValue([])
+  vi.spyOn(platformApi, 'listMCPServers').mockResolvedValue([])
+  vi.spyOn(platformApi, 'listKnowledgeSources').mockResolvedValue([])
+  vi.spyOn(platformApi, 'listRuntimes').mockResolvedValue([])
+  vi.spyOn(platformApi, 'listModels').mockResolvedValue([])
+  vi.spyOn(platformApi, 'getAgentEditor').mockResolvedValue(editorModel)
+  vi.spyOn(platformApi, 'listSessions').mockResolvedValue([])
+  vi.spyOn(platformApi, 'listTasks').mockResolvedValue([])
+  vi.spyOn(platformApi, 'listArtifacts').mockResolvedValue([])
+  vi.spyOn(platformApi, 'getWorkspace').mockResolvedValue({
+    agent_id: agent.id, root: `/workspace/${agent.id}`, session_count: 0, artifact_count: 0, size_bytes: 0,
+  })
+  vi.spyOn(platformApi, 'listExecutions').mockResolvedValue({
+    items: [], total: 0, limit: 50, offset: 0,
+    metrics: { total_executions: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0, success_rate: null },
+  })
+  vi.spyOn(platformApi, 'getAgentHealth').mockRejectedValue(new Error('not needed'))
+  vi.spyOn(platformApi, 'listAgentVersions').mockResolvedValue([])
+}
+
+function mountDetail() {
+  return mount(AgentDetailView, {
+    global: {
+      plugins: [createPinia(), router],
+      stubs: {
+        PageHeader: { template: '<header><slot name="actions" /></header>' },
+        StatusTag: { props: ['status'], template: '<span>{{ status }}</span>' },
+        AgentConversationPanel: true,
+        BindingDialog: true,
+        NButton: { template: '<button @click="$emit(\'click\')"><slot name="icon" /><slot /></button>' },
+        NAlert: { template: '<div><slot /></div>' },
+        NSelect: { template: '<div />' },
+        NInput: { template: '<textarea />' },
+        NInputNumber: { template: '<input type="number" />' },
+        NFormItem: { props: ['label'], template: '<label>{{ label }}<slot /></label>' },
+        NModal: { template: '<div><slot /><slot name="footer" /></div>' },
+        NDivider: { template: '<div><slot /></div>' },
+      },
+    },
+  })
+}
+
 describe('AgentDetailView published database bindings', () => {
   afterEach(() => vi.restoreAllMocks())
 
   it('uses the BFF published version and distinguishes database bindings by alias and scope', async () => {
     await router.push(`/agents/${agent.id}`)
     await router.isReady()
-    vi.spyOn(platformApi, 'getAgent').mockResolvedValue(agent)
-    vi.spyOn(platformApi, 'listAgentSkills').mockResolvedValue([])
-    vi.spyOn(platformApi, 'listAgentMCPServers').mockResolvedValue([])
-    vi.spyOn(platformApi, 'listAgentKnowledgeSources').mockResolvedValue([])
-    vi.spyOn(platformApi, 'listSkills').mockResolvedValue([])
-    vi.spyOn(platformApi, 'listMCPServers').mockResolvedValue([])
-    vi.spyOn(platformApi, 'listKnowledgeSources').mockResolvedValue([])
-    vi.spyOn(platformApi, 'listRuntimes').mockResolvedValue([])
-    vi.spyOn(platformApi, 'listModels').mockResolvedValue([])
-    vi.spyOn(platformApi, 'getAgentEditor').mockResolvedValue(editor)
-    vi.spyOn(platformApi, 'listSessions').mockResolvedValue([])
-    vi.spyOn(platformApi, 'listTasks').mockResolvedValue([])
-    vi.spyOn(platformApi, 'listArtifacts').mockResolvedValue([])
-    vi.spyOn(platformApi, 'getWorkspace').mockResolvedValue({
-      agent_id: agent.id, root: `/workspace/${agent.id}`, session_count: 0, artifact_count: 0, size_bytes: 0,
-    })
-    vi.spyOn(platformApi, 'listExecutions').mockResolvedValue({
-      items: [], total: 0, limit: 50, offset: 0,
-      metrics: { total_executions: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0, success_rate: null },
-    })
-    vi.spyOn(platformApi, 'getAgentHealth').mockRejectedValue(new Error('not needed'))
-    vi.spyOn(platformApi, 'listAgentVersions').mockResolvedValue([])
-
-    const wrapper = mount(AgentDetailView, {
-      global: {
-        plugins: [createPinia(), router],
-        stubs: {
-          PageHeader: { template: '<header><slot name="actions" /></header>' },
-          StatusTag: { props: ['status'], template: '<span>{{ status }}</span>' },
-          AgentConversationPanel: true,
-          BindingDialog: true,
-          NButton: { template: '<button><slot name="icon" /><slot /></button>' },
-          NAlert: { template: '<div><slot /></div>' },
-          NSelect: { template: '<div />' },
-          NInput: { template: '<textarea />' },
-          NFormItem: { template: '<label><slot /></label>' },
-          NModal: { template: '<div><slot /></div>' },
-          NDivider: { template: '<div><slot /></div>' },
-        },
-      },
-    })
+    mockDetailRequests(editor)
+    const wrapper = mountDetail()
     await flushPromises()
 
     const text = wrapper.text()
@@ -155,6 +164,45 @@ describe('AgentDetailView published database bindings', () => {
     expect(text).toContain('E2E PostgreSQL · business_db · 业务库只读')
     expect(text).toContain('analytics_db_select')
     expect(text).toContain('E2E PostgreSQL · analytics_db · 分析库只读')
+    expect(text).toContain('创建 Development Version')
+    wrapper.unmount()
+  })
+
+  it('lets a Development Version choose capabilities, aliases, scopes and quotas', async () => {
+    const draftEditor: AgentEditorModel = {
+      ...editor,
+      agent: { ...editor.agent, draft_version_id: 'draft-version-id', display_version_id: 'draft-version-id', version_source: 'draft' },
+      sections: { ...editor.sections, capabilities: [] },
+      actions: { can_test: true, can_publish: true },
+    }
+    await router.push(`/agents/${agent.id}`)
+    await router.isReady()
+    mockDetailRequests(draftEditor)
+    vi.spyOn(platformApi, 'getAvailableComponents').mockResolvedValue({
+      skills: [], runtimes: [], database_connections: [],
+      capabilities: [{ id: 'cap-version-1', key: 'knowledge.search', label: '知识检索', description: '检索内部知识', version: '1.0.0', input_schema: {}, ui_schema: {} }],
+    })
+    vi.spyOn(platformApi, 'listResourceScopes').mockResolvedValue([{ id: 'scope-1', name: '内部知识范围', resource_type: 'knowledge', current_revision_id: 'scope-revision-1', created_at: '2026-08-20T00:00:00Z' }])
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] })
+    const update = vi.spyOn(platformApi, 'updateCapabilityBindings').mockResolvedValue([])
+    vi.spyOn(platformApi, 'preflightAgent').mockResolvedValue({ state: 'READY', issues: [] })
+
+    const wrapper = mountDetail()
+    await flushPromises()
+    const edit = wrapper.findAll('button').find((button) => button.text().includes('编辑能力绑定'))
+    expect(edit).toBeDefined()
+    await edit!.trigger('click')
+    await flushPromises()
+    expect(platformApi.getAvailableComponents).toHaveBeenCalledWith(agent.id)
+    expect(platformApi.listResourceScopes).toHaveBeenCalled()
+    expect(wrapper.text()).toContain('选择已发布 Capability')
+    expect(wrapper.text()).toContain('Skill / Workflow 自动绑定和数据库专用绑定会保留')
+
+    const save = wrapper.findAll('button').find((button) => button.text().includes('保存并执行 Preflight'))
+    await save!.trigger('click')
+    await flushPromises()
+    expect(update).toHaveBeenCalledWith(agent.id, [])
+    expect(platformApi.preflightAgent).toHaveBeenCalledWith(agent.id)
     wrapper.unmount()
   })
 })
