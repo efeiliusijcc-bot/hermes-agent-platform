@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { NIcon, useMessage } from 'naive-ui'
+import { NForm, NFormItem, NIcon, useMessage } from 'naive-ui'
 import { ArrowLeft, ArrowRight, DeviceFloppy, PlayerPlay, Plus, Rocket, Trash } from '@vicons/tabler'
 import { useRouter } from 'vue-router'
 

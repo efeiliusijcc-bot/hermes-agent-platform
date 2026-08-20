@@ -23,6 +23,7 @@ const selectedRunId = ref<string | null>(null)
 const pollTimer = ref<number | null>(null)
 const router = useRouter()
 let runRequestSerial = 0
+let pollInFlight = false
 
 const teamForm = reactive({ name: '', description: '', ownerAgentId: '' })
 const memberForm = reactive({ agentId: '', role: '', priority: 50 })
@@ -48,6 +49,35 @@ const workflowOptions = computed(() => [
   { label: '直接按团队并行执行', value: '' },
   ...teamWorkflows.value.filter((item) => item.status === 'active').map((item) => ({ label: item.name, value: item.id })),
 ])
+const hasActiveRun = computed(() => runs.value.some((run) => ['pending', 'running', 'human_review'].includes(run.status)))
+
+function stopPolling() {
+  if (pollTimer.value !== null) window.clearTimeout(pollTimer.value)
+  pollTimer.value = null
+}
+
+function schedulePolling(delay = 3000) {
+  stopPolling()
+  if (!hasActiveRun.value || document.hidden) return
+  pollTimer.value = window.setTimeout(async () => {
+    if (pollInFlight) return schedulePolling()
+    pollInFlight = true
+    try {
+      await loadRunState(true)
+    } finally {
+      pollInFlight = false
+      schedulePolling()
+    }
+  }, delay)
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    stopPolling()
+  } else if (hasActiveRun.value) {
+    schedulePolling(0)
+  }
+}
 
 function humanError(value: unknown): string {
   if (value && typeof value === 'object' && 'response' in value) {
@@ -261,6 +291,10 @@ watch(selectedTeamId, () => {
   runTasks.value = []
   void loadRunState(true)
 })
+watch(hasActiveRun, (active) => {
+  if (active) schedulePolling()
+  else stopPolling()
+})
 
 function openExecution(executionId: string) {
   void router.push({ name: 'execution-detail', params: { id: executionId } })
@@ -271,11 +305,13 @@ function openTrace(executionId: string) {
 }
 
 onMounted(async () => {
+  document.addEventListener('visibilitychange', handleVisibilityChange)
   await loadAll()
-  pollTimer.value = window.setInterval(() => loadRunState(true), 3000)
+  schedulePolling()
 })
 onBeforeUnmount(() => {
-  if (pollTimer.value) window.clearInterval(pollTimer.value)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  stopPolling()
 })
 </script>
 

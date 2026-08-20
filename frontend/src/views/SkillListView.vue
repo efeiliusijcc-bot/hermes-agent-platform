@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NIcon, useDialog, useMessage } from 'naive-ui'
+import { NIcon, NModal, useDialog, useMessage } from 'naive-ui'
 import { Hierarchy, Search, Upload } from '@vicons/tabler'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -9,7 +9,7 @@ import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
 import { useResourceStore } from '@/stores/resources'
 import { formatDate } from '@/utils/format'
-import type { Agent } from '@/types/api'
+import type { ConsoleAgentSummary } from '@/types/api'
 
 const resourceStore = useResourceStore()
 const message = useMessage()
@@ -21,7 +21,8 @@ const uploading = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const selectedId = ref<string | null>(null)
 const detailTab = ref<'skill' | 'schema' | 'dependencies' | 'usage' | 'history'>('skill')
-const usedAgents = ref<Agent[]>([])
+const consoleAgents = ref<ConsoleAgentSummary[]>([])
+const usedAgents = ref<ConsoleAgentSummary[]>([])
 const usageCounts = ref<Record<string, number | null>>({})
 const usageLoading = ref(false)
 const selected = computed(() => resourceStore.skills.find((item) => item.id === selectedId.value) || null)
@@ -83,21 +84,14 @@ async function openSkill(skillId: string) {
   await router.replace({ name: 'skill-detail', params: { id: skillId } })
   usageLoading.value = true
   try {
-    const agents = await platformApi.listAgents()
-    const bindings = await Promise.allSettled(agents.map((agent) => platformApi.listAgentSkills(agent.id)))
-    usedAgents.value = agents.filter((_agent, index) => {
-      const result = bindings[index]
-      return result?.status === 'fulfilled' && result.value.some((item) => item.id === skillId)
-    })
+    usedAgents.value = consoleAgents.value.filter((agent) => agent.skills.some((item) => item.id === skillId))
   } finally { usageLoading.value = false }
 }
 
-async function loadUsageCounts() {
-  const agents = await platformApi.listAgents()
-  const bindings = await Promise.allSettled(agents.map((agent) => platformApi.listAgentSkills(agent.id)))
+function loadUsageCounts() {
   const counts: Record<string, number> = Object.fromEntries(resourceStore.skills.map((item) => [item.id, 0]))
-  bindings.forEach((result) => {
-    if (result.status === 'fulfilled') result.value.forEach((skill) => { counts[skill.id] = (counts[skill.id] || 0) + 1 })
+  consoleAgents.value.forEach((agent) => {
+    agent.skills.forEach((skill) => { counts[skill.id] = (counts[skill.id] || 0) + 1 })
   })
   usageCounts.value = counts
 }
@@ -110,8 +104,12 @@ function closeDetail(show: boolean) {
 }
 
 onMounted(async () => {
-  await resourceStore.fetchAll().catch(() => undefined)
-  await loadUsageCounts().catch(() => { usageCounts.value = {} })
+  const [, agentValues] = await Promise.all([
+    resourceStore.fetchAll().catch(() => undefined),
+    platformApi.listConsoleAgents().catch(() => []),
+  ])
+  consoleAgents.value = agentValues
+  loadUsageCounts()
   if (route.params.id) await openSkill(String(route.params.id))
 })
 watch(() => route.params.id, (id) => {

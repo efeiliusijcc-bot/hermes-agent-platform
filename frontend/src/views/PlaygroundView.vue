@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NIcon, NInputNumber, useMessage } from 'naive-ui'
+import { NCollapse, NCollapseItem, NForm, NFormItem, NIcon, NInputNumber, useMessage } from 'naive-ui'
 import { ArrowLeft, PlayerPlay, Settings } from '@vicons/tabler'
 import { useRoute, useRouter } from 'vue-router'
 

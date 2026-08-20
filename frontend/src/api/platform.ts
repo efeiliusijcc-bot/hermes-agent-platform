@@ -69,12 +69,49 @@ import type {
   DatabaseOperation,
   DatabaseResourceRecord,
   DatabaseScopePayload,
+  ConsoleAgentSummary,
 } from '@/types/api'
+
+const consoleAgentCache = new Map<string, { expiresAt: number; value: ConsoleAgentSummary[] }>()
+const consoleAgentRequests = new Map<string, Promise<ConsoleAgentSummary[]>>()
+let consoleAgentCacheGeneration = 0
+
+function invalidateConsoleAgentCache() {
+  consoleAgentCacheGeneration += 1
+  consoleAgentCache.clear()
+  consoleAgentRequests.clear()
+}
 
 export const platformApi = {
   async getConsoleWorkbench(): Promise<Record<string, unknown>> {
     const { data } = await apiClient.get<Record<string, unknown>>('/api/console/workbench')
     return data
+  },
+
+  async listConsoleAgents(includePreflight = false, force = false): Promise<ConsoleAgentSummary[]> {
+    const key = includePreflight ? 'preflight' : 'summary'
+    if (force) {
+      consoleAgentCacheGeneration += 1
+      consoleAgentCache.delete(key)
+      consoleAgentRequests.delete(key)
+    }
+    const cached = consoleAgentCache.get(key)
+    if (!force && cached && cached.expiresAt > Date.now()) return cached.value
+    const pending = consoleAgentRequests.get(key)
+    if (!force && pending) return pending
+    const requestGeneration = consoleAgentCacheGeneration
+    const request = apiClient.get<ConsoleAgentSummary[]>('/api/console/agents', {
+      params: includePreflight ? { include_preflight: true } : undefined,
+    }).then(({ data }) => {
+      if (requestGeneration === consoleAgentCacheGeneration) {
+        consoleAgentCache.set(key, { expiresAt: Date.now() + 5000, value: data })
+      }
+      return data
+    }).finally(() => {
+      if (consoleAgentRequests.get(key) === request) consoleAgentRequests.delete(key)
+    })
+    consoleAgentRequests.set(key, request)
+    return request
   },
 
   async getConsoleExecution(executionId: string): Promise<{ execution: Record<string, unknown>; timeline: Array<Record<string, unknown>> }> {
@@ -388,11 +425,13 @@ export const platformApi = {
 
   async createAgent(payload: AgentCreatePayload): Promise<Agent> {
     const { data } = await apiClient.post<Agent>('/api/agents', payload)
+    invalidateConsoleAgentCache()
     return data
   },
 
   async deleteAgent(agentId: string): Promise<void> {
     await apiClient.delete(`/api/agents/${encodeURIComponent(agentId)}`)
+    invalidateConsoleAgentCache()
   },
 
   async updateAgentLifecycle(agentId: string, status: AgentLifecycleStatus): Promise<Agent> {
@@ -400,6 +439,7 @@ export const platformApi = {
       `/api/agents/${encodeURIComponent(agentId)}/lifecycle`,
       { status },
     )
+    invalidateConsoleAgentCache()
     return data
   },
 
@@ -745,12 +785,14 @@ export const platformApi = {
     await apiClient.put(
       `/api/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}`,
     )
+    invalidateConsoleAgentCache()
   },
 
   async unbindAgentSkill(agentId: string, skillId: string): Promise<void> {
     await apiClient.delete(
       `/api/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}`,
     )
+    invalidateConsoleAgentCache()
   },
 
   async listMCPServers(): Promise<MCPServer[]> {
@@ -1043,12 +1085,14 @@ export const platformApi = {
     await apiClient.put(
       `/api/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(mcpId)}`,
     )
+    invalidateConsoleAgentCache()
   },
 
   async unbindAgentMCPServer(agentId: string, mcpId: string): Promise<void> {
     await apiClient.delete(
       `/api/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(mcpId)}`,
     )
+    invalidateConsoleAgentCache()
   },
 
   async listKnowledgeSources(): Promise<KnowledgeSource[]> {

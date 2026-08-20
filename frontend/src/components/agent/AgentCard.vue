@@ -3,13 +3,10 @@ import { NIcon } from 'naive-ui'
 import { TestPipe } from '@vicons/tabler'
 
 import StatusTag from '@/components/StatusTag.vue'
-import type { Agent, MCPServer, Skill } from '@/types/api'
+import type { ConsoleAgentSummary } from '@/types/api'
 
 defineProps<{
-  agent: Agent
-  version?: string | null
-  skills?: Skill[] | null
-  mcps?: MCPServer[] | null
+  agent: ConsoleAgentSummary
 }>()
 
 defineEmits<{
@@ -30,27 +27,23 @@ defineEmits<{
     </div>
     <p class="agent-card-description">{{ agent.description || agent.role }}</p>
     <dl class="agent-card-facts">
-      <div><dt>Version</dt><dd class="mono">{{ version === undefined ? '--' : (version || '未发布') }}</dd></div>
+      <div><dt>Version</dt><dd class="mono">{{ agent.version || '未发布' }}</dd></div>
       <div><dt>Model</dt><dd class="mono">{{ agent.model }}</dd></div>
     </dl>
     <div class="agent-capability-groups">
       <div>
         <span>Skills</span>
-        <div v-if="skills === undefined" class="capability-loading">读取中</div>
-        <div v-else-if="skills === null" class="capability-unavailable">不可用</div>
-        <div v-else-if="skills.length" class="capability-tags">
-          <NTag v-for="skill in skills.slice(0, 3)" :key="skill.id" size="small" :bordered="false">{{ skill.name }}</NTag>
-          <NTag v-if="skills.length > 3" size="small" :bordered="false">+{{ skills.length - 3 }}</NTag>
+        <div v-if="agent.skills.length" class="capability-tags">
+          <NTag v-for="skill in agent.skills.slice(0, 3)" :key="skill.id" size="small" :bordered="false">{{ skill.name }}</NTag>
+          <NTag v-if="agent.skills.length > 3" size="small" :bordered="false">+{{ agent.skills.length - 3 }}</NTag>
         </div>
         <span v-else class="capability-empty">未绑定</span>
       </div>
       <div>
         <span>MCP</span>
-        <div v-if="mcps === undefined" class="capability-loading">读取中</div>
-        <div v-else-if="mcps === null" class="capability-unavailable">不可用</div>
-        <div v-else-if="mcps.length" class="capability-tags">
-          <NTag v-for="server in mcps.slice(0, 3)" :key="server.id" size="small" :bordered="false">{{ server.name }}</NTag>
-          <NTag v-if="mcps.length > 3" size="small" :bordered="false">+{{ mcps.length - 3 }}</NTag>
+        <div v-if="agent.mcps.length" class="capability-tags">
+          <NTag v-for="server in agent.mcps.slice(0, 3)" :key="server.id" size="small" :bordered="false">{{ server.name }}</NTag>
+          <NTag v-if="agent.mcps.length > 3" size="small" :bordered="false">+{{ agent.mcps.length - 3 }}</NTag>
         </div>
         <span v-else class="capability-empty">未绑定</span>
       </div>

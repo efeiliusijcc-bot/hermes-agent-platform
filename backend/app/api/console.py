@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload, selectinload
 from jsonschema import Draft202012Validator, SchemaError
 
 from app.api.capabilities import _draft_version, _snapshot_v2
@@ -206,25 +207,66 @@ async def workbench(session: AsyncSession = Depends(get_session)) -> dict[str, A
 
 
 @router.get("/agents")
-async def console_agents(session: AsyncSession = Depends(get_session)) -> list[dict[str, Any]]:
-    agents = list(await session.scalars(select(Agent).order_by(Agent.updated_at.desc())))
+async def console_agents(
+    session: AsyncSession = Depends(get_session),
+    include_preflight: bool = False,
+) -> list[dict[str, Any]]:
+    agents = list(
+        await session.scalars(
+            select(Agent)
+            .options(
+                selectinload(Agent.skills),
+                selectinload(Agent.mcp_servers),
+                noload(Agent.knowledge_sources),
+            )
+            .order_by(Agent.updated_at.desc())
+        )
+    )
+    version_ids = [agent.current_version_id for agent in agents if agent.current_version_id]
+    versions = {
+        item.id: item
+        for item in (
+            list(
+                await session.scalars(
+                    select(AgentVersion).where(AgentVersion.id.in_(version_ids))
+                )
+            )
+            if version_ids
+            else []
+        )
+    }
     values: list[dict[str, Any]] = []
     for agent in agents:
-        draft = await _draft_version(session, agent.id, create=False)
-        preflight = (
-            (await resolve_agent_capabilities(session, draft)).as_dict()
-            if draft is not None
-            else {"state": "NEEDS_CONFIGURATION", "issues": []}
-        )
+        preflight_state: str | None = None
+        if include_preflight:
+            draft = await _draft_version(session, agent.id, create=False)
+            if draft is not None:
+                resolution = await resolve_agent_capabilities(session, draft)
+                preflight_state = "READY" if resolution.ready else "NEEDS_CONFIGURATION"
+            else:
+                preflight_state = "NEEDS_CONFIGURATION"
+        version = versions.get(agent.current_version_id)
         values.append(
             {
                 "id": agent.id,
                 "name": agent.name,
                 "description": agent.description,
+                "agent_type": agent.agent_type,
+                "role": agent.role,
+                "model": agent.model,
                 "status": agent.status,
                 "runtime_type": agent.runtime_type,
                 "current_version_id": str(agent.current_version_id) if agent.current_version_id else None,
-                "preflight_state": preflight["state"],
+                "version": version.version if version is not None else None,
+                "skills": [
+                    {"id": item.id, "name": item.name}
+                    for item in sorted(agent.skills, key=lambda value: value.name)
+                ],
+                "mcps": [
+                    {"id": item.id, "name": item.name}
+                    for item in sorted(agent.mcp_servers, key=lambda value: value.name)
+                ],
+                "preflight_state": preflight_state,
                 "updated_at": agent.updated_at,
             }
         )

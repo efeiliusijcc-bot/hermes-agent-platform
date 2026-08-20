@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { NModal } from 'naive-ui'
 
 const props = defineProps<{
   show: boolean

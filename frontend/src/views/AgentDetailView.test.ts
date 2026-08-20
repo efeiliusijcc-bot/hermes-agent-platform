@@ -3,7 +3,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('naive-ui', () => ({
+  NFormItem: { template: '<label><slot /></label>' },
   NIcon: { template: '<span><slot /></span>' },
+  NModal: { template: '<div><slot /></div>' },
   useDialog: () => ({ warning: vi.fn() }),
   useMessage: () => ({ success: vi.fn(), warning: vi.fn(), error: vi.fn() }),
 }))

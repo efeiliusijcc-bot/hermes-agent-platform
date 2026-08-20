@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { NIcon, useDialog, useMessage } from 'naive-ui'
+import { NForm, NFormItem, NIcon, NModal, useDialog, useMessage } from 'naive-ui'
 import { Database, Files, Plus, PlugConnected, Search } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
@@ -9,7 +9,7 @@ import { platformApi } from '@/api/platform'
 import { useResourceStore } from '@/stores/resources'
 import { formatDate } from '@/utils/format'
 import type { MCPServer } from '@/types/api'
-import type { Agent, ExecutionSummary } from '@/types/api'
+import type { ConsoleAgentSummary, ExecutionSummary } from '@/types/api'
 import { useRoute, useRouter } from 'vue-router'
 
 const resourceStore = useResourceStore()
@@ -24,9 +24,12 @@ const testingId = ref<string | null>(null)
 const editingId = ref<string | null>(null)
 const selectedId = ref<string | null>(null)
 const detailTab = ref<'endpoint' | 'tools' | 'agents' | 'logs'>('endpoint')
-const boundAgents = ref<Agent[]>([])
+const consoleAgents = ref<ConsoleAgentSummary[]>([])
+const boundAgents = ref<ConsoleAgentSummary[]>([])
 const relatedExecutions = ref<ExecutionSummary[]>([])
 const detailLoading = ref(false)
+const relatedExecutionsFor = ref<string | null>(null)
+const executionRequests = new Map<string, Promise<ExecutionSummary[]>>()
 const selected = computed(() => resourceStore.mcpServers.find((item) => item.id === selectedId.value) || null)
 const form = reactive({ id: '', name: '', kind: 'filesystem' as 'filesystem' | 'database', endpoint: 'http://mcp-gateway:8090/mcp' })
 const filtered = computed(() => {
@@ -79,19 +82,38 @@ async function openDetail(server: MCPServer) {
   selectedId.value = server.id
   detailTab.value = 'endpoint'
   await router.replace({ name: 'mcp-detail', params: { id: server.id } })
+  boundAgents.value = consoleAgents.value.filter((agent) => agent.mcps.some((item) => item.id === server.id))
+  relatedExecutions.value = []
+  relatedExecutionsFor.value = null
+}
+
+function agentExecutions(agentId: string): Promise<ExecutionSummary[]> {
+  const existing = executionRequests.get(agentId)
+  if (existing) return existing
+  const request = platformApi.listExecutions({ agent_id: agentId, limit: 20 })
+    .then((value) => value.items)
+    .catch((cause) => {
+      executionRequests.delete(agentId)
+      throw cause
+    })
+  executionRequests.set(agentId, request)
+  return request
+}
+
+async function loadRelatedExecutions() {
+  const serverId = selectedId.value
+  if (!serverId || relatedExecutionsFor.value === serverId) return
   detailLoading.value = true
   try {
-    const agents = await platformApi.listAgents()
-    const bindings = await Promise.allSettled(agents.map((agent) => platformApi.listAgentMCPServers(agent.id)))
-    boundAgents.value = agents.filter((_agent, index) => {
-      const result = bindings[index]
-      return result?.status === 'fulfilled' && result.value.some((item) => item.id === server.id)
-    })
-    const executionResults = await Promise.allSettled(boundAgents.value.map((agent) => platformApi.listExecutions({ agent_id: agent.id, limit: 20 })))
+    const executionResults = await Promise.allSettled(boundAgents.value.map((agent) => agentExecutions(agent.id)))
+    if (selectedId.value !== serverId) return
     relatedExecutions.value = executionResults.flatMap((result) => result.status === 'fulfilled'
-      ? result.value.items.filter((item) => item.mcp_call_count > 0) : [])
+      ? result.value.filter((item) => item.mcp_call_count > 0) : [])
       .sort((left, right) => new Date(right.started_at).valueOf() - new Date(left.started_at).valueOf())
-  } finally { detailLoading.value = false }
+    relatedExecutionsFor.value = serverId
+  } finally {
+    if (selectedId.value === serverId) detailLoading.value = false
+  }
 }
 
 function closeDetail(show: boolean) {
@@ -99,11 +121,16 @@ function closeDetail(show: boolean) {
   selectedId.value = null
   boundAgents.value = []
   relatedExecutions.value = []
+  relatedExecutionsFor.value = null
   router.replace({ name: 'mcps' })
 }
 
 onMounted(async () => {
-  await resourceStore.fetchAll().catch(() => undefined)
+  const [, agentValues] = await Promise.all([
+    resourceStore.fetchAll().catch(() => undefined),
+    platformApi.listConsoleAgents().catch(() => []),
+  ])
+  consoleAgents.value = agentValues
   const id = String(route.params.id || '')
   const server = resourceStore.mcpServers.find((item) => item.id === id)
   if (server) await openDetail(server)
@@ -111,6 +138,9 @@ onMounted(async () => {
 watch(() => route.params.id, (id) => {
   const server = resourceStore.mcpServers.find((item) => item.id === String(id || ''))
   if (server && server.id !== selectedId.value) openDetail(server)
+})
+watch(detailTab, (value) => {
+  if (value === 'logs') void loadRelatedExecutions()
 })
 </script>
 
@@ -137,7 +167,7 @@ watch(() => route.params.id, (id) => {
         <nav class="detail-tabs modal-tabs"><button v-for="tab in [{key:'endpoint',label:'Endpoint'},{key:'tools',label:'Tools'},{key:'agents',label:'Agents'},{key:'logs',label:'Logs'}]" :key="tab.key" type="button" :class="{ active: detailTab === tab.key }" @click="detailTab = tab.key as typeof detailTab">{{ tab.label }}</button></nav>
         <dl v-if="detailTab === 'endpoint'" class="execution-definition-list"><div><dt>ID</dt><dd class="mono">{{ selected.id }}</dd></div><div><dt>Endpoint</dt><dd class="mono">{{ selected.endpoint }}</dd></div><div><dt>Type</dt><dd>{{ selected.config.kind }}</dd></div><div><dt>Permission</dt><dd>{{ selected.permission }}</dd></div><div><dt>Status</dt><dd>{{ selected.status }}</dd></div><div><dt>Updated</dt><dd>{{ formatDate(selected.updated_at) }}</dd></div></dl>
         <template v-else-if="detailTab === 'tools'"><NAlert type="info" :bordered="false" style="margin-bottom:14px">现有 MCP Registry API 返回能力类型，不返回远端 tools/list 结果。</NAlert><div class="unavailable-panel"><strong>{{ selected.config.kind }}</strong><span>工具清单需要后端新增受控发现接口后展示；当前权限固定为 read_only。</span></div></template>
-        <div v-else-if="detailTab === 'agents'"><div v-if="detailLoading" class="loading-stack"><div v-for="index in 3" :key="index" class="skeleton-line" /></div><div v-else-if="boundAgents.length" class="selection-list"><div v-for="agent in boundAgents" :key="agent.id"><strong>{{ agent.name }}</strong><span class="mono">{{ agent.id }}</span></div></div><div v-else class="unavailable-panel"><strong>没有 Agent 绑定此 MCP</strong><span>已按当前绑定接口逐项核对。</span></div></div>
+        <div v-else-if="detailTab === 'agents'"><div v-if="detailLoading" class="loading-stack"><div v-for="index in 3" :key="index" class="skeleton-line" /></div><div v-else-if="boundAgents.length" class="selection-list"><div v-for="agent in boundAgents" :key="agent.id"><strong>{{ agent.name }}</strong><span class="mono">{{ agent.id }}</span></div></div><div v-else class="unavailable-panel"><strong>没有 Agent 绑定此 MCP</strong><span>当前结果来自控制台聚合数据。</span></div></div>
         <div v-else><NAlert type="info" :bordered="false" style="margin-bottom:14px">当前只能按 Execution 关联 MCP 调用；选择记录后进入 Trace Center 查看调用节点。</NAlert><div v-if="detailLoading" class="loading-stack"><div v-for="index in 3" :key="index" class="skeleton-line" /></div><div v-else-if="relatedExecutions.length" class="agent-log-list"><button v-for="item in relatedExecutions.slice(0,20)" :key="item.id" type="button" @click="router.push({name:'trace-detail',params:{id:item.id}})"><span class="mono">{{ item.id }}</span><span>{{ item.agent_name }}</span><span>{{ item.mcp_call_count }} MCP</span><time>{{ formatDate(item.started_at) }}</time></button></div><div v-else class="unavailable-panel"><strong>没有可关联的 MCP 调用记录</strong><span>Execution 只记录调用数量，当前不能精确反查到某个 MCP ID。</span></div></div>
       </template>
     </NModal>

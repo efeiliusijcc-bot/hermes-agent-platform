@@ -12,6 +12,20 @@ describe('platformApi contract', () => {
     expect(get).toHaveBeenCalledWith('/api/mcp-servers')
   })
 
+  it('deduplicates concurrent console agent summary requests', async () => {
+    let resolveRequest: ((value: { data: [] }) => void) | undefined
+    const request = new Promise<{ data: [] }>((resolve) => { resolveRequest = resolve })
+    const get = vi.spyOn(apiClient, 'get').mockReturnValue(request)
+
+    const first = platformApi.listConsoleAgents(false, true)
+    const second = platformApi.listConsoleAgents()
+    resolveRequest?.({ data: [] })
+    await Promise.all([first, second])
+
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(get).toHaveBeenCalledWith('/api/console/agents', { params: undefined })
+  })
+
   it('sends agent creation fields without embedding bindings', async () => {
     const payload = {
       id: 'knowledge-agent',

@@ -3,16 +3,10 @@ import { createApp } from 'vue'
 import {
   NAlert,
   NButton,
-  NCollapse,
-  NCollapseItem,
-  NForm,
-  NFormItem,
   NIcon,
   NInput,
   NMenu,
-  NModal,
   NSelect,
-  NSlider,
   NTag,
 } from 'naive-ui'
 
@@ -25,16 +19,10 @@ const app = createApp(App)
 const naiveComponents = {
   NAlert,
   NButton,
-  NCollapse,
-  NCollapseItem,
-  NForm,
-  NFormItem,
   NIcon,
   NInput,
   NMenu,
-  NModal,
   NSelect,
-  NSlider,
   NTag,
 }
 

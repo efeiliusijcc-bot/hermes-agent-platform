@@ -2,8 +2,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('naive-ui', () => ({
+  NButton: { template: '<button><slot /></button>' },
   NCheckbox: { template: '<label><input type="checkbox" /><slot /></label>' },
+  NForm: { template: '<form><slot /></form>' },
+  NFormItem: { template: '<label><slot /></label>' },
   NIcon: { template: '<span><slot /></span>' },
+  NInput: { template: '<input />' },
   NInputNumber: {
     props: ['value'],
     emits: ['update:value'],
@@ -11,6 +15,8 @@ vi.mock('naive-ui', () => ({
   },
   NTabPane: { template: '<section><slot /></section>' },
   NTabs: { template: '<div><slot /></div>' },
+  NModal: { template: '<div><slot /></div>' },
+  NVirtualList: { props: ['items'], template: '<div><slot v-for="item in items" :item="item" /></div>' },
   useDialog: () => ({ warning: vi.fn() }),
   useMessage: () => ({ success: vi.fn(), warning: vi.fn(), error: vi.fn() }),
 }))

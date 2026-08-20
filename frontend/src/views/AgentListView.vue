@@ -7,22 +7,22 @@ import { useRouter } from 'vue-router'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { getApiErrorMessage } from '@/api/client'
-import { useAgentStore } from '@/stores/agents'
 import AgentCard from '@/components/agent/AgentCard.vue'
 import { platformApi } from '@/api/platform'
-import type { MCPServer, Skill } from '@/types/api'
+import type { ConsoleAgentSummary } from '@/types/api'
 
 const router = useRouter()
 const dialog = useDialog()
 const message = useMessage()
-const agentStore = useAgentStore()
 const query = ref('')
-const capabilityState = ref<Record<string, { skills?: Skill[] | null; mcps?: MCPServer[] | null; version?: string | null }>>({})
+const agents = ref<ConsoleAgentSummary[]>([])
+const loading = ref(false)
+const error = ref<string | null>(null)
 
 const filteredAgents = computed(() => {
   const keyword = query.value.trim().toLowerCase()
-  if (!keyword) return agentStore.agents
-  return agentStore.agents.filter((agent) =>
+  if (!keyword) return agents.value
+  return agents.value.filter((agent) =>
     [agent.id, agent.name, agent.role, agent.description || ''].some((value) => value.toLowerCase().includes(keyword)),
   )
 })
@@ -35,7 +35,8 @@ function confirmDelete(agentId: string, agentName: string) {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await agentStore.removeAgent(agentId)
+        await platformApi.deleteAgent(agentId)
+        agents.value = agents.value.filter((item) => item.id !== agentId)
         message.success('Agent 已删除')
       } catch (error) {
         message.error(getApiErrorMessage(error))
@@ -45,22 +46,15 @@ function confirmDelete(agentId: string, agentName: string) {
 }
 
 async function load() {
-  await agentStore.fetchAgents()
-  await Promise.all(agentStore.agents.map(async (agent) => {
-    capabilityState.value[agent.id] = {}
-    const [skills, mcps, versions] = await Promise.allSettled([
-      platformApi.listAgentSkills(agent.id),
-      platformApi.listAgentMCPServers(agent.id),
-      platformApi.listAgentVersions(agent.id),
-    ])
-    capabilityState.value[agent.id] = {
-      skills: skills.status === 'fulfilled' ? skills.value : null,
-      mcps: mcps.status === 'fulfilled' ? mcps.value : null,
-      version: versions.status === 'fulfilled'
-        ? (versions.value.find((item) => item.status === 'published')?.version || null)
-        : null,
-    }
-  }))
+  loading.value = true
+  error.value = null
+  try {
+    agents.value = await platformApi.listConsoleAgents()
+  } catch (cause) {
+    error.value = getApiErrorMessage(cause)
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(() => load().catch(() => undefined))
@@ -76,7 +70,7 @@ onMounted(() => load().catch(() => undefined))
       </template>
     </PageHeader>
 
-    <div v-if="agentStore.error" class="error-panel" style="margin-bottom: 16px">{{ agentStore.error }}</div>
+    <div v-if="error" class="error-panel" style="margin-bottom: 16px">{{ error }}</div>
     <div class="toolbar">
       <NInput v-model:value="query" class="search" clearable placeholder="搜索名称、ID 或角色">
         <template #prefix><NIcon :component="Search" /></template>
@@ -85,7 +79,7 @@ onMounted(() => load().catch(() => undefined))
       <span class="muted" style="font-size: 11px">{{ filteredAgents.length }} 个 Agent</span>
     </div>
 
-    <div v-if="agentStore.loading" class="agent-grid">
+    <div v-if="loading" class="agent-grid">
       <div v-for="index in 4" :key="index" class="surface" style="padding: 20px"><div class="skeleton-line" style="height: 165px" /></div>
     </div>
     <div v-else-if="filteredAgents.length === 0" class="surface empty-state">
@@ -101,9 +95,6 @@ onMounted(() => load().catch(() => undefined))
         v-for="agent in filteredAgents"
         :key="agent.id"
         :agent="agent"
-        :version="capabilityState[agent.id]?.version"
-        :skills="capabilityState[agent.id]?.skills"
-        :mcps="capabilityState[agent.id]?.mcps"
         @view="router.push({ name: 'agent-detail', params: { id: agent.id } })"
         @run="router.push({ name: 'agent-playground', params: { id: agent.id } })"
         @remove="confirmDelete(agent.id, agent.name)"

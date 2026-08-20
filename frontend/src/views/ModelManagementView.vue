@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { NIcon, NInputNumber, NSwitch, useDialog, useMessage } from 'naive-ui'
+import { NForm, NFormItem, NIcon, NInputNumber, NModal, NSwitch, useDialog, useMessage } from 'naive-ui'
 import { Plus, Refresh, Robot, Search } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'

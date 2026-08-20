@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import {
   NCheckbox,
+  NForm,
+  NFormItem,
   NIcon,
   NInputNumber,
+  NModal,
   NTabPane,
   NTabs,
   useDialog,
@@ -13,6 +16,7 @@ import { Database, Plus, Refresh, Settings, TestPipe, Trash } from '@vicons/tabl
 
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import DatabaseObjectBrowser from '@/components/database/DatabaseObjectBrowser.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
 import { formatDate } from '@/utils/format'
@@ -21,8 +25,8 @@ import type {
   DatabaseConnectionDetail,
   DatabaseConnectionSummary,
   DatabaseDiscovery,
-  DatabaseDiscoveredObject,
   DatabaseScopePayload,
+  DatabaseScopeRecord,
 } from '@/types/api'
 
 interface ScopeConfig {
@@ -49,9 +53,11 @@ const discovery = ref<DatabaseDiscovery | null>(null)
 const managerOpen = ref(false)
 const managerLoading = ref(false)
 const managerSaving = ref(false)
-const managerTab = ref<'overview' | 'scopes' | 'credential'>('overview')
+const managerTab = ref<'overview' | 'access' | 'credential'>('overview')
 const activeConnection = ref<DatabaseConnectionDetail | null>(null)
 const managedDiscovery = ref<DatabaseDiscovery | null>(null)
+const wizardDatabaseName = ref<string | null>(null)
+const managedDatabaseName = ref<string | null>(null)
 const scopeOpen = ref(false)
 const scopeDatabase = ref<string | null>(null)
 const scopeSelectedObjects = ref<string[]>([])
@@ -91,6 +97,9 @@ const newScope = reactive<ScopeConfig & { name: string }>({
   requests_per_minute: 60,
 })
 
+const wizardDatabase = computed(() => discovery.value?.databases.find((item) => item.name === wizardDatabaseName.value) || null)
+const managedDatabase = computed(() => managedDiscovery.value?.databases.find((item) => item.name === managedDatabaseName.value) || null)
+
 function endpoint() {
   return {
     host: form.host.trim(),
@@ -119,27 +128,35 @@ function selected(database: string, schema: string, type: 'table' | 'view', name
   return selectedObjects.value.includes(key(database, schema, type, name))
 }
 
-function toggle(database: string, schema: string, type: 'table' | 'view', name: string, checked: boolean) {
-  const value = key(database, schema, type, name)
-  selectedObjects.value = checked
-    ? Array.from(new Set([...selectedObjects.value, value]))
-    : selectedObjects.value.filter((item) => item !== value)
-}
-
 function scopeSelected(database: string, schema: string, type: 'table' | 'view', name: string): boolean {
   return scopeSelectedObjects.value.includes(key(database, schema, type, name))
 }
 
-function toggleScopeObject(database: string, schema: string, type: 'table' | 'view', name: string, checked: boolean) {
-  const value = key(database, schema, type, name)
-  scopeSelectedObjects.value = checked
-    ? Array.from(new Set([...scopeSelectedObjects.value, value]))
-    : scopeSelectedObjects.value.filter((item) => item !== value)
+function databaseObjectCount(database: DatabaseDiscovery['databases'][number]) {
+  return database.schemas.reduce((total, schema) => total + schema.tables.length + schema.views.length, 0)
+}
+
+function rangeObjectCount(scope: DatabaseScopeRecord) {
+  return Object.values(scope.definition.schemas).reduce(
+    (total, schema) => total + schema.tables.length + schema.views.length,
+    0,
+  )
+}
+
+function summarizeNames(names: string[]) {
+  if (!names.length) return '无'
+  const visible = names.slice(0, 8).join('、')
+  return names.length > 8 ? `${visible} 等 ${names.length} 个` : visible
+}
+
+function selectFirstReadyDatabase(value: DatabaseDiscovery | null) {
+  return value?.databases.find((item) => item.status === 'READY')?.name || value?.databases[0]?.name || null
 }
 
 function openWizard() {
   wizardStep.value = 0
   discovery.value = null
+  wizardDatabaseName.value = null
   selectedObjects.value = []
   Object.keys(scopeConfigs).forEach((item) => delete scopeConfigs[item])
   Object.assign(form, {
@@ -166,6 +183,7 @@ async function openManager(item: DatabaseConnectionSummary) {
   managerLoading.value = true
   managerTab.value = 'overview'
   managedDiscovery.value = null
+  managedDatabaseName.value = null
   activeConnection.value = null
   Object.assign(credentialForm, { username: '', password: '' })
   try {
@@ -184,6 +202,7 @@ function closeManager() {
   managerOpen.value = false
   activeConnection.value = null
   managedDiscovery.value = null
+  managedDatabaseName.value = null
   Object.assign(credentialForm, { username: '', password: '' })
 }
 
@@ -225,6 +244,7 @@ async function testTemporary() {
       { username: form.username.trim(), password: form.password },
     )
     discovery.value = result
+    wizardDatabaseName.value = selectFirstReadyDatabase(result)
     selectedObjects.value = []
     Object.keys(scopeConfigs).forEach((item) => delete scopeConfigs[item])
     result.databases.filter((item) => item.status === 'READY').forEach((database) => {
@@ -278,7 +298,7 @@ function buildScopes(): DatabaseScopePayload[] {
       requests_per_minute: config.requests_per_minute,
     })
   }
-  if (!result.length) throw new Error('至少启用一个数据库 Scope')
+  if (!result.length) throw new Error('至少启用一个数据库访问范围')
   return result
 }
 
@@ -322,6 +342,7 @@ async function testManaged() {
   testing.value = true
   try {
     managedDiscovery.value = await platformApi.testSavedDatabaseConnection(activeConnection.value.id)
+    managedDatabaseName.value = selectFirstReadyDatabase(managedDiscovery.value)
     activeConnection.value = await platformApi.getDatabaseConnection(activeConnection.value.id)
     await load()
     message.success('连接测试通过，资源树已刷新')
@@ -337,6 +358,7 @@ async function discoverManaged() {
   testing.value = true
   try {
     managedDiscovery.value = await platformApi.discoverDatabaseConnection(activeConnection.value.id)
+    managedDatabaseName.value = selectFirstReadyDatabase(managedDiscovery.value)
     activeConnection.value = await platformApi.getDatabaseConnection(activeConnection.value.id)
     message.success(`重新发现完成，共 ${managedDiscovery.value.databases.length} 个数据库`)
   } catch (cause) {
@@ -474,7 +496,7 @@ async function saveManagedScope() {
     scopeOpen.value = false
     activeConnection.value = await platformApi.getDatabaseConnection(activeConnection.value.id)
     await load()
-    message.success('新的不可变 Resource Scope Revision 已创建')
+    message.success('新的数据访问范围已保存')
   } catch (cause) {
     message.error(getApiErrorMessage(cause), { duration: 8000 })
   } finally {
@@ -496,10 +518,6 @@ function disable(item: DatabaseConnectionSummary) {
   })
 }
 
-function columnsSummary(item: DatabaseDiscoveredObject) {
-  return item.columns.map((column) => `${column.name} ${column.type}`).join(' · ')
-}
-
 onMounted(load)
 </script>
 
@@ -518,7 +536,7 @@ onMounted(load)
       <div v-else class="connection-list">
         <article v-for="item in connections" :key="item.id" class="connection-row">
           <div><strong>{{ item.name }}</strong><span class="mono">{{ item.host }}:{{ item.port }} / {{ item.maintenance_database }}</span></div>
-          <div><span>{{ item.environment }}</span><small>{{ item.scope_count }} 个数据库 Scope</small></div>
+          <div><span>{{ item.environment }}</span><small>{{ item.scope_count }} 个数据访问范围</small></div>
           <StatusTag :status="item.status" />
           <span class="muted">{{ formatDate(item.updated_at) }}</span>
           <div class="row-actions"><NButton size="small" secondary @click="openManager(item)"><template #icon><NIcon :component="Settings" /></template>管理</NButton><NButton size="small" secondary :loading="testing" @click="testSaved(item)"><template #icon><NIcon :component="TestPipe" /></template>测试</NButton><NButton size="small" quaternary type="error" :disabled="item.status==='disabled'" @click="disable(item)"><template #icon><NIcon :component="Trash" /></template>停用</NButton></div>
@@ -549,17 +567,54 @@ onMounted(load)
           <div v-if="discovery" class="discovery-result"><div class="result-summary"><StatusTag :status="discovery.status" /><strong>{{ discovery.server.version }}</strong><span>{{ discovery.latency_ms }} ms</span><span>{{ discovery.databases.length }} 个数据库</span></div><div class="check-grid"><div v-for="check in discovery.checks" :key="check.name"><strong>✓ {{ check.name }}</strong><span>{{ check.detail || '通过' }}</span></div></div><NAlert v-for="warning in discovery.warnings" :key="warning" type="warning" :bordered="false">{{ warning }}</NAlert></div>
           <div v-else class="empty-state compact"><div><NIcon :component="TestPipe" size="28" /><h3>等待测试</h3><p>使用上一步填写的用户名和密码测试；测试不会保存当前密码或连接配置。</p></div></div>
         </div>
-        <div v-else class="scope-stage">
-          <NAlert type="info" :bordered="false" style="margin-bottom:14px">每个启用的数据库形成独立不可变 Scope。字段只用于查看结构，首版授权粒度为 Schema、表和视图。</NAlert>
-          <article v-for="database in discovery?.databases || []" :key="database.name" class="database-card" :class="{unavailable:database.status!=='READY'}">
-            <header><NCheckbox v-if="scopeConfigs[database.name]" v-model:checked="scopeConfigs[database.name].enabled" :disabled="database.status!=='READY'"><strong>{{ database.name }}</strong></NCheckbox><strong v-else>{{ database.name }}</strong><StatusTag :status="database.status" /></header>
-            <template v-if="scopeConfigs[database.name]"><div class="scope-policy"><NCheckbox v-model:checked="scopeConfigs[database.name].allow_describe">查看结构</NCheckbox><NCheckbox v-model:checked="scopeConfigs[database.name].allow_preview">预览</NCheckbox><NCheckbox v-model:checked="scopeConfigs[database.name].allow_query">查询</NCheckbox><NCheckbox v-model:checked="scopeConfigs[database.name].allow_aggregate">聚合</NCheckbox><label>最大行数 <NInputNumber v-model:value="scopeConfigs[database.name].max_rows" :min="1" :max="10000" size="small" /></label><label>超时 ms <NInputNumber v-model:value="scopeConfigs[database.name].statement_timeout_ms" :min="100" :max="300000" size="small" /></label><label>每分钟 <NInputNumber v-model:value="scopeConfigs[database.name].requests_per_minute" :min="1" :max="10000" size="small" /></label></div>
-              <div class="schema-tree"><section v-for="schema in database.schemas" :key="schema.name"><h4>{{ schema.name }}</h4><div class="object-list"><label v-for="item in schema.tables" :key="`t-${item.name}`"><NCheckbox :checked="selected(database.name,schema.name,'table',item.name)" :disabled="!scopeConfigs[database.name].enabled" @update:checked="(value: boolean)=>toggle(database.name,schema.name,'table',item.name,value)"><strong>{{ item.name }}</strong><span>表</span></NCheckbox><small>{{ columnsSummary(item) }}</small></label><label v-for="item in schema.views" :key="`v-${item.name}`"><NCheckbox :checked="selected(database.name,schema.name,'view',item.name)" :disabled="!scopeConfigs[database.name].enabled" @update:checked="(value: boolean)=>toggle(database.name,schema.name,'view',item.name,value)"><strong>{{ item.name }}</strong><span>视图</span></NCheckbox><small>{{ columnsSummary(item) }}</small></label></div></section></div>
-            </template>
-          </article>
+        <div v-else class="access-stage">
+          <NAlert type="info" :bordered="false">每个数据库单独配置访问范围。Agent 只能读取这里选择的表和视图，不能在任务中切换到其他数据库。</NAlert>
+          <div class="resource-workbench">
+            <aside class="database-picker">
+              <header><strong>可访问数据库</strong><span>{{ discovery?.databases.length || 0 }} 个</span></header>
+              <button
+                v-for="database in discovery?.databases || []"
+                :key="database.name"
+                type="button"
+                :disabled="database.status !== 'READY'"
+                :class="{ active: wizardDatabaseName === database.name }"
+                @click="wizardDatabaseName = database.name"
+              >
+                <span><strong>{{ database.name }}</strong><small>{{ databaseObjectCount(database) }} 个对象</small></span>
+                <NCheckbox
+                  v-if="scopeConfigs[database.name]"
+                  v-model:checked="scopeConfigs[database.name].enabled"
+                  :disabled="database.status !== 'READY'"
+                  aria-label="启用数据库访问"
+                  @click.stop
+                />
+                <StatusTag v-else :status="database.status" />
+              </button>
+            </aside>
+            <section v-if="wizardDatabase && scopeConfigs[wizardDatabase.name]" class="access-editor">
+              <div class="access-policy-panel">
+                <header><strong>权限与限制</strong><span>应用于 {{ wizardDatabase.name }}</span></header>
+                <div class="scope-policy">
+                  <NCheckbox v-model:checked="scopeConfigs[wizardDatabase.name].allow_describe">查看结构</NCheckbox>
+                  <NCheckbox v-model:checked="scopeConfigs[wizardDatabase.name].allow_preview">预览</NCheckbox>
+                  <NCheckbox v-model:checked="scopeConfigs[wizardDatabase.name].allow_query">查询</NCheckbox>
+                  <NCheckbox v-model:checked="scopeConfigs[wizardDatabase.name].allow_aggregate">聚合</NCheckbox>
+                  <label>最大行数 <NInputNumber v-model:value="scopeConfigs[wizardDatabase.name].max_rows" :min="1" :max="10000" size="small" /></label>
+                  <label>超时 ms <NInputNumber v-model:value="scopeConfigs[wizardDatabase.name].statement_timeout_ms" :min="100" :max="300000" size="small" /></label>
+                  <label>每分钟 <NInputNumber v-model:value="scopeConfigs[wizardDatabase.name].requests_per_minute" :min="1" :max="10000" size="small" /></label>
+                </div>
+              </div>
+              <DatabaseObjectBrowser
+                v-model:selected-keys="selectedObjects"
+                :database="wizardDatabase"
+                selectable
+                :disabled="!scopeConfigs[wizardDatabase.name].enabled"
+              />
+            </section>
+          </div>
         </div>
       </div>
-      <template #footer><div class="wizard-actions"><NButton @click="wizardOpen=false">取消</NButton><span /><NButton v-if="wizardStep>0" @click="wizardStep-=1">上一步</NButton><NButton v-if="wizardStep<3" type="primary" @click="next">下一步</NButton><NButton v-else type="primary" :loading="saving" @click="save">保存连接与 Scope</NButton></div></template>
+      <template #footer><div class="wizard-actions"><NButton @click="wizardOpen=false">取消</NButton><span /><NButton v-if="wizardStep>0" @click="wizardStep-=1">上一步</NButton><NButton v-if="wizardStep<3" type="primary" @click="next">下一步</NButton><NButton v-else type="primary" :loading="saving" @click="save">保存数据库连接</NButton></div></template>
     </NModal>
 
     <NModal :show="managerOpen" preset="card" :title="activeConnection ? `管理连接 · ${activeConnection.name}` : '管理数据库连接'" style="width:min(1180px,calc(100vw - 32px))" :mask-closable="false" @update:show="(value:boolean)=>{if(!value)closeManager()}">
@@ -568,7 +623,7 @@ onMounted(load)
         <div class="manager-summary">
           <div><span>当前状态</span><StatusTag :status="activeConnection.status" /></div>
           <div><span>Connector Revision</span><strong class="mono">{{ activeConnection.current_revision_id.slice(0,8) }}</strong></div>
-          <div><span>数据库范围</span><strong>{{ activeConnection.scopes.length }} 个 Scope</strong></div>
+          <div><span>数据库范围</span><strong>{{ activeConnection.scopes.length }} 个访问范围</strong></div>
           <div><span>凭据</span><strong>{{ activeConnection.credential.masked_username || '未配置' }}</strong></div>
         </div>
         <NTabs v-model:value="managerTab" type="line" animated>
@@ -587,27 +642,60 @@ onMounted(load)
               <div class="manager-actions"><NButton :loading="testing" @click="testManaged"><template #icon><NIcon :component="TestPipe" /></template>使用已保存凭据测试</NButton><span /><NButton v-if="activeConnection.enabled" type="error" secondary :loading="managerSaving" @click="setManagedEnabled(false)">停用连接</NButton><NButton v-else type="success" secondary :loading="managerSaving" @click="setManagedEnabled(true)">重新启用</NButton><NButton type="primary" :loading="managerSaving" @click="saveManagedConnection">保存配置</NButton></div>
             </div>
           </NTabPane>
-          <NTabPane name="scopes" tab="资源与 Scope">
-            <div class="manager-pane">
-              <div class="scope-toolbar"><div><strong>不可变数据范围</strong><p>重新发现只更新资源目录；已有 Scope Revision 和历史绑定不会被覆盖。</p></div><div><NButton :loading="testing" @click="testManaged">测试并发现</NButton><NButton type="primary" secondary :loading="testing" @click="discoverManaged">重新发现资源</NButton></div></div>
-              <div v-if="activeConnection.scopes.length" class="saved-scope-list">
-                <article v-for="scope in activeConnection.scopes" :key="scope.id">
-                  <header><div><strong>{{ scope.name }}</strong><span class="mono">Revision {{ scope.revision }} · {{ scope.database }}</span></div><span class="mono muted">{{ scope.digest.slice(0,12) }}</span></header>
-                  <div class="scope-facts"><span>结构 {{ scope.definition.permissions.describe ? '允许' : '禁止' }}</span><span>预览 {{ scope.definition.permissions.preview ? '允许' : '禁止' }}</span><span>查询 {{ scope.definition.permissions.query ? '允许' : '禁止' }}</span><span>最大 {{ scope.definition.limits.max_rows }} 行</span><span>超时 {{ scope.definition.limits.statement_timeout_ms }} ms</span></div>
-                  <div class="saved-schema-list"><div v-for="(schema,schemaName) in scope.definition.schemas" :key="schemaName"><strong>{{ schemaName }}</strong><span>表：{{ schema.tables.join('、') || '无' }}</span><span>视图：{{ schema.views.join('、') || '无' }}</span></div></div>
-                </article>
+          <NTabPane name="access" tab="数据访问">
+            <div class="manager-pane access-manager-pane">
+              <div class="scope-toolbar">
+                <div><strong>数据访问范围</strong><p>已有配置按行展示，展开后查看具体表和视图。刷新资源不会修改已生效的访问范围。</p></div>
+                <div><NButton :loading="testing" @click="testManaged">测试并读取资源</NButton><NButton type="primary" secondary :loading="testing" @click="discoverManaged">刷新资源</NButton></div>
               </div>
-              <div v-else class="empty-state compact"><div><NIcon :component="Database" size="28" /><h3>尚未创建数据库 Scope</h3><p>先测试或重新发现资源，再为某个数据库创建只读范围。</p></div></div>
+
+              <section v-if="activeConnection.scopes.length" class="saved-range-section">
+                <header><strong>已配置范围</strong><span>{{ activeConnection.scopes.length }} 个</span></header>
+                <div class="saved-range-list">
+                  <details v-for="scope in activeConnection.scopes" :key="scope.id" class="saved-range-row">
+                    <summary>
+                      <span class="range-name"><strong>{{ scope.name }}</strong><small>{{ scope.database }}</small></span>
+                      <span><strong>{{ Object.keys(scope.definition.schemas).length }}</strong><small>Schema</small></span>
+                      <span><strong>{{ rangeObjectCount(scope) }}</strong><small>数据库对象</small></span>
+                      <span><strong>{{ scope.definition.permissions.query ? '可查询' : '仅查看结构' }}</strong><small>版本 {{ scope.revision }}</small></span>
+                      <span class="range-expand">查看详情</span>
+                    </summary>
+                    <div class="range-details">
+                      <div class="scope-facts"><span>结构 {{ scope.definition.permissions.describe ? '允许' : '禁止' }}</span><span>预览 {{ scope.definition.permissions.preview ? '允许' : '禁止' }}</span><span>查询 {{ scope.definition.permissions.query ? '允许' : '禁止' }}</span><span>最大 {{ scope.definition.limits.max_rows }} 行</span><span>超时 {{ scope.definition.limits.statement_timeout_ms }} ms</span></div>
+                      <div class="saved-schema-list"><div v-for="(schema,schemaName) in scope.definition.schemas" :key="schemaName"><strong>{{ schemaName }}</strong><span>表：{{ summarizeNames(schema.tables) }}</span><span>视图：{{ summarizeNames(schema.views) }}</span></div></div>
+                      <small class="config-digest">配置摘要 {{ scope.digest.slice(0,12) }}</small>
+                    </div>
+                  </details>
+                </div>
+              </section>
+              <div v-else class="empty-state compact"><div><NIcon :component="Database" size="28" /><h3>尚未设置数据访问范围</h3><p>先读取数据库资源，再选择允许 Agent 访问的表和视图。</p></div></div>
+
               <template v-if="managedDiscovery">
                 <NAlert v-for="warning in managedDiscovery.warnings" :key="warning" type="warning" :bordered="false">{{ warning }}</NAlert>
-                <div class="managed-databases">
-                  <article v-for="database in managedDiscovery.databases" :key="database.name" class="managed-database-card">
-                    <header><div><strong>{{ database.name }}</strong><span>{{ database.schemas.length }} 个 Schema</span></div><div><StatusTag :status="database.status" /><NButton v-if="database.status==='READY'" size="small" type="primary" secondary @click="openScopeCreator(database.name)"><template #icon><NIcon :component="Plus" /></template>新增 Scope</NButton></div></header>
-                    <p v-if="database.error" class="error-text">{{ database.error }}</p>
-                    <div v-else class="discovery-schema-grid"><section v-for="schema in database.schemas" :key="schema.name"><strong>{{ schema.name }}</strong><span>{{ schema.tables.length }} 表 · {{ schema.views.length }} 视图</span><small>{{ [...schema.tables,...schema.views].map(item=>item.name).join('、') || '无对象' }}</small></section></div>
-                  </article>
-                </div>
+                <section class="resource-section">
+                  <header><div><strong>数据库资源</strong><span>选择数据库后可搜索表、视图和字段</span></div><NButton v-if="managedDatabase?.status === 'READY'" type="primary" @click="openScopeCreator(managedDatabase.name)">配置访问范围</NButton></header>
+                  <div class="resource-workbench">
+                    <aside class="database-picker">
+                      <header><strong>数据库</strong><span>{{ managedDiscovery.databases.length }} 个</span></header>
+                      <button
+                        v-for="database in managedDiscovery.databases"
+                        :key="database.name"
+                        type="button"
+                        :class="{ active: managedDatabaseName === database.name }"
+                        @click="managedDatabaseName = database.name"
+                      >
+                        <span><strong>{{ database.name }}</strong><small>{{ databaseObjectCount(database) }} 个对象</small></span>
+                        <StatusTag :status="database.status" />
+                      </button>
+                    </aside>
+                    <div class="resource-browser-wrap">
+                      <p v-if="managedDatabase?.error" class="error-text">{{ managedDatabase.error }}</p>
+                      <DatabaseObjectBrowser v-else-if="managedDatabase" :database="managedDatabase" />
+                    </div>
+                  </div>
+                </section>
               </template>
+              <div v-else class="resource-placeholder"><strong>尚未读取数据库资源</strong><span>点击“测试并读取资源”，平台会列出当前账号可访问的数据库、表、视图和字段。</span></div>
             </div>
           </NTabPane>
           <NTabPane name="credential" tab="凭据轮换">
@@ -623,18 +711,41 @@ onMounted(load)
       <template #footer><div class="wizard-actions"><span /><NButton @click="closeManager">关闭</NButton></div></template>
     </NModal>
 
-    <NModal :show="scopeOpen" preset="card" :title="`新增数据库 Scope · ${scopeDatabase || ''}`" style="width:min(1080px,calc(100vw - 32px))" :mask-closable="false" @update:show="(value:boolean)=>{scopeOpen=value}">
-      <div v-if="scopeDatabase && managedDiscovery" class="scope-stage">
-        <NAlert type="info" :bordered="false">保存后生成新的 Resource Scope Revision。一个 Scope 只对应一个物理数据库，Agent 不能在查询中切换数据库。</NAlert>
-        <NForm label-placement="top"><div class="form-grid scope-basics"><NFormItem label="Scope 名称"><NInput v-model:value="newScope.name" /></NFormItem><NFormItem label="最大返回行数"><NInputNumber v-model:value="newScope.max_rows" :min="1" :max="10000" /></NFormItem><NFormItem label="查询超时 ms"><NInputNumber v-model:value="newScope.statement_timeout_ms" :min="100" :max="300000" /></NFormItem><NFormItem label="每分钟调用次数"><NInputNumber v-model:value="newScope.requests_per_minute" :min="1" :max="10000" /></NFormItem></div></NForm>
+    <NModal :show="scopeOpen" preset="card" :title="`配置数据访问范围 · ${scopeDatabase || ''}`" style="width:min(1120px,calc(100vw - 32px))" :mask-closable="false" @update:show="(value:boolean)=>{scopeOpen=value}">
+      <div v-if="scopeDatabase && managedDatabase" class="scope-stage">
+        <NAlert type="info" :bordered="false">一个访问范围只对应一个数据库。保存后 Agent 只能访问这里选择的表和视图，不能临时切换数据库。</NAlert>
+        <NForm label-placement="top"><div class="form-grid scope-basics"><NFormItem label="范围名称"><NInput v-model:value="newScope.name" /></NFormItem><NFormItem label="最大返回行数"><NInputNumber v-model:value="newScope.max_rows" :min="1" :max="10000" /></NFormItem><NFormItem label="查询超时 ms"><NInputNumber v-model:value="newScope.statement_timeout_ms" :min="100" :max="300000" /></NFormItem><NFormItem label="每分钟调用次数"><NInputNumber v-model:value="newScope.requests_per_minute" :min="1" :max="10000" /></NFormItem></div></NForm>
         <div class="scope-policy"><NCheckbox v-model:checked="newScope.allow_describe">查看结构</NCheckbox><NCheckbox v-model:checked="newScope.allow_preview">预览</NCheckbox><NCheckbox v-model:checked="newScope.allow_query">查询</NCheckbox><NCheckbox v-model:checked="newScope.allow_aggregate">聚合</NCheckbox></div>
-        <template v-for="database in managedDiscovery.databases.filter(item=>item.name===scopeDatabase)" :key="database.name"><div class="schema-tree"><section v-for="schema in database.schemas" :key="schema.name"><h4>{{ schema.name }}</h4><div class="object-list"><label v-for="item in schema.tables" :key="`managed-t-${item.name}`"><NCheckbox :checked="scopeSelected(database.name,schema.name,'table',item.name)" @update:checked="(value:boolean)=>toggleScopeObject(database.name,schema.name,'table',item.name,value)"><strong>{{ item.name }}</strong><span>表</span></NCheckbox><small>{{ columnsSummary(item) }}</small></label><label v-for="item in schema.views" :key="`managed-v-${item.name}`"><NCheckbox :checked="scopeSelected(database.name,schema.name,'view',item.name)" @update:checked="(value:boolean)=>toggleScopeObject(database.name,schema.name,'view',item.name,value)"><strong>{{ item.name }}</strong><span>视图</span></NCheckbox><small>{{ columnsSummary(item) }}</small></label></div></section></div></template>
+        <DatabaseObjectBrowser v-model:selected-keys="scopeSelectedObjects" :database="managedDatabase" selectable />
       </div>
-      <template #footer><div class="wizard-actions"><NButton @click="scopeOpen=false">取消</NButton><span /><NButton type="primary" :loading="managerSaving" @click="saveManagedScope">创建 Scope Revision</NButton></div></template>
+      <template #footer><div class="wizard-actions"><NButton @click="scopeOpen=false">取消</NButton><span /><NButton type="primary" :loading="managerSaving" @click="saveManagedScope">保存访问范围</NButton></div></template>
     </NModal>
   </div>
 </template>
 
 <style scoped>
-.connection-list{display:grid}.connection-row{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(130px,.65fr) 110px 150px auto;gap:16px;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line)}.connection-row:last-child{border-bottom:0}.connection-row>div{display:grid;gap:4px}.connection-row span,.connection-row small{font-size:12px}.row-actions{display:flex!important;grid-auto-flow:column;flex-wrap:wrap;justify-content:end}.db-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.db-steps span{padding:11px 13px;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px}.db-steps .active{border-color:var(--accent);background:var(--accent-soft);color:var(--ink)}.db-steps .complete{color:#63c174}.wizard-body{min-height:480px;padding-top:22px}.credential-grid{max-width:720px}.test-stage,.scope-stage{display:grid;gap:14px}.test-toolbar,.result-summary,.database-card>header,.wizard-actions{display:flex;align-items:center;gap:14px}.test-toolbar,.database-card>header{justify-content:space-between}.test-toolbar h3,.test-toolbar p{margin:0}.test-toolbar p{margin-top:5px;color:var(--muted);font-size:13px}.discovery-result{display:grid;gap:14px}.check-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.check-grid>div{display:grid;gap:4px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-subtle)}.check-grid span{color:var(--muted);font-size:12px}.database-card{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}.database-card>header{padding:14px 16px;border-bottom:1px solid var(--line)}.database-card.unavailable{opacity:.65}.scope-policy{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:13px 16px;background:var(--surface-subtle)}.scope-policy label{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}.schema-tree{display:grid;gap:12px;padding:14px 16px}.schema-tree section{display:grid;gap:8px}.schema-tree h4{margin:0;color:var(--muted);font-size:12px;text-transform:uppercase}.object-list{display:grid;grid-template-columns:1fr 1fr;gap:8px}.object-list>label{display:grid;gap:5px;padding:10px 12px;border:1px solid var(--line);border-radius:7px}.object-list small{overflow:hidden;color:var(--muted);font-size:11px;text-overflow:ellipsis;white-space:nowrap}.object-list span{margin-left:7px;color:var(--muted);font-size:11px}.wizard-actions span{flex:1}.manager-loading{min-height:420px;padding:24px}.manager-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}.manager-summary>div{display:grid;gap:7px;padding:13px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface-subtle)}.manager-summary span{color:var(--muted);font-size:11px}.manager-pane{display:grid;gap:18px;min-height:440px;padding:14px 2px}.manager-actions{display:flex;align-items:center;gap:10px}.manager-actions>span{flex:1}.scope-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px}.scope-toolbar p{margin:5px 0 0;color:var(--muted);font-size:12px}.scope-toolbar>div:last-child{display:flex;gap:8px}.saved-scope-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.saved-scope-list>article{display:grid;gap:12px;padding:14px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}.saved-scope-list header,.managed-database-card>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.saved-scope-list header>div,.managed-database-card header>div{display:grid;gap:4px}.saved-scope-list header span,.managed-database-card header span{font-size:11px}.scope-facts{display:flex;flex-wrap:wrap;gap:6px}.scope-facts span{padding:4px 7px;border-radius:5px;background:var(--surface-subtle);color:var(--muted);font-size:10px}.saved-schema-list{display:grid;gap:8px}.saved-schema-list>div{display:grid;gap:3px;padding-top:8px;border-top:1px solid var(--line)}.saved-schema-list span{overflow-wrap:anywhere;color:var(--muted);font-size:11px}.managed-databases{display:grid;gap:10px}.managed-database-card{display:grid;gap:12px;padding:14px;border:1px solid var(--line);border-radius:9px}.managed-database-card header>div:last-child{display:flex;align-items:center;gap:8px}.discovery-schema-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.discovery-schema-grid section{display:grid;gap:4px;padding:10px;border-radius:7px;background:var(--surface-subtle)}.discovery-schema-grid span,.discovery-schema-grid small{color:var(--muted);font-size:11px}.discovery-schema-grid small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.error-text{margin:0;color:var(--danger);font-size:12px}.credential-pane{max-width:780px}.credential-status{display:grid;grid-template-columns:130px 1fr 130px 1fr;gap:10px;align-items:center;padding:14px;border:1px solid var(--line);border-radius:8px}.credential-status span{color:var(--muted);font-size:12px}.scope-basics{grid-template-columns:repeat(4,1fr)}@media(max-width:900px){.connection-row{grid-template-columns:1fr 1fr}.check-grid,.object-list,.saved-scope-list,.manager-summary{grid-template-columns:1fr 1fr}.discovery-schema-grid{grid-template-columns:1fr 1fr}.scope-basics{grid-template-columns:1fr 1fr}}@media(max-width:680px){.db-steps{grid-template-columns:1fr 1fr}.connection-row,.manager-summary,.saved-scope-list,.discovery-schema-grid,.scope-basics{grid-template-columns:1fr}.scope-policy{align-items:flex-start;flex-direction:column}.scope-toolbar{align-items:flex-start;flex-direction:column}.credential-status{grid-template-columns:1fr}.manager-actions{flex-wrap:wrap}.manager-actions>span{display:none}}
+.connection-list{display:grid}
+.connection-row{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(150px,.7fr) 110px 150px auto;gap:16px;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line)}
+.connection-row:last-child{border-bottom:0}.connection-row>div{display:grid;gap:4px}.connection-row span,.connection-row small{font-size:12px}
+.row-actions{display:flex!important;grid-auto-flow:column;flex-wrap:wrap;justify-content:end}
+.db-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.db-steps span{padding:11px 13px;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px}.db-steps .active{border-color:var(--accent);background:var(--accent-soft);color:var(--ink)}.db-steps .complete{color:#63c174}
+.wizard-body{min-height:480px;padding-top:22px}.credential-grid{max-width:720px}.test-stage,.scope-stage,.access-stage{display:grid;gap:14px}
+.test-toolbar,.result-summary,.wizard-actions{display:flex;align-items:center;gap:14px}.test-toolbar{justify-content:space-between}.test-toolbar h3,.test-toolbar p{margin:0}.test-toolbar p{margin-top:5px;color:var(--muted);font-size:13px}
+.discovery-result{display:grid;gap:14px}.check-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.check-grid>div{display:grid;gap:4px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-subtle)}.check-grid span{color:var(--muted);font-size:12px}
+.resource-workbench{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:460px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}
+.database-picker{display:grid;align-content:start;border-right:1px solid var(--line);background:var(--surface-subtle)}
+.database-picker>header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 14px;border-bottom:1px solid var(--line)}.database-picker>header span{color:var(--muted);font-size:11px}
+.database-picker>button{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:12px 14px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer}.database-picker>button:hover{background:var(--surface)}.database-picker>button.active{box-shadow:inset 3px 0 0 var(--accent);background:var(--surface)}.database-picker>button:disabled{cursor:not-allowed;opacity:.55}.database-picker>button>span:first-child{display:grid;min-width:0;gap:3px}.database-picker>button strong,.database-picker>button small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.database-picker>button small{color:var(--muted);font-size:10px}
+.access-editor,.resource-browser-wrap{display:grid;align-content:start;min-width:0;padding:14px;gap:12px}.access-policy-panel{border:1px solid var(--line);border-radius:9px;overflow:hidden}.access-policy-panel>header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line)}.access-policy-panel>header span{color:var(--muted);font-size:11px}
+.scope-policy{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:12px 14px;background:var(--surface-subtle)}.scope-policy label{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}.scope-policy label :deep(.n-input-number){width:104px}
+.wizard-actions span{flex:1}.manager-loading{min-height:420px;padding:24px}.manager-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}.manager-summary>div{display:grid;gap:7px;padding:13px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface-subtle)}.manager-summary span{color:var(--muted);font-size:11px}
+.manager-pane{display:grid;gap:18px;min-height:440px;padding:14px 2px}.access-manager-pane{align-content:start}.manager-actions{display:flex;align-items:center;gap:10px}.manager-actions>span{flex:1}
+.scope-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px}.scope-toolbar p{margin:5px 0 0;color:var(--muted);font-size:12px}.scope-toolbar>div:last-child{display:flex;gap:8px}
+.saved-range-section{display:grid;border:1px solid var(--line);border-radius:9px;overflow:hidden}.saved-range-section>header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface-subtle)}.saved-range-section>header span{color:var(--muted);font-size:11px}
+.saved-range-list{display:grid}.saved-range-row{border-top:1px solid var(--line)}.saved-range-row:first-child{border-top:0}.saved-range-row>summary{display:grid;grid-template-columns:minmax(220px,1.7fr) minmax(70px,.45fr) minmax(90px,.55fr) minmax(110px,.7fr) auto;gap:14px;align-items:center;padding:11px 14px;list-style:none;cursor:pointer}.saved-range-row>summary::-webkit-details-marker{display:none}.saved-range-row>summary:hover{background:var(--surface-subtle)}.saved-range-row>summary>span{display:grid;gap:2px}.saved-range-row>summary strong{overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.saved-range-row>summary small{color:var(--muted);font-size:10px}.range-expand{display:block!important;color:var(--accent);font-size:11px;white-space:nowrap}.saved-range-row[open] .range-expand{color:var(--muted)}
+.range-details{display:grid;gap:10px;padding:12px 14px 14px;border-top:1px solid var(--line);background:var(--surface-subtle)}.scope-facts{display:flex;flex-wrap:wrap;gap:6px}.scope-facts span{padding:4px 7px;border-radius:5px;background:var(--surface);color:var(--muted);font-size:10px}.saved-schema-list{display:grid;gap:7px}.saved-schema-list>div{display:grid;grid-template-columns:140px minmax(0,1fr) minmax(0,1fr);gap:10px;padding:7px 0;border-top:1px solid var(--line)}.saved-schema-list span{overflow-wrap:anywhere;color:var(--muted);font-size:11px}.config-digest{color:var(--muted);font-size:10px}
+.resource-section{display:grid;gap:10px}.resource-section>header{display:flex;align-items:center;justify-content:space-between;gap:12px}.resource-section>header>div{display:grid;gap:3px}.resource-section>header span{color:var(--muted);font-size:11px}.resource-section .resource-workbench{min-height:420px}.resource-placeholder{display:grid;place-items:center;gap:5px;min-height:180px;padding:24px;border:1px dashed var(--line);border-radius:9px;color:var(--muted);text-align:center}.resource-placeholder span{max-width:560px;font-size:12px}
+.error-text{margin:0;color:var(--danger);font-size:12px}.credential-pane{max-width:780px}.credential-status{display:grid;grid-template-columns:130px 1fr 130px 1fr;gap:10px;align-items:center;padding:14px;border:1px solid var(--line);border-radius:8px}.credential-status span{color:var(--muted);font-size:12px}.scope-basics{grid-template-columns:repeat(4,1fr)}
+@media(max-width:900px){.connection-row{grid-template-columns:1fr 1fr}.check-grid,.manager-summary{grid-template-columns:1fr 1fr}.scope-basics{grid-template-columns:1fr 1fr}.resource-workbench{grid-template-columns:1fr}.database-picker{grid-template-columns:repeat(2,minmax(0,1fr));max-height:210px;overflow:auto;border-right:0;border-bottom:1px solid var(--line)}.database-picker>header{grid-column:1/-1}.saved-range-row>summary{grid-template-columns:minmax(180px,1.4fr) repeat(2,minmax(70px,.5fr)) auto}.saved-range-row>summary>span:nth-child(4){display:none}}
+@media(max-width:680px){.db-steps{grid-template-columns:1fr 1fr}.connection-row,.manager-summary,.scope-basics{grid-template-columns:1fr}.scope-policy{align-items:flex-start;flex-direction:column}.scope-toolbar,.resource-section>header{align-items:flex-start;flex-direction:column}.scope-toolbar>div:last-child{flex-wrap:wrap}.credential-status{grid-template-columns:1fr}.manager-actions{flex-wrap:wrap}.manager-actions>span{display:none}.database-picker{grid-template-columns:1fr}.saved-range-row>summary{grid-template-columns:minmax(0,1fr) auto}.saved-range-row>summary>span:nth-child(2),.saved-range-row>summary>span:nth-child(3),.saved-range-row>summary>span:nth-child(4){display:none}.saved-schema-list>div{grid-template-columns:1fr}.resource-workbench{min-height:0}}
 </style>

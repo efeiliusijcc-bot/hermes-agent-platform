@@ -45,6 +45,23 @@ export interface Agent {
   updated_at: string
 }
 
+export interface ConsoleAgentSummary {
+  id: string
+  name: string
+  description: string | null
+  agent_type: AgentType
+  role: string
+  model: string
+  status: AgentStatus
+  runtime_type: RuntimeType
+  current_version_id: string | null
+  version: string | null
+  skills: Array<{ id: string; name: string }>
+  mcps: Array<{ id: string; name: string }>
+  preflight_state: CapabilityState | null
+  updated_at: string
+}
+
 export interface PreflightIssue {
   code: string
   path: string
