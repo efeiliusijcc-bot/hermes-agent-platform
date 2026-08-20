@@ -10,7 +10,7 @@ export interface AgentConversationSession {
 }
 
 function sessionKey(item: ExecutionSummary): string {
-  return item.session_id || item.memory_session_id || `execution:${item.id}`
+  return item.memory_session_id || item.session_id || `execution:${item.id}`
 }
 
 export function conversationPreview(value: string, maxLength = 52): string {
@@ -32,7 +32,7 @@ export function buildConversationSessions(executions: ExecutionSummary[]): Agent
       const latest = ordered[ordered.length - 1]
       return {
         key,
-        sessionId: latest.session_id || latest.memory_session_id,
+        sessionId: latest.memory_session_id || latest.session_id,
         title: conversationPreview(ordered[0].task),
         latestAt: latest.started_at,
         status: latest.status,

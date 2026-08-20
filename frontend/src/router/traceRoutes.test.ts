@@ -26,4 +26,9 @@ describe('execution and trace routes', () => {
     const runtimes = router.getRoutes().find((route) => route.name === 'runtimes')
     expect(runtimes?.path).toBe('/runtimes')
   })
+
+  it('registers the direct Agent chat workspace', () => {
+    const chat = router.getRoutes().find((route) => route.name === 'agent-chat')
+    expect(chat?.path).toBe('/chat')
+  })
 })

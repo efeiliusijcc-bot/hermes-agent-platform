@@ -48,6 +48,18 @@ describe('agent conversation helpers', () => {
     expect(sessions[1].title).toBe('分析授权材料并生成报告')
   })
 
+  it('groups by the user memory session instead of the per-run internal session', () => {
+    const sessions = buildConversationSessions([
+      summary({ id: 'execution-1', session_id: 'internal-1', memory_session_id: 'chat-a' }),
+      summary({ id: 'execution-2', session_id: 'internal-2', memory_session_id: 'chat-a', started_at: '2026-08-18T02:00:00Z' }),
+    ])
+
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0].key).toBe('chat-a')
+    expect(sessions[0].sessionId).toBe('chat-a')
+    expect(sessions[0].items.map((item) => item.id)).toEqual(['execution-1', 'execution-2'])
+  })
+
   it('uses structured output and explicit status fallbacks when text is unavailable', () => {
     const base = summary({}) as ExecutionDetail
     expect(executionReplyText({ ...base, output: null, output_json: { result: 'ok' }, error: null })).toBe('```json\n{\n  "result": "ok"\n}\n```')

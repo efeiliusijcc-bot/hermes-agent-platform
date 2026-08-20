@@ -17,6 +17,7 @@ import {
   Database,
   Robot,
   ListCheck,
+  Messages,
   Server,
   BoxModel,
   Plus,
@@ -44,6 +45,7 @@ const menuOptions: MenuOption[] = [
   ] },
   { label: '智能体', key: 'agent-group', type: 'group', children: [
     { label: renderLink('智能体列表', 'agents'), key: 'agents', icon: renderIcon(Robot) },
+    { label: renderLink('智能体聊天', 'agent-chat'), key: 'agent-chat', icon: renderIcon(Messages) },
     { label: renderLink('创建智能体', 'agent-create'), key: 'agent-create', icon: renderIcon(Plus) },
     { label: renderLink('团队编排', 'multi-agent'), key: 'multi-agent', icon: renderIcon(GitBranch) },
   ] },
