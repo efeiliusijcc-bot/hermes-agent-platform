@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { NIcon, useDialog, useMessage } from 'naive-ui'
+import {
+  NCheckbox,
+  NIcon,
+  NInputNumber,
+  NTabPane,
+  NTabs,
+  useDialog,
+  useMessage,
+} from 'naive-ui'
 import { Database, Plus, Refresh, Settings, TestPipe, Trash } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
@@ -525,7 +533,7 @@ onMounted(load)
           <NFormItem label="连接名称" required><NInput v-model:value="form.name" placeholder="业务知识库" /></NFormItem>
           <NFormItem label="环境"><NSelect v-model:value="form.environment" :options="[{label:'开发',value:'development'},{label:'测试',value:'test'},{label:'生产',value:'production'}]" /></NFormItem>
           <NFormItem label="主机 / 容器名" required><NInput v-model:value="form.host" placeholder="business-postgres" /></NFormItem>
-          <NFormItem label="端口"><NInputNumber v-model:value="form.port" :min="1" :max="65535" /></NFormItem>
+          <NFormItem label="端口"><NInputNumber v-model:value="form.port" aria-label="端口" :min="1" :max="65535" /></NFormItem>
           <NFormItem label="维护库"><NInput v-model:value="form.maintenance_database" /></NFormItem>
           <NFormItem label="SSL 模式"><NSelect v-model:value="form.ssl_mode" :options="['disable','prefer','require','verify-ca','verify-full'].map(value=>({label:value,value}))" /></NFormItem>
           <NFormItem label="连接超时（秒）"><NInputNumber v-model:value="form.connect_timeout_seconds" :min="1" :max="60" /></NFormItem>
@@ -539,7 +547,7 @@ onMounted(load)
         <div v-else-if="wizardStep===2" class="test-stage">
           <div class="test-toolbar"><div><h3>连接测试与资源发现</h3><p>一次检查连接，并读取所有可访问数据库、Schema、表、视图和字段。</p></div><NButton type="primary" :loading="testing" @click="testTemporary"><template #icon><NIcon :component="TestPipe" /></template>开始测试</NButton></div>
           <div v-if="discovery" class="discovery-result"><div class="result-summary"><StatusTag :status="discovery.status" /><strong>{{ discovery.server.version }}</strong><span>{{ discovery.latency_ms }} ms</span><span>{{ discovery.databases.length }} 个数据库</span></div><div class="check-grid"><div v-for="check in discovery.checks" :key="check.name"><strong>✓ {{ check.name }}</strong><span>{{ check.detail || '通过' }}</span></div></div><NAlert v-for="warning in discovery.warnings" :key="warning" type="warning" :bordered="false">{{ warning }}</NAlert></div>
-          <div v-else class="empty-state compact"><div><NIcon :component="TestPipe" size="28" /><h3>等待测试</h3><p>测试不会保存当前密码或连接配置。</p></div></div>
+          <div v-else class="empty-state compact"><div><NIcon :component="TestPipe" size="28" /><h3>等待测试</h3><p>使用上一步填写的用户名和密码测试；测试不会保存当前密码或连接配置。</p></div></div>
         </div>
         <div v-else class="scope-stage">
           <NAlert type="info" :bordered="false" style="margin-bottom:14px">每个启用的数据库形成独立不可变 Scope。字段只用于查看结构，首版授权粒度为 Schema、表和视图。</NAlert>
@@ -571,12 +579,12 @@ onMounted(load)
                 <NFormItem label="连接名称"><NInput v-model:value="editForm.name" /></NFormItem>
                 <NFormItem label="环境"><NSelect v-model:value="editForm.environment" :options="[{label:'开发',value:'development'},{label:'测试',value:'test'},{label:'生产',value:'production'}]" /></NFormItem>
                 <NFormItem label="主机 / 容器名"><NInput v-model:value="editForm.host" /></NFormItem>
-                <NFormItem label="端口"><NInputNumber v-model:value="editForm.port" :min="1" :max="65535" /></NFormItem>
+                <NFormItem label="端口"><NInputNumber v-model:value="editForm.port" aria-label="端口" :min="1" :max="65535" /></NFormItem>
                 <NFormItem label="维护库"><NInput v-model:value="editForm.maintenance_database" /></NFormItem>
                 <NFormItem label="SSL 模式"><NSelect v-model:value="editForm.ssl_mode" :options="['disable','prefer','require','verify-ca','verify-full'].map(value=>({label:value,value}))" /></NFormItem>
                 <NFormItem label="连接超时（秒）"><NInputNumber v-model:value="editForm.connect_timeout_seconds" :min="1" :max="60" /></NFormItem>
               </div></NForm>
-              <div class="manager-actions"><NButton :loading="testing" @click="testManaged"><template #icon><NIcon :component="TestPipe" /></template>测试当前 Revision</NButton><span /><NButton v-if="activeConnection.enabled" type="error" secondary :loading="managerSaving" @click="setManagedEnabled(false)">停用连接</NButton><NButton v-else type="success" secondary :loading="managerSaving" @click="setManagedEnabled(true)">重新启用</NButton><NButton type="primary" :loading="managerSaving" @click="saveManagedConnection">保存配置</NButton></div>
+              <div class="manager-actions"><NButton :loading="testing" @click="testManaged"><template #icon><NIcon :component="TestPipe" /></template>使用已保存凭据测试</NButton><span /><NButton v-if="activeConnection.enabled" type="error" secondary :loading="managerSaving" @click="setManagedEnabled(false)">停用连接</NButton><NButton v-else type="success" secondary :loading="managerSaving" @click="setManagedEnabled(true)">重新启用</NButton><NButton type="primary" :loading="managerSaving" @click="saveManagedConnection">保存配置</NButton></div>
             </div>
           </NTabPane>
           <NTabPane name="scopes" tab="资源与 Scope">
