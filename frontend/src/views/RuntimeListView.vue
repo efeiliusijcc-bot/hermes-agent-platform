@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Code, Cpu, Heartbeat, Refresh, Server } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
+import AdminGuideLink from '@/components/AdminGuideLink.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
@@ -72,6 +73,7 @@ onMounted(load)
   <section class="runtime-page">
     <PageHeader eyebrow="RUNTIME REGISTRY" title="运行时管理" description="统一查看 Hermes、Pi 与 DeepSeek Harness 的版本、健康状态和 Agent 使用情况。">
       <template #actions>
+        <AdminGuideLink section="runtimes" />
         <NButton :loading="loading || checking !== null" @click="checkAll">
           <template #icon><NIcon :component="Refresh" /></template>检查全部
         </NButton>

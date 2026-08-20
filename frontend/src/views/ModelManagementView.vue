@@ -4,6 +4,7 @@ import { NForm, NFormItem, NIcon, NInputNumber, NModal, NSwitch, useDialog, useM
 import { Plus, Refresh, Robot, Search } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
+import AdminGuideLink from '@/components/AdminGuideLink.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
@@ -207,6 +208,7 @@ onMounted(load)
   <section class="model-page">
     <PageHeader eyebrow="MODEL REGISTRY" title="模型管理" description="统一管理 Agent 实际使用的模型地址、上游模型名和访问密钥。">
       <template #actions>
+        <AdminGuideLink section="models" />
         <NButton :loading="loading" @click="load"><template #icon><NIcon :component="Refresh" /></template>刷新</NButton>
         <NButton type="primary" @click="openCreate"><template #icon><NIcon :component="Plus" /></template>新增模型</NButton>
       </template>

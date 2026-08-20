@@ -15,6 +15,7 @@ import {
 import { Database, Plus, Refresh, Settings, TestPipe, Trash } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
+import AdminGuideLink from '@/components/AdminGuideLink.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import DatabaseObjectBrowser from '@/components/database/DatabaseObjectBrowser.vue'
 import { getApiErrorMessage } from '@/api/client'
@@ -525,6 +526,7 @@ onMounted(load)
   <div>
     <PageHeader title="数据库连接" description="管理内网 PostgreSQL、发现数据资源，并为 Agent 冻结只读数据范围。">
       <template #actions>
+        <AdminGuideLink section="database" />
         <NButton secondary :loading="loading" @click="load"><template #icon><NIcon :component="Refresh" /></template>刷新</NButton>
         <NButton type="primary" @click="openWizard"><template #icon><NIcon :component="Plus" /></template>创建数据库连接</NButton>
       </template>

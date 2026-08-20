@@ -34,6 +34,7 @@ const router = createRouter({
         { path: 'settings', name: 'settings', component: () => import('@/views/SettingsView.vue'), meta: { title: '平台设置' } },
         { path: 'platform/connections', name: 'platform-connections', component: () => import('@/views/PlatformConnectionsView.vue'), meta: { title: '连接与能力' } },
         { path: 'platform/database-connections', name: 'database-connections', component: () => import('@/views/DatabaseConnectionsView.vue'), meta: { title: '数据库连接' } },
+        { path: 'help/platform-management', name: 'platform-admin-guide', component: () => import('@/views/PlatformAdminGuideView.vue'), meta: { title: '平台管理使用手册' } },
         { path: 'executions', name: 'executions', component: () => import('@/views/execution/ExecutionCenterView.vue'), meta: { title: '执行中心' } },
         { path: 'trace', name: 'execution-trace', component: () => import('@/views/trace/TraceCenterView.vue'), meta: { title: 'Trace Center' } },
         {

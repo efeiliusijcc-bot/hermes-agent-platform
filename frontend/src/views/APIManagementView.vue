@@ -4,6 +4,7 @@ import { NDatePicker, NForm, NFormItem, NIcon, NInputNumber, NModal, useMessage 
 import { Api, GitBranch, Key, Plus, Trash, Users, Link, Ban } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
+import AdminGuideLink from '@/components/AdminGuideLink.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
 import { formatDate } from '@/utils/format'
@@ -344,7 +345,9 @@ onMounted(load)
 
 <template>
   <div>
-    <PageHeader title="API 管理" description="管理生产 API Client、一次性 Key、Agent 授权，以及 API Version 与不可变 Schema 契约的绑定。" />
+    <PageHeader title="API 管理" description="管理生产 API Client、一次性 Key、Agent 授权，以及 API Version 与不可变 Schema 契约的绑定。">
+      <template #actions><AdminGuideLink section="api" /></template>
+    </PageHeader>
     <NAlert v-if="secret" type="warning" :bordered="false" style="margin-bottom: 16px" closable @close="secret = null">
       API Key 明文仅在创建时显示一次。请立即保存，关闭后无法再次查看：<span class="mono secret-value">{{ secret }}</span>
     </NAlert>

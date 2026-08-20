@@ -20,6 +20,7 @@ import {
   Messages,
   Server,
   BoxModel,
+  Book2,
   Plus,
   Settings,
 } from '@vicons/tabler'
@@ -66,6 +67,7 @@ const menuOptions: MenuOption[] = [
     { label: renderLink('API Center', 'apis'), key: 'apis', icon: renderIcon(Api) },
     { label: renderLink('Operations', 'operations'), key: 'operations', icon: renderIcon(ChartBar) },
     { label: renderLink('Settings', 'settings'), key: 'settings', icon: renderIcon(Settings) },
+    { label: renderLink('使用手册', 'platform-admin-guide'), key: 'platform-admin-guide', icon: renderIcon(Book2) },
   ] },
 ]
 

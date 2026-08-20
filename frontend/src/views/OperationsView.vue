@@ -4,6 +4,7 @@ import { NIcon } from 'naive-ui'
 import { Activity, ChartBar, Coin, Heartbeat, PlugConnected, Robot, Server } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
+import AdminGuideLink from '@/components/AdminGuideLink.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
@@ -76,7 +77,7 @@ onMounted(load)
 <template>
   <div>
     <PageHeader title="Operations" description="查看生产调用指标、Agent 运行表现和控制面组件健康状态。">
-      <template #actions><NButton secondary :loading="loading" @click="load">重新检查</NButton></template>
+      <template #actions><AdminGuideLink section="operations" /><NButton secondary :loading="loading" @click="load">重新检查</NButton></template>
     </PageHeader>
     <div v-if="error" class="error-panel" style="margin-bottom: 16px">{{ error }}</div>
 

@@ -4,6 +4,7 @@ import { NIcon } from 'naive-ui'
 import { Adjustments, Archive, Database, Settings } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
+import AdminGuideLink from '@/components/AdminGuideLink.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { useSystemStore } from '@/stores/system'
 
@@ -14,7 +15,7 @@ onMounted(() => systemStore.fetchHealth().catch(() => undefined))
 <template>
   <div>
     <PageHeader title="平台设置" description="展示平台运行边界；模型地址、模型名称和密钥统一在模型管理页面维护。">
-      <template #actions><NButton secondary :loading="systemStore.loading" @click="systemStore.fetchHealth">刷新状态</NButton></template>
+      <template #actions><AdminGuideLink section="settings" /><NButton secondary :loading="systemStore.loading" @click="systemStore.fetchHealth">刷新状态</NButton></template>
     </PageHeader>
     <div v-if="systemStore.error" class="error-panel" style="margin-bottom: 16px">{{ systemStore.error }}</div>
     <div class="settings-grid">

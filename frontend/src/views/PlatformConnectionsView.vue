@@ -4,6 +4,7 @@ import { NForm, NFormItem, NIcon, NModal, useMessage } from 'naive-ui'
 import { Key, PlugConnected, Plus, Refresh, ShieldLock } from '@vicons/tabler'
 
 import PageHeader from '@/components/PageHeader.vue'
+import AdminGuideLink from '@/components/AdminGuideLink.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
@@ -177,6 +178,7 @@ onMounted(load)
   <div>
     <PageHeader title="连接与能力" description="统一管理真实接口、加密凭据和 Agent 可绑定的抽象能力。">
       <template #actions>
+        <AdminGuideLink section="connections" />
         <NButton secondary :loading="loading" @click="load"><template #icon><NIcon :component="Refresh" /></template>刷新</NButton>
         <NButton type="primary" @click="wizardOpen = true"><template #icon><NIcon :component="Plus" /></template>创建连接</NButton>
       </template>
