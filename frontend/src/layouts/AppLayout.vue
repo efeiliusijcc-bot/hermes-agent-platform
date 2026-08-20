@@ -100,19 +100,20 @@ onBeforeUnmount(() => {
       <div class="brand">
         <div class="brand-mark"><NIcon :component="Robot" size="22" /></div>
         <div v-show="!collapsed" class="brand-copy">
-          <strong>Hermes Platform</strong>
-          <span>Enterprise Agent Console</span>
+          <strong>Agent 管理平台</strong>
         </div>
       </div>
 
-      <NMenu
-        :value="activeMenuKey"
-        :options="menuOptions"
-        :collapsed="collapsed"
-        :collapsed-width="72"
-        :collapsed-icon-size="21"
-        @update:value="mobileOpen = false"
-      />
+      <nav class="sidebar-navigation" aria-label="平台主导航">
+        <NMenu
+          :value="activeMenuKey"
+          :options="menuOptions"
+          :collapsed="collapsed && !mobileOpen"
+          :collapsed-width="72"
+          :collapsed-icon-size="21"
+          @update:value="mobileOpen = false"
+        />
+      </nav>
 
       <div class="sidebar-footer">
         <div v-show="!collapsed" class="system-health" :class="{ offline: !systemStore.health }">
