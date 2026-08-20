@@ -279,7 +279,7 @@ services:
       - deepseek-runtime-internal
 
   hermes-orchestrator:
-    image: hermes-agent-platform/agent-api:phase7
+    image: hermes-agent-platform/agent-api:capability-v1
     restart: unless-stopped
     entrypoint: ["python", "-m", "app.orchestrator_worker"]
     depends_on:

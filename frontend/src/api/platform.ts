@@ -70,6 +70,9 @@ import type {
   DatabaseResourceRecord,
   DatabaseScopePayload,
   ConsoleAgentSummary,
+  TeamConversationList,
+  TeamConversationMessagePayload,
+  WorkflowRunList,
 } from '@/types/api'
 
 const consoleAgentCache = new Map<string, { expiresAt: number; value: ConsoleAgentSummary[] }>()
@@ -716,6 +719,41 @@ export const platformApi = {
   async listWorkflowRunTasks(runId: string): Promise<AgentTask[]> {
     const { data } = await apiClient.get<AgentTask[]>(
       `/api/workflow-runs/${encodeURIComponent(runId)}/tasks`,
+    )
+    return data
+  },
+
+  async listTeamConversations(
+    teamId: string,
+    params: { limit?: number; offset?: number } = {},
+  ): Promise<TeamConversationList> {
+    const { data } = await apiClient.get<TeamConversationList>(
+      `/api/agent-teams/${encodeURIComponent(teamId)}/conversations`,
+      { params },
+    )
+    return data
+  },
+
+  async listTeamConversationRuns(
+    teamId: string,
+    sessionId: string,
+    params: { limit?: number; offset?: number } = {},
+  ): Promise<WorkflowRunList> {
+    const { data } = await apiClient.get<WorkflowRunList>(
+      `/api/agent-teams/${encodeURIComponent(teamId)}/conversations/${encodeURIComponent(sessionId)}/runs`,
+      { params },
+    )
+    return data
+  },
+
+  async sendTeamConversationMessage(
+    teamId: string,
+    sessionId: string,
+    payload: TeamConversationMessagePayload,
+  ): Promise<WorkflowRun> {
+    const { data } = await apiClient.post<WorkflowRun>(
+      `/api/agent-teams/${encodeURIComponent(teamId)}/conversations/${encodeURIComponent(sessionId)}/messages`,
+      payload,
     )
     return data
   },

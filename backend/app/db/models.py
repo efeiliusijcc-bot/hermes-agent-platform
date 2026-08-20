@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, String, Table, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer, String, Table, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -234,6 +234,21 @@ class WorkflowRun(Base):
             "status IN ('pending', 'running', 'human_review', 'succeeded', 'failed', 'cancelled')",
             name="ck_workflow_runs_status",
         ),
+        Index(
+            "ix_workflow_runs_team_session_created",
+            "team_id",
+            "session_id",
+            "created_at",
+        ),
+        Index(
+            "uq_workflow_runs_active_team_session",
+            "team_id",
+            "session_id",
+            unique=True,
+            postgresql_where=text(
+                "session_id IS NOT NULL AND status IN ('pending', 'running', 'human_review')"
+            ),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -243,6 +258,7 @@ class WorkflowRun(Base):
     team_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("agent_teams.id", ondelete="RESTRICT"), nullable=False
     )
+    session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     input: Mapped[str] = mapped_column(Text, nullable=False)
     output: Mapped[str | None] = mapped_column(Text)

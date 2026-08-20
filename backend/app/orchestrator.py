@@ -25,13 +25,13 @@ class OrchestratorError(RuntimeError):
 
 def _orchestration_memory_session_id(
     client_session_id: str,
-    run_id: UUID,
+    team_id: UUID,
     node_key: str,
 ) -> str:
-    """Build a stable runtime-safe memory namespace for one orchestration node."""
+    """Build a stable Team-conversation memory namespace for one orchestration node."""
 
-    digest = sha256(f"{client_session_id}:{run_id}:{node_key}".encode("utf-8")).hexdigest()
-    return f"ma-{run_id.hex}-{digest[:24]}"
+    digest = sha256(f"{team_id}:{client_session_id}:{node_key}".encode("utf-8")).hexdigest()
+    return f"ma-{team_id.hex[:16]}-{digest[:40]}"
 
 
 def _manager_execution_input(
@@ -60,7 +60,11 @@ class AgentOrchestrator:
         payload: MultiAgentRunRequest,
     ) -> WorkflowRun:
         run = await multi_repository.create_run(
-            session, team_id=team.id, workflow_id=None, input_text=payload.input
+            session,
+            team_id=team.id,
+            workflow_id=None,
+            session_id=payload.session_id,
+            input_text=payload.input,
         )
         root = await self._create_task(
             session,
@@ -124,7 +128,11 @@ class AgentOrchestrator:
                 )
             resolved_agents[node.key] = agent
         run = await multi_repository.create_run(
-            session, team_id=team.id, workflow_id=workflow.id, input_text=payload.input
+            session,
+            team_id=team.id,
+            workflow_id=workflow.id,
+            session_id=payload.session_id,
+            input_text=payload.input,
         )
         root = await self._create_task(
             session,
@@ -291,7 +299,7 @@ class AgentOrchestrator:
             input_text=task_input,
             memory_session_id=_orchestration_memory_session_id(
                 payload.session_id,
-                run.id,
+                run.team_id,
                 node_key,
             ),
             user_id=payload.user_id,
@@ -303,6 +311,7 @@ class AgentOrchestrator:
                 "task": task_input,
                 "parameters": payload.parameters,
                 "orchestration_run_id": str(run.id),
+                "team_conversation_session_id": payload.session_id,
                 "node_key": node_key,
                 "node_type": node_type,
             },

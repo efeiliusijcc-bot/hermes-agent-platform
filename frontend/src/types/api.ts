@@ -493,6 +493,7 @@ export interface WorkflowRun {
   id: string
   workflow_id: string | null
   team_id: string
+  session_id: string | null
   status: WorkflowRunStatus
   input: string
   output: string | null
@@ -500,6 +501,41 @@ export interface WorkflowRun {
   created_at: string
   started_at: string | null
   finished_at: string | null
+}
+
+export interface TeamConversationSummary {
+  team_id: string
+  session_id: string
+  workflow_id: string | null
+  workflow_name: string | null
+  title: string
+  latest_run_id: string
+  latest_status: WorkflowRunStatus
+  run_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface TeamConversationList {
+  items: TeamConversationSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface WorkflowRunList {
+  items: WorkflowRun[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface TeamConversationMessagePayload {
+  input: string
+  workflow_id: string | null
+  priority: number
+  user_id?: string | null
+  parameters?: Record<string, unknown>
 }
 
 export interface MultiAgentRunPayload {

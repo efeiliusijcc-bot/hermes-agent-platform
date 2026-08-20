@@ -47,6 +47,7 @@ def test_multi_agent_models_configure_and_expose_required_columns() -> None:
     assert AgentTeam.__tablename__ == "agent_teams"
     assert Workflow.__tablename__ == "workflows"
     assert WorkflowRun.__tablename__ == "workflow_runs"
+    assert "session_id" in WorkflowRun.__table__.columns
     assert "delete" not in Workflow.runs.property.cascade
     assert Workflow.runs.property.passive_deletes is True
 
@@ -137,18 +138,21 @@ def test_manager_aggregation_prompt_preserves_agent_provenance() -> None:
 
 
 def test_orchestration_memory_session_ids_are_runtime_safe_and_node_isolated() -> None:
-    run_id = uuid4()
+    team_id = uuid4()
 
-    first = _orchestration_memory_session_id("console:session", run_id, "worker/材料分析")
-    second = _orchestration_memory_session_id("console:session", run_id, "manager")
+    first = _orchestration_memory_session_id("console.session", team_id, "worker-material")
+    repeated = _orchestration_memory_session_id("console.session", team_id, "worker-material")
+    second = _orchestration_memory_session_id("console.session", team_id, "manager")
+    new_chat = _orchestration_memory_session_id("console.new", team_id, "worker-material")
 
     assert len(first) <= 128
-    assert first.startswith(f"ma-{run_id.hex}-")
+    assert first.startswith(f"ma-{team_id.hex[:16]}-")
     assert all(
         character.isascii() and (character.isalnum() or character in "._-")
         for character in first
     )
-    assert first != second
+    assert first == repeated
+    assert len({first, second, new_chat}) == 3
 
 
 def test_manager_handoff_preserves_run_parameters_and_runtime_options() -> None:
@@ -177,6 +181,9 @@ def test_multi_agent_control_plane_routes_are_registered() -> None:
     assert "/api/agent-teams" in paths
     assert "/api/workflows" in paths
     assert "/api/workflows/{workflow_id}/runs" in paths
+    assert "/api/agent-teams/{team_id}/conversations" in paths
+    assert "/api/agent-teams/{team_id}/conversations/{session_id}/runs" in paths
+    assert "/api/agent-teams/{team_id}/conversations/{session_id}/messages" in paths
     assert "/api/workflow-runs/{run_id}/tasks" in paths
     assert "/api/tasks/{task_id}/approval" in paths
     assert "/api/agent-messages" in paths

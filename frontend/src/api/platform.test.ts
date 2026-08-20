@@ -149,6 +149,11 @@ describe('platformApi contract', () => {
     await platformApi.runWorkflow('workflow a', { input: '分析行业', session_id: 'multi-1', priority: 8 })
     await platformApi.listWorkflowRunTasks('run a')
     await platformApi.reviewHumanTask('task a', true, '通过')
+    await platformApi.listTeamConversations('team a', { limit: 10 })
+    await platformApi.listTeamConversationRuns('team a', 'session a', { limit: 20 })
+    await platformApi.sendTeamConversationMessage('team a', 'session a', {
+      input: '继续分析', workflow_id: null, priority: 5, parameters: {},
+    })
 
     expect(get).toHaveBeenNthCalledWith(1, '/api/agent-teams')
     expect(put).toHaveBeenCalledWith('/api/agent-teams/team%20a/members/agent%20a', { role: '分析', priority: 70 })
@@ -158,6 +163,11 @@ describe('platformApi contract', () => {
     })
     expect(get).toHaveBeenNthCalledWith(3, '/api/workflow-runs/run%20a/tasks')
     expect(post).toHaveBeenNthCalledWith(2, '/api/tasks/task%20a/approval', { approved: true, note: '通过' })
+    expect(get).toHaveBeenNthCalledWith(4, '/api/agent-teams/team%20a/conversations', { params: { limit: 10 } })
+    expect(get).toHaveBeenNthCalledWith(5, '/api/agent-teams/team%20a/conversations/session%20a/runs', { params: { limit: 20 } })
+    expect(post).toHaveBeenNthCalledWith(3, '/api/agent-teams/team%20a/conversations/session%20a/messages', {
+      input: '继续分析', workflow_id: null, priority: 5, parameters: {},
+    })
   })
 
   it('uses execution history, independent trace detail and retry endpoints', async () => {

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,9 @@ from app.schemas.multi_agent import (
     AgentMessageRead,
     HumanApprovalRequest,
     MultiAgentRunRequest,
+    TeamConversationList,
+    TeamConversationMessageRequest,
+    TeamConversationRead,
     TeamCreate,
     TeamMemberRead,
     TeamMemberUpsert,
@@ -31,6 +34,7 @@ from app.schemas.multi_agent import (
     WorkflowCreate,
     WorkflowRead,
     WorkflowRunRead,
+    WorkflowRunList,
     WorkflowUpdate,
 )
 from app.schemas.orchestration import TaskRead
@@ -262,6 +266,12 @@ async def run_team(
         run = await AgentOrchestrator(queue, bus).submit_team_run(
             session, team=team, payload=payload
         )
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent Team conversation already has an active Run",
+        ) from exc
     except (TaskQueueError, OrchestratorError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return WorkflowRunRead.model_validate(run)
@@ -289,6 +299,160 @@ async def run_workflow(
         run = await AgentOrchestrator(queue, bus).submit_workflow_run(
             session, team=team, workflow=workflow, payload=payload
         )
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent Team conversation already has an active Run",
+        ) from exc
+    except (TaskQueueError, OrchestratorError) as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return WorkflowRunRead.model_validate(run)
+
+
+@router.get(
+    "/api/agent-teams/{team_id}/conversations",
+    response_model=TeamConversationList,
+)
+async def list_team_conversations(
+    team_id: UUID,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> TeamConversationList:
+    if await repository.get_team(session, team_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent Team not found")
+    items, total = await repository.list_conversations(
+        session,
+        team_id=team_id,
+        limit=limit,
+        offset=offset,
+    )
+    return TeamConversationList(
+        items=[
+            TeamConversationRead(
+                team_id=item.team_id,
+                session_id=item.session_id,
+                workflow_id=item.workflow_id,
+                workflow_name=item.workflow_name,
+                title=item.title,
+                latest_run_id=item.latest_run_id,
+                latest_status=item.latest_status,
+                run_count=item.run_count,
+                created_at=item.created_at,
+                updated_at=item.updated_at,
+            )
+            for item in items
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/api/agent-teams/{team_id}/conversations/{session_id}/runs",
+    response_model=WorkflowRunList,
+)
+async def list_team_conversation_runs(
+    team_id: UUID,
+    session_id: str = Path(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> WorkflowRunList:
+    if await repository.get_team(session, team_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent Team not found")
+    items, total = await repository.list_conversation_runs(
+        session,
+        team_id=team_id,
+        session_id=session_id,
+        limit=limit,
+        offset=offset,
+    )
+    return WorkflowRunList(
+        items=[WorkflowRunRead.model_validate(item) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/api/agent-teams/{team_id}/conversations/{session_id}/messages",
+    response_model=WorkflowRunRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def send_team_conversation_message(
+    team_id: UUID,
+    payload: TeamConversationMessageRequest,
+    session_id: str = Path(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"),
+    session: AsyncSession = Depends(get_session),
+    queue: TaskQueue = Depends(get_task_queue),
+    bus: AgentMessageBus = Depends(get_agent_message_bus),
+) -> WorkflowRunRead:
+    team = await _active_team(session, team_id)
+    exists, locked_workflow_id = await repository.conversation_mode(
+        session,
+        team_id=team_id,
+        session_id=session_id,
+    )
+    if exists and locked_workflow_id != payload.workflow_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent Team conversation execution mode is locked",
+        )
+    if await repository.list_runs(
+        session,
+        team_id=team_id,
+        session_id=session_id,
+        active_only=True,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent Team conversation already has an active Run",
+        )
+
+    workflow = None
+    if payload.workflow_id is not None:
+        workflow = await repository.get_workflow(session, payload.workflow_id)
+        if workflow is None or workflow.team_id != team_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Workflow does not belong to the selected Agent Team",
+            )
+        if workflow.status != "active":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Workflow is not active")
+
+    run_payload = MultiAgentRunRequest(
+        input=payload.input,
+        session_id=session_id,
+        user_id=payload.user_id,
+        priority=payload.priority,
+        parameters=payload.parameters,
+    )
+    orchestrator = AgentOrchestrator(queue, bus)
+    try:
+        run = (
+            await orchestrator.submit_workflow_run(
+                session,
+                team=team,
+                workflow=workflow,
+                payload=run_payload,
+            )
+            if workflow is not None
+            else await orchestrator.submit_team_run(
+                session,
+                team=team,
+                payload=run_payload,
+            )
+        )
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent Team conversation already has an active Run",
+        ) from exc
     except (TaskQueueError, OrchestratorError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return WorkflowRunRead.model_validate(run)

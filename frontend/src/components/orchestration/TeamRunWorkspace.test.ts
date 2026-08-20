@@ -15,6 +15,7 @@ const run: WorkflowRun = {
   id: 'run-1',
   workflow_id: null,
   team_id: 'team-1',
+  session_id: 'legacy-run-1',
   status: 'succeeded',
   input: '请根据授权材料生成编报',
   output: JSON.stringify({

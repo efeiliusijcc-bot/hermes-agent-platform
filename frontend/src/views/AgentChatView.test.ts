@@ -144,6 +144,29 @@ describe('AgentChatView', () => {
     warning.mockReset()
   })
 
+  it('defaults to single Agent mode and switches to the independent Team workspace', async () => {
+    await router.push('/chat')
+    const wrapper = mount(AgentChatView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          SingleAgentChatWorkspace: { template: '<div>单 Agent 工作区</div>' },
+          TeamAgentChatWorkspace: { template: '<div>Agent Team 工作区</div>' },
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('单 Agent 工作区')
+    expect(router.currentRoute.value.query.mode).toBeUndefined()
+
+    await wrapper.findAll('.chat-mode-switch button').find((button) => button.text().includes('Agent Team'))!.trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query.mode).toBe('team')
+    expect(wrapper.text()).toContain('Agent Team 工作区')
+    wrapper.unmount()
+  })
+
   it('loads every Agent and groups multiple internal runs into one memory conversation', async () => {
     const second = summary({ id: 'execution-2', session_id: 'internal-2', task: '第二轮问题', started_at: '2026-08-20T02:00:00Z' })
     vi.spyOn(platformApi, 'listAgents').mockResolvedValue([agent(), agent({ id: 'agent-b', name: '写作 Agent', runtime_type: 'pi' })])

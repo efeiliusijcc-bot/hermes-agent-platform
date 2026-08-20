@@ -117,12 +117,21 @@ class MultiAgentRunRequest(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
+class TeamConversationMessageRequest(BaseModel):
+    input: str = Field(min_length=1, max_length=100_000)
+    workflow_id: UUID | None = None
+    user_id: str | None = Field(default=None, min_length=1, max_length=128)
+    priority: int = Field(default=5, ge=0, le=9)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
 class WorkflowRunRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     workflow_id: UUID | None
     team_id: UUID
+    session_id: str | None
     status: WorkflowRunStatus
     input: str
     output: str | None
@@ -130,6 +139,33 @@ class WorkflowRunRead(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+
+
+class WorkflowRunList(BaseModel):
+    items: list[WorkflowRunRead]
+    total: int
+    limit: int
+    offset: int
+
+
+class TeamConversationRead(BaseModel):
+    team_id: UUID
+    session_id: str
+    workflow_id: UUID | None
+    workflow_name: str | None
+    title: str
+    latest_run_id: UUID
+    latest_status: WorkflowRunStatus
+    run_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class TeamConversationList(BaseModel):
+    items: list[TeamConversationRead]
+    total: int
+    limit: int
+    offset: int
 
 
 class HumanApprovalRequest(BaseModel):

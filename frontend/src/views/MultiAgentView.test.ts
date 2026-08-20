@@ -34,6 +34,7 @@ function run(teamId: string, suffix = teamId, createdAt = '2026-08-18T01:00:00Z'
     id: `run-${suffix}`,
     workflow_id: null,
     team_id: teamId,
+    session_id: `legacy-run-${suffix}`,
     status: 'succeeded',
     input: `${teamId} 任务`,
     output: 'ok',

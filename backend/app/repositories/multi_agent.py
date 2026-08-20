@@ -1,13 +1,29 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import AgentTeam, TeamMember, Workflow, WorkflowRun
 from app.schemas.multi_agent import TeamCreate, TeamUpdate, WorkflowCreate, WorkflowUpdate
+
+
+@dataclass(frozen=True)
+class TeamConversationSummary:
+    team_id: UUID
+    session_id: str
+    workflow_id: UUID | None
+    workflow_name: str | None
+    title: str
+    latest_run_id: UUID
+    latest_status: str
+    run_count: int
+    created_at: datetime
+    updated_at: datetime
 
 
 async def create_team(session: AsyncSession, payload: TeamCreate) -> AgentTeam:
@@ -155,11 +171,17 @@ async def delete_workflow(session: AsyncSession, workflow: Workflow) -> None:
 
 
 async def create_run(
-    session: AsyncSession, *, team_id: UUID, workflow_id: UUID | None, input_text: str
+    session: AsyncSession,
+    *,
+    team_id: UUID,
+    workflow_id: UUID | None,
+    session_id: str,
+    input_text: str,
 ) -> WorkflowRun:
     run = WorkflowRun(
         team_id=team_id,
         workflow_id=workflow_id,
+        session_id=session_id,
         input=input_text,
         status="pending",
     )
@@ -178,6 +200,7 @@ async def list_runs(
     *,
     team_id: UUID | None = None,
     workflow_id: UUID | None = None,
+    session_id: str | None = None,
     active_only: bool = False,
 ) -> list[WorkflowRun]:
     statement = select(WorkflowRun)
@@ -185,9 +208,132 @@ async def list_runs(
         statement = statement.where(WorkflowRun.team_id == team_id)
     if workflow_id is not None:
         statement = statement.where(WorkflowRun.workflow_id == workflow_id)
+    if session_id is not None:
+        statement = statement.where(WorkflowRun.session_id == session_id)
     if active_only:
         statement = statement.where(
             WorkflowRun.status.in_(["pending", "running", "human_review"])
         )
     values = await session.scalars(statement.order_by(WorkflowRun.created_at.desc()))
     return list(values)
+
+
+async def conversation_mode(
+    session: AsyncSession, *, team_id: UUID, session_id: str
+) -> tuple[bool, UUID | None]:
+    statement = (
+        select(WorkflowRun.workflow_id)
+        .where(
+            WorkflowRun.team_id == team_id,
+            WorkflowRun.session_id == session_id,
+        )
+        .order_by(WorkflowRun.created_at.asc())
+        .limit(1)
+    )
+    row = (await session.execute(statement)).first()
+    return (row is not None, row[0] if row is not None else None)
+
+
+async def list_conversation_runs(
+    session: AsyncSession,
+    *,
+    team_id: UUID,
+    session_id: str,
+    limit: int,
+    offset: int,
+) -> tuple[list[WorkflowRun], int]:
+    filters = (
+        WorkflowRun.team_id == team_id,
+        WorkflowRun.session_id == session_id,
+    )
+    total = int(await session.scalar(select(func.count(WorkflowRun.id)).where(*filters)) or 0)
+    values = await session.scalars(
+        select(WorkflowRun)
+        .where(*filters)
+        .order_by(WorkflowRun.created_at.asc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(values), total
+
+
+async def list_conversations(
+    session: AsyncSession,
+    *,
+    team_id: UUID,
+    limit: int,
+    offset: int,
+) -> tuple[list[TeamConversationSummary], int]:
+    grouped = (
+        select(
+            WorkflowRun.session_id.label("session_id"),
+            func.count(WorkflowRun.id).label("run_count"),
+            func.min(WorkflowRun.created_at).label("created_at"),
+            func.max(WorkflowRun.created_at).label("updated_at"),
+        )
+        .where(
+            WorkflowRun.team_id == team_id,
+            WorkflowRun.session_id.is_not(None),
+        )
+        .group_by(WorkflowRun.session_id)
+        .subquery()
+    )
+    total = int(await session.scalar(select(func.count()).select_from(grouped)) or 0)
+    group_rows = list(
+        (
+            await session.execute(
+                select(grouped)
+                .order_by(grouped.c.updated_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        ).all()
+    )
+    session_ids = [str(row.session_id) for row in group_rows]
+    if not session_ids:
+        return [], total
+    runs = list(
+        await session.scalars(
+            select(WorkflowRun)
+            .where(
+                WorkflowRun.team_id == team_id,
+                WorkflowRun.session_id.in_(session_ids),
+            )
+            .order_by(WorkflowRun.created_at.asc())
+        )
+    )
+    workflows = {
+        item.id: item.name
+        for item in await session.scalars(
+            select(Workflow).where(
+                Workflow.id.in_({run.workflow_id for run in runs if run.workflow_id})
+            )
+        )
+    }
+    runs_by_session: dict[str, list[WorkflowRun]] = {}
+    for run in runs:
+        if run.session_id:
+            runs_by_session.setdefault(run.session_id, []).append(run)
+    groups_by_session = {str(row.session_id): row for row in group_rows}
+    summaries: list[TeamConversationSummary] = []
+    for session_key in session_ids:
+        items = runs_by_session.get(session_key, [])
+        if not items:
+            continue
+        first, latest = items[0], items[-1]
+        group = groups_by_session[session_key]
+        summaries.append(
+            TeamConversationSummary(
+                team_id=team_id,
+                session_id=session_key,
+                workflow_id=first.workflow_id,
+                workflow_name=workflows.get(first.workflow_id),
+                title=first.input,
+                latest_run_id=latest.id,
+                latest_status=latest.status,
+                run_count=int(group.run_count),
+                created_at=group.created_at,
+                updated_at=group.updated_at,
+            )
+        )
+    return summaries, total
