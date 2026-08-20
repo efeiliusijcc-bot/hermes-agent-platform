@@ -53,7 +53,12 @@ const router = createRouter({
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
-  scrollBehavior: () => ({ top: 0 }),
+  scrollBehavior: (to, from) => {
+    // The administration guide owns its in-page chapter positioning. Returning
+    // a top position here would race its section query watcher and undo a click.
+    if (to.name === 'platform-admin-guide' && from.name === 'platform-admin-guide') return false
+    return { top: 0 }
+  },
 })
 
 router.afterEach((to) => {

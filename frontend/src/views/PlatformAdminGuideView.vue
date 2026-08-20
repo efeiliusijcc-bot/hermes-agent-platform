@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Book2, Download, Menu2, Search } from '@vicons/tabler'
 import { NDrawer, NDrawerContent, NIcon, NInput } from 'naive-ui'
@@ -17,6 +17,8 @@ const router = useRouter()
 const query = ref('')
 const mobileTocOpen = ref(false)
 const validSections = new Set(platformAdminGuide.sections.map((section) => section.id))
+let scrollRequest = 0
+let nextScrollBehavior: ScrollBehavior = 'auto'
 
 const normalizedQuery = computed(() => query.value.trim().toLocaleLowerCase('zh-CN'))
 const visibleSections = computed(() => {
@@ -29,11 +31,34 @@ function selectedSection(): GuideSectionId | null {
   return validSections.has(value as GuideSectionId) ? value as GuideSectionId : null
 }
 
-async function scrollToSection(section: GuideSectionId, updateRoute = true) {
-  if (updateRoute) await router.replace({ name: 'platform-admin-guide', query: { ...route.query, section } })
+function afterBrowserLayout() {
+  return new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+}
+
+async function positionSection(section: GuideSectionId, behavior: ScrollBehavior) {
+  const request = ++scrollRequest
   await nextTick()
-  document.getElementById(`guide-${section}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // Vue Router restores the page scroll position after a navigation. Wait until
+  // that work and the responsive layout have both settled before positioning.
+  await afterBrowserLayout()
+  await afterBrowserLayout()
+  if (request !== scrollRequest) return
+
+  const target = document.getElementById(`guide-${section}`)
+  if (!target) return
+  const top = Math.max(0, window.scrollY + target.getBoundingClientRect().top - 78)
+  window.scrollTo({ top, behavior })
+}
+
+async function scrollToSection(section: GuideSectionId) {
   mobileTocOpen.value = false
+  if (selectedSection() === section) {
+    await positionSection(section, 'auto')
+    return
+  }
+
+  nextScrollBehavior = 'auto'
+  await router.replace({ name: 'platform-admin-guide', query: { ...route.query, section } })
 }
 
 function downloadMarkdown() {
@@ -48,13 +73,11 @@ function downloadMarkdown() {
 
 watch(() => route.query.section, () => {
   const section = selectedSection()
-  if (section) void scrollToSection(section, false)
-})
-
-onMounted(() => {
-  const section = selectedSection()
-  if (section) void scrollToSection(section, false)
-})
+  if (!section) return
+  const behavior = nextScrollBehavior
+  nextScrollBehavior = 'auto'
+  void positionSection(section, behavior)
+}, { immediate: true, flush: 'post' })
 </script>
 
 <template>
