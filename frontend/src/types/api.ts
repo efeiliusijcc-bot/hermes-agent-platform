@@ -790,6 +790,7 @@ export interface ExecutionDetail extends ExecutionSummary {
 export interface TraceMetrics {
   total_nodes: number
   failed_nodes: number
+  history_messages_loaded: number
   skill_nodes: number
   mcp_calls: number
   model_calls: number

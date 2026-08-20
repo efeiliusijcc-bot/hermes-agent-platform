@@ -143,7 +143,11 @@ def test_trace_contract_uses_persisted_nodes_artifacts_and_missing_token_fields(
         session_id=session_id,
         session=SimpleNamespace(memory_session_id="trace-review"),
         status="failed",
-        details={"model": "qwen-offline", "model_adapter": "openai_compatible"},
+        details={
+            "model": "qwen-offline",
+            "model_adapter": "openai_compatible",
+            "memory_scope": {"history_messages_loaded": 2},
+        },
         token_usage=None,
         duration_ms=500,
         error="connection refused",
@@ -158,6 +162,7 @@ def test_trace_contract_uses_persisted_nodes_artifacts_and_missing_token_fields(
     assert trace.execution_id == execution_id
     assert trace.metrics.total_nodes == 2
     assert trace.metrics.failed_nodes == 1
+    assert trace.metrics.history_messages_loaded == 2
     assert trace.metrics.mcp_calls == 1
     assert trace.metrics.model_calls == 1
     assert trace.metrics.slowest_node_ms == 321

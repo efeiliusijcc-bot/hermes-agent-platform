@@ -100,6 +100,7 @@ class ExecutionDetail(ExecutionSummary):
 class TraceMetrics(BaseModel):
     total_nodes: int
     failed_nodes: int
+    history_messages_loaded: int
     skill_nodes: int
     mcp_calls: int
     model_calls: int

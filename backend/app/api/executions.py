@@ -299,6 +299,7 @@ def _summary(execution: ExecutionLog) -> ExecutionSummary:
 
 def _trace(execution: ExecutionLog) -> ExecutionTraceRead:
     details = execution.details if isinstance(execution.details, dict) else {}
+    memory_scope = details.get("memory_scope")
     steps = list(execution.steps)
     latencies = [int(step.latency_ms) for step in steps if step.latency_ms is not None]
     artifacts = [ArtifactRead.model_validate(item) for item in execution.artifacts]
@@ -330,6 +331,11 @@ def _trace(execution: ExecutionLog) -> ExecutionTraceRead:
         metrics=TraceMetrics(
             total_nodes=len(steps),
             failed_nodes=sum(1 for step in steps if step.status == "failed"),
+            history_messages_loaded=(
+                int(memory_scope.get("history_messages_loaded") or 0)
+                if isinstance(memory_scope, dict)
+                else 0
+            ),
             skill_nodes=sum(1 for step in steps if step.step_type == "skill"),
             mcp_calls=sum(1 for step in steps if _is_mcp_call(step)),
             model_calls=sum(1 for step in steps if _is_model_call(step)),

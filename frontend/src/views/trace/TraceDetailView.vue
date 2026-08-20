@@ -82,6 +82,7 @@ onBeforeUnmount(() => {
       <section class="execution-metric-grid trace-detail-metrics" aria-label="Trace 指标">
         <ExecutionMetricCard label="Nodes" :value="trace.metrics.total_nodes" note="结构化执行节点" />
         <ExecutionMetricCard label="Failed Nodes" :value="trace.metrics.failed_nodes" tone="danger" note="用于定位失败阶段" />
+        <ExecutionMetricCard label="History Messages" :value="trace.metrics.history_messages_loaded" tone="active" note="本次执行加载的历史消息" />
         <ExecutionMetricCard label="MCP / Model" :value="`${trace.metrics.mcp_calls} / ${trace.metrics.model_calls}`" tone="active" note="真实调用节点" />
         <ExecutionMetricCard label="Slowest Node" :value="formatDurationMs(trace.metrics.slowest_node_ms)" note="节点记录中的最大延迟" />
       </section>
