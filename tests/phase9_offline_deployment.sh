@@ -90,11 +90,6 @@ VERIFY_COMPOSE="docker compose -p $VERIFY_PROJECT -f $VERIFY_ROOT/docker-compose
 VERIFY_API="http://127.0.0.1:$VERIFY_PORT"
 VERIFY_FRONTEND="http://127.0.0.1:$VERIFY_FRONTEND_PORT"
 
-management_curl() {
-  printf 'header = "X-Platform-Management-Key: %s"\n' "$PLATFORM_MANAGEMENT_API_KEY" |
-    curl --config - "$@"
-}
-
 AGENT_API_TEST_HOST=127.0.0.1 \
 AGENT_API_PORT=$VERIFY_PORT \
 HERMES_COMPOSE_PROJECT_NAME=$VERIFY_PROJECT \
@@ -128,9 +123,9 @@ curl -fsS "$VERIFY_API/health" | python3 -c 'import json,sys; value=json.load(sy
 test "$(curl -fsS "$VERIFY_FRONTEND/frontend-health")" = "ok"
 curl -fsS "$VERIFY_FRONTEND/health" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert all(value.get(key)=="ok" for key in ("status","database","memory","knowledge")), value'
 curl -fsS "$VERIFY_FRONTEND/api/agents" | python3 -c 'import json,sys; assert isinstance(json.load(sys.stdin), list)'
-management_curl -fsS -X POST "$VERIFY_API/api/runtimes/$(curl -fsS "$VERIFY_API/api/runtimes" | python3 -c 'import json,sys; print(next(v["id"] for v in json.load(sys.stdin) if v["type"]=="pi"))')/health" |
+curl -fsS -X POST "$VERIFY_API/api/runtimes/$(curl -fsS "$VERIFY_API/api/runtimes" | python3 -c 'import json,sys; print(next(v["id"] for v in json.load(sys.stdin) if v["type"]=="pi"))')/health" |
   python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["status"]=="online" and value["version"]=="0.84.2", value'
-management_curl -fsS -X POST "$VERIFY_API/api/runtimes/$(curl -fsS "$VERIFY_API/api/runtimes" | python3 -c 'import json,sys; print(next(v["id"] for v in json.load(sys.stdin) if v["type"]=="deepseek"))')/health" |
+curl -fsS -X POST "$VERIFY_API/api/runtimes/$(curl -fsS "$VERIFY_API/api/runtimes" | python3 -c 'import json,sys; print(next(v["id"] for v in json.load(sys.stdin) if v["type"]=="deepseek"))')/health" |
   python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["status"]=="online" and value["version"]=="0.1.0-rc.6", value'
 curl -fsS "$VERIFY_FRONTEND/agents/knowledge-analyst" | grep -q '<div id="app"></div>'
 

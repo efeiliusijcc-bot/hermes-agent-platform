@@ -271,7 +271,7 @@ describe('platformApi contract', () => {
     })
   })
 
-  it('uses database connection BFF endpoints and keeps the management key in headers', async () => {
+  it('uses database connection BFF endpoints without a browser management key', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] })
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} })
     const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: {} })
@@ -291,39 +291,31 @@ describe('platformApi contract', () => {
 
     await platformApi.listDatabaseConnections()
     await platformApi.getDatabaseConnection('connection a')
-    await platformApi.testDatabaseConnection(endpoint, { username: 'reader', password: 'secret' }, 'manage-key')
-    await platformApi.updateDatabaseConnection('connection a', { endpoint }, 'manage-key')
-    await platformApi.discoverDatabaseConnection('connection a', 'manage-key')
+    await platformApi.testDatabaseConnection(endpoint, { username: 'reader', password: 'secret' })
+    await platformApi.updateDatabaseConnection('connection a', { endpoint })
+    await platformApi.discoverDatabaseConnection('connection a')
     await platformApi.listDatabaseResources('connection a')
-    await platformApi.createDatabaseScope('connection a', scope, 'manage-key')
-    await platformApi.replaceDatabaseCredential('connection a', { username: 'reader2', password: 'new-secret' }, 'manage-key')
-    await platformApi.updateDatabaseBindings('agent a', [{ scope_revision_id: 'scope-1', tool_prefix: 'business_db', operations: ['select'] }], 'manage-key')
-    await platformApi.disableDatabaseConnection('connection a', 'manage-key')
+    await platformApi.createDatabaseScope('connection a', scope)
+    await platformApi.replaceDatabaseCredential('connection a', { username: 'reader2', password: 'new-secret' })
+    await platformApi.updateDatabaseBindings('agent a', [{ scope_revision_id: 'scope-1', tool_prefix: 'business_db', operations: ['select'] }])
+    await platformApi.disableDatabaseConnection('connection a')
 
     expect(get).toHaveBeenNthCalledWith(1, '/api/console/platform/database-connections')
     expect(get).toHaveBeenNthCalledWith(2, '/api/console/platform/database-connections/connection%20a')
     expect(get).toHaveBeenNthCalledWith(3, '/api/console/platform/database-connections/connection%20a/resources')
     expect(post).toHaveBeenNthCalledWith(1, '/api/console/platform/database-connections/test', {
       endpoint, credential: { username: 'reader', password: 'secret' },
-    }, { headers: { 'X-Platform-Management-Key': 'manage-key' } })
-    expect(post).toHaveBeenNthCalledWith(2, '/api/console/platform/database-connections/connection%20a/discover', undefined, {
-      headers: { 'X-Platform-Management-Key': 'manage-key' },
     })
-    expect(post).toHaveBeenNthCalledWith(3, '/api/console/platform/database-connections/connection%20a/scopes', { scope }, {
-      headers: { 'X-Platform-Management-Key': 'manage-key' },
-    })
+    expect(post).toHaveBeenNthCalledWith(2, '/api/console/platform/database-connections/connection%20a/discover')
+    expect(post).toHaveBeenNthCalledWith(3, '/api/console/platform/database-connections/connection%20a/scopes', { scope })
     expect(post).toHaveBeenNthCalledWith(4, '/api/console/platform/database-connections/connection%20a/credentials/replace', {
       username: 'reader2', password: 'new-secret',
-    }, { headers: { 'X-Platform-Management-Key': 'manage-key' } })
-    expect(patch).toHaveBeenCalledWith('/api/console/platform/database-connections/connection%20a', { endpoint }, {
-      headers: { 'X-Platform-Management-Key': 'manage-key' },
     })
+    expect(patch).toHaveBeenCalledWith('/api/console/platform/database-connections/connection%20a', { endpoint })
     expect(put).toHaveBeenCalledWith('/api/console/agents/agent%20a/database-bindings', {
       bindings: [{ scope_revision_id: 'scope-1', tool_prefix: 'business_db', operations: ['select'] }],
-    }, { headers: { 'X-Platform-Management-Key': 'manage-key' } })
-    expect(remove).toHaveBeenCalledWith('/api/console/platform/database-connections/connection%20a', {
-      headers: { 'X-Platform-Management-Key': 'manage-key' },
     })
+    expect(remove).toHaveBeenCalledWith('/api/console/platform/database-connections/connection%20a')
   })
 
   it('parses fragmented SSE events without losing token boundaries', async () => {

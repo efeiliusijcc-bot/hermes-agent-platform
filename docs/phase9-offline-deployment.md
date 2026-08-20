@@ -17,7 +17,7 @@
 - PostgreSQL MCP 镜像、`0017` 迁移、数据库资源发现/Scope 管理前后端和隔离 E2E 种子数据；
 - 所有内部文件的 `SHA256SUMS` 与镜像清单。
 
-离线包不包含源节点的模型、数据库、Redis、MinIO、Runtime、签名或管理密钥。脚本仍以 `0600` 创建归档和校验文件，归档不加密，但不得上传到公开制品库或提交到 Git。
+离线包不包含源节点的模型、数据库、Redis、MinIO、Runtime 或签名密钥。脚本仍以 `0600` 创建归档和校验文件，归档不加密，但不得上传到公开制品库或提交到 Git。
 
 目标节点默认生成新的 `MODEL_REGISTRY_ENCRYPTION_KEY`，因此备份内已有模型 API Key 和 Connector Credential 密文不可在目标节点解密。恢复后必须在模型管理页面重新录入模型 API Key，并在数据库连接/Connector 页面轮换凭据。历史 Snapshot、Trace 和 Audit 保留，但旧密文不会回显。若必须保留既有密文，可通过受控的独立渠道在执行配置脚本时设置 `OFFLINE_MODEL_REGISTRY_ENCRYPTION_KEY`；该主密钥仍不得放进离线归档、命令日志或公开制品库。
 

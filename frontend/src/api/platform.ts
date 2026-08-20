@@ -87,11 +87,10 @@ export const platformApi = {
     return data
   },
 
-  async updateAgentEditorSection(agentId: string, section: string, payload: Record<string, unknown>, managementKey: string): Promise<AgentEditorModel> {
+  async updateAgentEditorSection(agentId: string, section: string, payload: Record<string, unknown>): Promise<AgentEditorModel> {
     const { data } = await apiClient.patch<AgentEditorModel>(
       `/api/console/agents/${encodeURIComponent(agentId)}/editor/${encodeURIComponent(section)}`,
       payload,
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
@@ -106,29 +105,25 @@ export const platformApi = {
     return data
   },
 
-  async testAgentDraft(agentId: string, payload: AgentRunPayload, managementKey: string): Promise<AgentRunResponse> {
+  async testAgentDraft(agentId: string, payload: AgentRunPayload): Promise<AgentRunResponse> {
     const { data } = await apiClient.post<AgentRunResponse>(
       `/api/console/agents/${encodeURIComponent(agentId)}/test`,
       payload,
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
 
-  async publishAgentDraft(agentId: string, managementKey: string): Promise<{ id: string; version: string; status: string; resolution_digest: string }> {
+  async publishAgentDraft(agentId: string): Promise<{ id: string; version: string; status: string; resolution_digest: string }> {
     const { data } = await apiClient.post(
       `/api/console/agents/${encodeURIComponent(agentId)}/publish`,
-      undefined,
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
 
-  async updateCapabilityBindings(agentId: string, bindings: CapabilityBindingWrite[], managementKey: string): Promise<unknown[]> {
+  async updateCapabilityBindings(agentId: string, bindings: CapabilityBindingWrite[]): Promise<unknown[]> {
     const { data } = await apiClient.put<unknown[]>(
       `/api/agents/${encodeURIComponent(agentId)}/draft/capability-bindings`,
       { bindings },
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
@@ -178,30 +173,25 @@ export const platformApi = {
   async testDatabaseConnection(
     endpoint: DatabaseEndpoint,
     credential: { username: string; password: string },
-    managementKey: string,
   ): Promise<DatabaseDiscovery> {
     const { data } = await apiClient.post<DatabaseDiscovery>(
       '/api/console/platform/database-connections/test',
       { endpoint, credential },
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
 
-  async createDatabaseConnection(payload: DatabaseConnectionPayload, managementKey: string): Promise<Record<string, unknown>> {
+  async createDatabaseConnection(payload: DatabaseConnectionPayload): Promise<Record<string, unknown>> {
     const { data } = await apiClient.post<Record<string, unknown>>(
       '/api/console/platform/database-connections',
       payload,
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
 
-  async testSavedDatabaseConnection(connectionId: string, managementKey: string): Promise<DatabaseDiscovery> {
+  async testSavedDatabaseConnection(connectionId: string): Promise<DatabaseDiscovery> {
     const { data } = await apiClient.post<DatabaseDiscovery>(
       `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}/test`,
-      undefined,
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
@@ -209,21 +199,17 @@ export const platformApi = {
   async updateDatabaseConnection(
     connectionId: string,
     payload: { name?: string; environment?: string; enabled?: boolean; endpoint?: DatabaseEndpoint },
-    managementKey: string,
   ): Promise<DatabaseConnectionDetail> {
     const { data } = await apiClient.patch<DatabaseConnectionDetail>(
       `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}`,
       payload,
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
 
-  async discoverDatabaseConnection(connectionId: string, managementKey: string): Promise<DatabaseDiscovery> {
+  async discoverDatabaseConnection(connectionId: string): Promise<DatabaseDiscovery> {
     const { data } = await apiClient.post<DatabaseDiscovery>(
       `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}/discover`,
-      undefined,
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
@@ -235,11 +221,10 @@ export const platformApi = {
     return data
   },
 
-  async createDatabaseScope(connectionId: string, scope: DatabaseScopePayload, managementKey: string): Promise<Record<string, unknown>> {
+  async createDatabaseScope(connectionId: string, scope: DatabaseScopePayload): Promise<Record<string, unknown>> {
     const { data } = await apiClient.post<Record<string, unknown>>(
       `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}/scopes`,
       { scope },
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
@@ -247,86 +232,79 @@ export const platformApi = {
   async replaceDatabaseCredential(
     connectionId: string,
     credential: { username: string; password: string },
-    managementKey: string,
   ): Promise<{ credential_configured: boolean; masked_username: string; password_updated_at: string }> {
     const { data } = await apiClient.post(
       `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}/credentials/replace`,
       credential,
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
 
-  async disableDatabaseConnection(connectionId: string, managementKey: string): Promise<void> {
-    await apiClient.delete(
-      `/api/console/platform/database-connections/${encodeURIComponent(connectionId)}`,
-      { headers: { 'X-Platform-Management-Key': managementKey } },
-    )
+  async disableDatabaseConnection(connectionId: string): Promise<void> {
+    await apiClient.delete(`/api/console/platform/database-connections/${encodeURIComponent(connectionId)}`)
   },
 
   async updateDatabaseBindings(
     agentId: string,
     bindings: Array<{ scope_revision_id: string; tool_prefix: string; operations: DatabaseOperation[] }>,
-    managementKey: string,
   ): Promise<Array<Record<string, unknown>>> {
     const { data } = await apiClient.put<Array<Record<string, unknown>>>(
       `/api/console/agents/${encodeURIComponent(agentId)}/database-bindings`,
       { bindings },
-      { headers: { 'X-Platform-Management-Key': managementKey } },
     )
     return data
   },
 
-  async createCredential(payload: { name: string; credential_type: string; secret: string; masked_label?: string }, managementKey: string): Promise<CredentialRecord> {
-    const { data } = await apiClient.post<CredentialRecord>('/api/credentials', payload, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async createCredential(payload: { name: string; credential_type: string; secret: string; masked_label?: string }): Promise<CredentialRecord> {
+    const { data } = await apiClient.post<CredentialRecord>('/api/credentials', payload)
     return data
   },
 
-  async createCapability(payload: { namespace: string; key: string; display_name: string; description?: string; risk_level: 'LOW' | 'MEDIUM' | 'HIGH' }, managementKey: string): Promise<CapabilityRecord> {
-    const { data } = await apiClient.post<CapabilityRecord>('/api/capabilities', payload, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async createCapability(payload: { namespace: string; key: string; display_name: string; description?: string; risk_level: 'LOW' | 'MEDIUM' | 'HIGH' }): Promise<CapabilityRecord> {
+    const { data } = await apiClient.post<CapabilityRecord>('/api/capabilities', payload)
     return data
   },
 
-  async createConnector(payload: { key: string; display_name: string; type: 'internal_rest' | 'mcp' | 'postgresql_mcp'; description?: string }, managementKey: string): Promise<{ id: string }> {
-    const { data } = await apiClient.post<{ id: string }>('/api/connectors', payload, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async createConnector(payload: { key: string; display_name: string; type: 'internal_rest' | 'mcp' | 'postgresql_mcp'; description?: string }): Promise<{ id: string }> {
+    const { data } = await apiClient.post<{ id: string }>('/api/connectors', payload)
     return data
   },
 
-  async createConnectorInstance(connectorId: string, payload: { name: string; environment: string }, managementKey: string): Promise<{ id: string }> {
-    const { data } = await apiClient.post<{ id: string }>(`/api/connectors/${encodeURIComponent(connectorId)}/instances`, payload, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async createConnectorInstance(connectorId: string, payload: { name: string; environment: string }): Promise<{ id: string }> {
+    const { data } = await apiClient.post<{ id: string }>(`/api/connectors/${encodeURIComponent(connectorId)}/instances`, payload)
     return data
   },
 
-  async createConnectorRevision(instanceId: string, payload: Record<string, unknown>, managementKey: string): Promise<{ id: string }> {
-    const { data } = await apiClient.post<{ id: string }>(`/api/connector-instances/${encodeURIComponent(instanceId)}/revisions`, payload, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async createConnectorRevision(instanceId: string, payload: Record<string, unknown>): Promise<{ id: string }> {
+    const { data } = await apiClient.post<{ id: string }>(`/api/connector-instances/${encodeURIComponent(instanceId)}/revisions`, payload)
     return data
   },
 
-  async testConnectorRevision(revisionId: string, managementKey: string): Promise<{ status: string; latency_ms: number; error_code: string | null }> {
-    const { data } = await apiClient.post(`/api/connector-instance-revisions/${encodeURIComponent(revisionId)}/test`, undefined, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async testConnectorRevision(revisionId: string): Promise<{ status: string; latency_ms: number; error_code: string | null }> {
+    const { data } = await apiClient.post(`/api/connector-instance-revisions/${encodeURIComponent(revisionId)}/test`)
     return data
   },
 
-  async createConnectorOperation(connectorId: string, payload: Record<string, unknown>, managementKey: string): Promise<{ id: string }> {
-    const { data } = await apiClient.post<{ id: string }>(`/api/connectors/${encodeURIComponent(connectorId)}/operations`, payload, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async createConnectorOperation(connectorId: string, payload: Record<string, unknown>): Promise<{ id: string }> {
+    const { data } = await apiClient.post<{ id: string }>(`/api/connectors/${encodeURIComponent(connectorId)}/operations`, payload)
     return data
   },
 
-  async createCapabilityVersion(capabilityId: string, payload: Record<string, unknown>, managementKey: string): Promise<{ id: string }> {
-    const { data } = await apiClient.post<{ id: string }>(`/api/capabilities/${encodeURIComponent(capabilityId)}/versions`, payload, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async createCapabilityVersion(capabilityId: string, payload: Record<string, unknown>): Promise<{ id: string }> {
+    const { data } = await apiClient.post<{ id: string }>(`/api/capabilities/${encodeURIComponent(capabilityId)}/versions`, payload)
     return data
   },
 
-  async testCapabilityVersion(versionId: string, managementKey: string): Promise<void> {
-    await apiClient.post(`/api/capability-versions/${encodeURIComponent(versionId)}/test`, undefined, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async testCapabilityVersion(versionId: string): Promise<void> {
+    await apiClient.post(`/api/capability-versions/${encodeURIComponent(versionId)}/test`)
   },
 
-  async publishCapabilityVersion(versionId: string, managementKey: string): Promise<void> {
-    await apiClient.post(`/api/capability-versions/${encodeURIComponent(versionId)}/publish`, undefined, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async publishCapabilityVersion(versionId: string): Promise<void> {
+    await apiClient.post(`/api/capability-versions/${encodeURIComponent(versionId)}/publish`)
   },
 
-  async createCapabilityImplementation(payload: Record<string, unknown>, managementKey: string): Promise<void> {
-    await apiClient.post('/api/capability-implementations', payload, { headers: { 'X-Platform-Management-Key': managementKey } })
+  async createCapabilityImplementation(payload: Record<string, unknown>): Promise<void> {
+    await apiClient.post('/api/capability-implementations', payload)
   },
   async health(): Promise<HealthStatus> {
     const { data } = await apiClient.get<HealthStatus>('/health')

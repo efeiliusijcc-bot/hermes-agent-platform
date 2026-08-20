@@ -81,7 +81,6 @@ export interface CapabilityResolution {
 }
 
 export interface AgentEditorModel {
-  mode: { management_key_required: boolean; read_only_without_key: boolean }
   agent: {
     id: string
     name: string

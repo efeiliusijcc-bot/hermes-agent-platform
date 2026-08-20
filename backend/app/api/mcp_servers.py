@@ -7,14 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.session import get_session
-from app.management import require_platform_management_key_for_capability_control
 from app.repositories import mcp_servers as repository
 from app.schemas.mcp_server import MCPServerCreate, MCPServerRead, MCPServerTestRead, MCPServerUpdate
 
 router = APIRouter(prefix="/api/mcp-servers", tags=["mcp-servers"])
 
 
-@router.post("", response_model=MCPServerRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.post("", response_model=MCPServerRead, status_code=status.HTTP_201_CREATED)
 async def create_mcp_server(
     payload: MCPServerCreate,
     session: AsyncSession = Depends(get_session),
@@ -44,7 +43,7 @@ async def get_mcp_server(mcp_id: str, session: AsyncSession = Depends(get_sessio
     return MCPServerRead.model_validate(server)
 
 
-@router.put("/{mcp_id}", response_model=MCPServerRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.put("/{mcp_id}", response_model=MCPServerRead)
 async def update_mcp_server(
     mcp_id: str,
     payload: MCPServerUpdate,
@@ -61,7 +60,7 @@ async def update_mcp_server(
     return MCPServerRead.model_validate(await repository.update_mcp_server(session, server, payload))
 
 
-@router.post("/{mcp_id}/test", response_model=MCPServerTestRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.post("/{mcp_id}/test", response_model=MCPServerTestRead)
 async def test_mcp_server(mcp_id: str, session: AsyncSession = Depends(get_session)) -> MCPServerTestRead:
     server = await repository.get_mcp_server(session, mcp_id)
     if server is None:
@@ -101,7 +100,7 @@ async def test_mcp_server(mcp_id: str, session: AsyncSession = Depends(get_sessi
     )
 
 
-@router.delete("/{mcp_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.delete("/{mcp_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_mcp_server(mcp_id: str, session: AsyncSession = Depends(get_session)) -> Response:
     server = await repository.get_mcp_server(session, mcp_id)
     if server is None:

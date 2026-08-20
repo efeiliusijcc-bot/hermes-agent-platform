@@ -6,7 +6,7 @@
 - 平台不会在控制台修改 Docker 网络。目标 PostgreSQL 位于其他 Compose 网络时，由运维人员手工把 `postgres-mcp` 容器加入该网络。
 - Agent 只看到业务工具别名以及 `sql`、`schema`、`table`、`limit` 等参数。数据库地址、物理数据库名、用户名、密码、Credential ID、Connector Revision 和 Scope Revision 均由平台注入。
 - 首版只允许只读查询。数据库账号只读权限、SQL AST、Resource Scope、READ ONLY 事务、超时、行数和响应体积共同构成纵深限制。
-- 不增加数据库专用管理密钥；数据库管理写操作沿用平台控制面策略。
+- 数据库管理写操作由可信内网控制台直接调用，不增加浏览器侧解锁凭据。
 
 ## 2. 组成
 

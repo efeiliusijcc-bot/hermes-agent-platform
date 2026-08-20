@@ -18,7 +18,7 @@
 - `hermes-agent-platform-v2.5.0-postgresql-mcp-offline-x86_64.tar.gz.sha256`
 - 本 Markdown 手册
 
-归档不加密，但不包含源节点 `.env`、模型密钥、平台管理密钥、数据库明文密码、Execution Token 或 Source Recall 上游密钥。包内包含：
+归档不加密，但不包含源节点 `.env`、模型密钥、数据库明文密码、Execution Token 或 Source Recall 上游密钥。包内包含：
 
 - 平台源码、Compose、迁移、测试脚本和文档；
 - Compose 引用的全部已构建镜像及 `OFFLINE_IMAGES.txt`；

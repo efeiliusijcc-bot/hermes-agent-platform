@@ -36,7 +36,6 @@ from app.db.models import (
     agent_skill,
 )
 from app.db.session import get_session
-from app.management import require_platform_management_key
 from app.model_secrets import ModelSecretCipher, ModelSecretError
 from app.repositories import production as production_repository
 from app.schemas.capability import (
@@ -77,7 +76,6 @@ router = APIRouter(tags=["capability-platform"])
 
 @router.post("/api/capability-platform/migrations/import-legacy")
 async def import_legacy_capabilities(
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     return await bootstrap_capability_platform(session)
@@ -98,7 +96,6 @@ async def list_capabilities(
 @router.post("/api/capabilities", response_model=CapabilityRead, status_code=status.HTTP_201_CREATED)
 async def create_capability(
     payload: CapabilityCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> CapabilityRead:
     value = Capability(**payload.model_dump())
@@ -120,7 +117,6 @@ async def get_capability(
 async def update_capability(
     capability_id: UUID,
     payload: CapabilityUpdate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> CapabilityRead:
     value = await _required(session, Capability, capability_id, "能力不存在")
@@ -139,7 +135,6 @@ async def update_capability(
 async def create_capability_version(
     capability_id: UUID,
     payload: CapabilityVersionCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> CapabilityVersionRead:
     await _required(session, Capability, capability_id, "能力不存在")
@@ -168,7 +163,6 @@ async def list_capability_versions(
 @router.post("/api/capability-versions/{version_id}/test")
 async def test_capability_version(
     version_id: UUID,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     value = await _required(session, CapabilityVersion, version_id, "能力版本不存在")
@@ -182,7 +176,6 @@ async def test_capability_version(
 @router.post("/api/capability-versions/{version_id}/publish", response_model=CapabilityVersionRead)
 async def publish_capability_version(
     version_id: UUID,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> CapabilityVersionRead:
     value = await _required(session, CapabilityVersion, version_id, "能力版本不存在")
@@ -202,7 +195,6 @@ async def publish_capability_version(
 @router.post("/api/capability-versions/{version_id}/deprecate", response_model=CapabilityVersionRead)
 async def deprecate_capability_version(
     version_id: UUID,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> CapabilityVersionRead:
     value = await _required(session, CapabilityVersion, version_id, "能力版本不存在")
@@ -223,7 +215,6 @@ async def list_credentials(session: AsyncSession = Depends(get_session)) -> list
 @router.post("/api/credentials", response_model=CredentialRead, status_code=status.HTTP_201_CREATED)
 async def create_credential(
     payload: CredentialCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> CredentialRead:
     secret = payload.secret.get_secret_value()
@@ -243,7 +234,6 @@ async def create_credential(
 async def rotate_credential(
     credential_id: UUID,
     payload: CredentialRotate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> CredentialRead:
     value = await _required(session, ConnectorCredential, credential_id, "凭据不存在")
@@ -266,7 +256,6 @@ async def list_connectors(session: AsyncSession = Depends(get_session)) -> list[
 @router.post("/api/connectors", response_model=ConnectorRead, status_code=status.HTTP_201_CREATED)
 async def create_connector(
     payload: ConnectorCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> ConnectorRead:
     value = Connector(**payload.model_dump())
@@ -292,7 +281,6 @@ async def get_connector(
 async def create_connector_instance(
     connector_id: UUID,
     payload: ConnectorInstanceCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> ConnectorInstanceRead:
     await _required(session, Connector, connector_id, "连接不存在")
@@ -311,7 +299,6 @@ async def create_connector_instance(
 async def create_connector_revision(
     instance_id: UUID,
     payload: ConnectorRevisionCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> ConnectorRevisionRead:
     instance = await _required(session, ConnectorInstance, instance_id, "连接实例不存在")
@@ -345,7 +332,6 @@ async def create_connector_revision(
 @router.post("/api/connector-instance-revisions/{revision_id}/test")
 async def test_connector_revision(
     revision_id: UUID,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     revision = await _required(session, ConnectorInstanceRevision, revision_id, "连接 Revision 不存在")
@@ -402,7 +388,6 @@ async def list_connector_operations(
 async def create_connector_operation(
     connector_id: UUID,
     payload: ConnectorOperationCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> ConnectorOperationRead:
     connector = await _required(session, Connector, connector_id, "连接不存在")
@@ -423,7 +408,6 @@ async def create_connector_operation(
 )
 async def create_capability_implementation(
     payload: CapabilityImplementationCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> CapabilityImplementationRead:
     version = await _required(session, CapabilityVersion, payload.capability_version_id, "能力版本不存在")
@@ -447,7 +431,6 @@ async def list_resources(session: AsyncSession = Depends(get_session)) -> list[R
 @router.post("/api/resources", response_model=ResourceRead, status_code=status.HTTP_201_CREATED)
 async def create_resource(
     payload: ResourceCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> ResourceRead:
     await _required(session, ConnectorInstance, payload.connector_instance_id, "连接实例不存在")
@@ -469,7 +452,6 @@ async def list_resource_scopes(session: AsyncSession = Depends(get_session)) -> 
 @router.post("/api/resource-scopes", response_model=ResourceScopeRead, status_code=status.HTTP_201_CREATED)
 async def create_resource_scope(
     payload: ResourceScopeCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> ResourceScopeRead:
     value = ResourceScope(name=payload.name, resource_type=payload.resource_type)
@@ -497,7 +479,6 @@ async def create_resource_scope(
 async def create_resource_scope_revision(
     scope_id: UUID,
     payload: ResourceScopeRevisionCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> ResourceScopeRevisionRead:
     scope = await _required(session, ResourceScope, scope_id, "资源范围不存在")
@@ -549,7 +530,6 @@ async def get_draft_bindings(
 async def update_draft_bindings(
     agent_id: str,
     payload: AgentCapabilityBindingsUpdate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> list[AgentCapabilityBindingRead]:
     version = await _draft_version(session, agent_id, create=True)

@@ -39,7 +39,6 @@ from app.db.models import (
     ResourceScopeRevision,
 )
 from app.db.session import get_session
-from app.management import require_platform_management_key
 from app.schemas.database_connection import (
     DatabaseConnectionCreate,
     DatabaseConnectionTestRequest,
@@ -79,7 +78,6 @@ async def list_database_connections(session: AsyncSession = Depends(get_session)
 @router.post("/test")
 async def test_database_connection(
     payload: DatabaseConnectionTestRequest,
-    _: None = Depends(require_platform_management_key),
 ) -> dict[str, Any]:
     return await PostgresMCPClient().test_temporary(payload.endpoint, payload.credential)
 
@@ -87,7 +85,6 @@ async def test_database_connection(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_connection(
     payload: DatabaseConnectionCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     discovery = await PostgresMCPClient().test_temporary(payload.endpoint, payload.credential)
@@ -107,7 +104,6 @@ async def get_database_connection(
 async def update_database_connection(
     instance_id: UUID,
     payload: DatabaseConnectionUpdate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     instance = await postgres_instance(session, instance_id)
@@ -166,7 +162,6 @@ async def update_database_connection(
 @router.delete("/{instance_id}")
 async def disable_database_connection(
     instance_id: UUID,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     instance = await postgres_instance(session, instance_id)
@@ -181,7 +176,6 @@ async def disable_database_connection(
 @router.post("/{instance_id}/test")
 async def test_saved_database_connection(
     instance_id: UUID,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     instance = await postgres_instance(session, instance_id)
@@ -202,7 +196,6 @@ async def test_saved_database_connection(
 @router.post("/{instance_id}/discover")
 async def discover_database_connection(
     instance_id: UUID,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     instance = await postgres_instance(session, instance_id)
@@ -243,7 +236,6 @@ async def list_database_resources(
 async def create_database_scope(
     instance_id: UUID,
     payload: DatabaseScopeCreate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     instance = await postgres_instance(session, instance_id)
@@ -259,7 +251,6 @@ async def create_database_scope(
 async def replace_database_credential(
     instance_id: UUID,
     payload: DatabaseCredentialReplace,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     instance = await postgres_instance(session, instance_id)

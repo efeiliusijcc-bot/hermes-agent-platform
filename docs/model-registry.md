@@ -31,7 +31,7 @@ Agent 创建页和 Agent 详情配置页只允许选择注册表中的启用模�
 
 必须配置 `MODEL_REGISTRY_ENCRYPTION_KEY`。它是 Fernet 主加密密钥，仅提供给 `agent-api` 和 `model-gateway`；数据库只保存认证加密后的模型 API Key。
 
-模型管理不再使用独立管理密钥或浏览器 Header。内部 `MODEL_GATEWAY_API_KEY` 仍只用于运行时访问 Model Gateway，不能输入浏览器。模型读取接口只返回 `api_key_configured`，永不返回明文密钥或密文。日志、Trace 和 Artifact 也不得记录上述密钥。
+模型管理写操作由可信内网控制台直接调用，不使用浏览器认证 Header。内部 `MODEL_GATEWAY_API_KEY` 仍只用于运行时访问 Model Gateway，不能输入浏览器。模型读取接口只返回 `api_key_configured`，永不返回明文密钥或密文。日志、Trace 和 Artifact 也不得记录上述密钥。
 
 生成缺失密钥：
 
@@ -60,7 +60,7 @@ Agent 创建页和 Agent 详情配置页只允许选择注册表中的启用模�
 - `GET /api/models`
 - `GET /api/models/{model_id}`
 
-以下写操作不再要求模型专用管理密钥：
+以下写操作不要求浏览器侧解锁凭据：
 
 - `POST /api/models`
 - `PATCH /api/models/{model_id}`

@@ -12,7 +12,6 @@ import { platformApi } from '@/api/platform'
 import { formatDate } from '@/utils/format'
 
 interface WorkbenchModel {
-  mode: { management_key_required: boolean; read_only_without_key: boolean }
   summary: { agents: number; executions: number; failed_executions: number; connections_needing_attention: number }
   recent_runs: Array<{ id: string; agent_id: string; status: string; runtime_type: string; started_at: string; finished_at: string | null }>
   needs_attention: Array<{ type: string; id: string; label: string; state: string }>

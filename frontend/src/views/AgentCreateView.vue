@@ -8,7 +8,6 @@ import PageHeader from '@/components/PageHeader.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
 import { useAgentStore } from '@/stores/agents'
-import { useManagementStore } from '@/stores/management'
 import { useResourceStore } from '@/stores/resources'
 import type { AgentCreatePayload, AgentRuntime, AgentType, CapabilityCatalogItem, CapabilityResolution, DatabaseAvailableBinding, DatabaseOperation, ModelAdapterName, RegisteredModel, ResourceScopeRecord, ResponseMode, RuntimeType, WorkspaceType } from '@/types/api'
 
@@ -16,7 +15,6 @@ const router = useRouter()
 const message = useMessage()
 const agentStore = useAgentStore()
 const resources = useResourceStore()
-const management = useManagementStore()
 const step = ref(0)
 const saving = ref(false)
 const testing = ref(false)
@@ -136,11 +134,10 @@ async function createDevelopmentDraft() {
   await platformApi.updateAgentEditorSection(createdAgentId.value, 'behavior', {
     runtime_type: form.runtime_type, runtime_id: form.runtime_id, model: form.model,
     model_adapter: form.model_adapter, response_mode: form.response_mode, execution_mode: form.execution_mode,
-  }, management.key)
+  })
 }
 
 async function initializeDraft() {
-  if (!management.unlocked) return warn('请先使用页面右上角的管理员解锁功能')
   saving.value = true
   try {
     await createDevelopmentDraft()
@@ -154,7 +151,6 @@ async function initializeDraft() {
 }
 
 async function prepareDraft() {
-  if (!management.unlocked) return warn('请先使用页面右上角的管理员解锁功能')
   saving.value = true
   try {
     await createDevelopmentDraft()
@@ -167,7 +163,7 @@ async function prepareDraft() {
       resource_scope_revision_id: form.scope_revision_id, parameter_policy: {},
       quota_policy: { calls_per_execution: 20, max_concurrency: 2, calls_per_minute: 60 },
       approval_policy: {}, source_type: 'direct',
-    })), management.key)
+    })))
     await platformApi.updateDatabaseBindings(
       agentId,
       form.database_bindings.map((item) => ({
@@ -175,7 +171,6 @@ async function prepareDraft() {
         tool_prefix: item.tool_prefix,
         operations: item.operations,
       })),
-      management.key,
     )
     preflight.value = await platformApi.preflightAgent(agentId)
     step.value = 3
@@ -190,7 +185,7 @@ async function runTest() {
   testing.value = true
   testResult.value = null
   try {
-    const result = await platformApi.testAgentDraft(createdAgentId.value, { input: testInput.value, session_id: `builder-${Date.now()}`, parameters: {} }, management.key)
+    const result = await platformApi.testAgentDraft(createdAgentId.value, { input: testInput.value, session_id: `builder-${Date.now()}`, parameters: {} })
     testResult.value = result.output
     message.success('测试执行完成')
   } catch (cause) { message.error(getApiErrorMessage(cause), { duration: 8000 }) }
@@ -201,7 +196,7 @@ async function publish() {
   if (!createdAgentId.value || preflight.value?.state !== 'READY') return
   publishing.value = true
   try {
-    const result = await platformApi.publishAgentDraft(createdAgentId.value, management.key)
+    const result = await platformApi.publishAgentDraft(createdAgentId.value)
     message.success(`${result.version} 已发布`)
     await router.push({ name: 'agent-detail', params: { id: createdAgentId.value } })
   } catch (cause) { message.error(getApiErrorMessage(cause), { duration: 8000 }) }
@@ -234,7 +229,6 @@ onMounted(async () => {
 <template>
   <div>
     <PageHeader title="创建 Agent" description="四步完成定义、行为、能力配置和发布检查。"><template #actions><NButton @click="router.push({ name: 'agents' })"><template #icon><NIcon :component="ArrowLeft" /></template>返回列表</NButton></template></PageHeader>
-    <NAlert v-if="!management.unlocked" type="warning" :bordered="false" style="margin-bottom:16px">当前为只读模式。创建 Agent 前请先在右上角解锁管理员模式。</NAlert>
     <nav class="wizard-steps" aria-label="Agent 创建步骤"><button v-for="(item,index) in steps" :key="item.title" type="button" :class="{active:index===step,complete:index<step}" :disabled="index>step || Boolean(createdAgentId)" @click="index<=step && !createdAgentId && (step=index)"><span>{{ index<step ? '✓' : index+1 }}</span><div><strong>{{ item.title }}</strong><small>{{ item.note }}</small></div></button></nav>
     <section class="surface wizard-panel">
       <div class="wizard-heading"><span>步骤 {{ step+1 }} / 4</span><h2>{{ steps[step].title }}</h2><p>{{ steps[step].note }}</p></div>

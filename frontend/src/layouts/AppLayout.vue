@@ -21,20 +21,14 @@ import {
   BoxModel,
   Plus,
   Settings,
-  Key,
-  Lock,
 } from '@vicons/tabler'
 
 import { useSystemStore } from '@/stores/system'
-import { useManagementStore } from '@/stores/management'
 
 const route = useRoute()
 const systemStore = useSystemStore()
-const managementStore = useManagementStore()
 const collapsed = ref(false)
 const mobileOpen = ref(false)
-const keyDialogOpen = ref(false)
-const managementKey = ref('')
 
 function renderIcon(icon: typeof Apps) {
   return () => h(NIcon, null, { default: () => h(icon) })
@@ -82,13 +76,6 @@ const activeMenuKey = computed(() => {
 })
 
 const healthTimer = ref<number | null>(null)
-
-function unlockManagement() {
-  if (!managementKey.value.trim()) return
-  managementStore.unlock(managementKey.value)
-  managementKey.value = ''
-  keyDialogOpen.value = false
-}
 
 onMounted(() => {
   systemStore.fetchHealth().catch(() => undefined)
@@ -149,30 +136,10 @@ onBeforeUnmount(() => {
           <span class="health-indicator" />
           {{ systemStore.health ? 'Runtime online' : 'Runtime unavailable' }}
         </div>
-        <NButton v-if="managementStore.unlocked" size="small" quaternary @click="managementStore.lock()">
-          <template #icon><NIcon :component="Lock" /></template>
-          锁定管理模式
-        </NButton>
-        <NButton v-else size="small" secondary @click="keyDialogOpen = true">
-          <template #icon><NIcon :component="Key" /></template>
-          管理员解锁
-        </NButton>
       </header>
       <main class="app-main">
         <RouterView />
       </main>
     </div>
-    <NModal v-model:show="keyDialogOpen" preset="card" title="解锁管理模式" style="width: min(460px, calc(100vw - 32px))">
-      <p class="muted" style="margin: 0 0 16px; line-height: 1.6">密钥只保存在当前页面内存中，刷新或锁定后立即清除。</p>
-      <NFormItem label="平台管理密钥" required>
-        <NInput v-model:value="managementKey" type="password" show-password-on="click" placeholder="PLATFORM_MANAGEMENT_API_KEY" @keyup.enter="unlockManagement" />
-      </NFormItem>
-      <template #footer>
-        <div style="display: flex; justify-content: flex-end; gap: 10px">
-          <NButton @click="keyDialogOpen = false">取消</NButton>
-          <NButton type="primary" :disabled="!managementKey.trim()" @click="unlockManagement">解锁</NButton>
-        </div>
-      </template>
-    </NModal>
   </div>
 </template>

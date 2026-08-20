@@ -7,7 +7,6 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
-import { useManagementStore } from '@/stores/management'
 import { formatDate } from '@/utils/format'
 import type {
   DatabaseConnectionPayload,
@@ -31,7 +30,6 @@ interface ScopeConfig {
 
 const message = useMessage()
 const dialog = useDialog()
-const management = useManagementStore()
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
@@ -84,12 +82,6 @@ const newScope = reactive<ScopeConfig & { name: string }>({
   statement_timeout_ms: 5000,
   requests_per_minute: 60,
 })
-
-function requireManagement(): boolean {
-  if (management.unlocked) return true
-  message.warning('请先使用右上角管理员解锁')
-  return false
-}
 
 function endpoint() {
   return {
@@ -218,13 +210,11 @@ function next() {
 }
 
 async function testTemporary() {
-  if (!requireManagement()) return
   testing.value = true
   try {
     const result = await platformApi.testDatabaseConnection(
       endpoint(),
       { username: form.username.trim(), password: form.password },
-      management.key,
     )
     discovery.value = result
     selectedObjects.value = []
@@ -285,7 +275,6 @@ function buildScopes(): DatabaseScopePayload[] {
 }
 
 async function save() {
-  if (!requireManagement()) return
   saving.value = true
   try {
     const payload: DatabaseConnectionPayload = {
@@ -295,7 +284,7 @@ async function save() {
       credential: { username: form.username.trim(), password: form.password },
       scopes: buildScopes(),
     }
-    await platformApi.createDatabaseConnection(payload, management.key)
+    await platformApi.createDatabaseConnection(payload)
     form.password = ''
     wizardOpen.value = false
     await load()
@@ -308,10 +297,9 @@ async function save() {
 }
 
 async function testSaved(item: DatabaseConnectionSummary) {
-  if (!requireManagement()) return
   testing.value = true
   try {
-    const result = await platformApi.testSavedDatabaseConnection(item.id, management.key)
+    const result = await platformApi.testSavedDatabaseConnection(item.id)
     await load()
     message.success(`${item.name} 测试通过，发现 ${result.databases.length} 个数据库`)
   } catch (cause) {
@@ -322,10 +310,10 @@ async function testSaved(item: DatabaseConnectionSummary) {
 }
 
 async function testManaged() {
-  if (!activeConnection.value || !requireManagement()) return
+  if (!activeConnection.value) return
   testing.value = true
   try {
-    managedDiscovery.value = await platformApi.testSavedDatabaseConnection(activeConnection.value.id, management.key)
+    managedDiscovery.value = await platformApi.testSavedDatabaseConnection(activeConnection.value.id)
     activeConnection.value = await platformApi.getDatabaseConnection(activeConnection.value.id)
     await load()
     message.success('连接测试通过，资源树已刷新')
@@ -337,10 +325,10 @@ async function testManaged() {
 }
 
 async function discoverManaged() {
-  if (!activeConnection.value || !requireManagement()) return
+  if (!activeConnection.value) return
   testing.value = true
   try {
-    managedDiscovery.value = await platformApi.discoverDatabaseConnection(activeConnection.value.id, management.key)
+    managedDiscovery.value = await platformApi.discoverDatabaseConnection(activeConnection.value.id)
     activeConnection.value = await platformApi.getDatabaseConnection(activeConnection.value.id)
     message.success(`重新发现完成，共 ${managedDiscovery.value.databases.length} 个数据库`)
   } catch (cause) {
@@ -351,7 +339,7 @@ async function discoverManaged() {
 }
 
 async function saveManagedConnection() {
-  if (!activeConnection.value || !requireManagement()) return
+  if (!activeConnection.value) return
   if (!editForm.name.trim() || !editForm.host.trim() || !editForm.maintenance_database.trim()) {
     message.warning('请填写连接名称、主机和维护库')
     return
@@ -366,7 +354,6 @@ async function saveManagedConnection() {
         environment: editForm.environment,
         ...(endpointChanged ? { endpoint: editedEndpoint() } : {}),
       },
-      management.key,
     )
     activeConnection.value = detail
     populateEditForm(detail)
@@ -381,13 +368,12 @@ async function saveManagedConnection() {
 }
 
 async function setManagedEnabled(enabled: boolean) {
-  if (!activeConnection.value || !requireManagement()) return
+  if (!activeConnection.value) return
   managerSaving.value = true
   try {
     activeConnection.value = await platformApi.updateDatabaseConnection(
       activeConnection.value.id,
       { enabled },
-      management.key,
     )
     await load()
     message.success(enabled ? '数据库连接已启用' : '数据库连接已停用')
@@ -399,7 +385,7 @@ async function setManagedEnabled(enabled: boolean) {
 }
 
 async function rotateCredential() {
-  if (!activeConnection.value || !requireManagement()) return
+  if (!activeConnection.value) return
   if (!credentialForm.username.trim() || !credentialForm.password) {
     message.warning('请填写新的数据库用户名和密码')
     return
@@ -409,7 +395,6 @@ async function rotateCredential() {
     await platformApi.replaceDatabaseCredential(
       activeConnection.value.id,
       { username: credentialForm.username.trim(), password: credentialForm.password },
-      management.key,
     )
     Object.assign(credentialForm, { username: '', password: '' })
     activeConnection.value = await platformApi.getDatabaseConnection(activeConnection.value.id)
@@ -474,10 +459,10 @@ function managedScopePayload(): DatabaseScopePayload {
 }
 
 async function saveManagedScope() {
-  if (!activeConnection.value || !requireManagement()) return
+  if (!activeConnection.value) return
   managerSaving.value = true
   try {
-    await platformApi.createDatabaseScope(activeConnection.value.id, managedScopePayload(), management.key)
+    await platformApi.createDatabaseScope(activeConnection.value.id, managedScopePayload())
     scopeOpen.value = false
     activeConnection.value = await platformApi.getDatabaseConnection(activeConnection.value.id)
     await load()
@@ -490,14 +475,13 @@ async function saveManagedScope() {
 }
 
 function disable(item: DatabaseConnectionSummary) {
-  if (!requireManagement()) return
   dialog.warning({
     title: '停用数据库连接',
     content: `停用 ${item.name} 后，所有绑定该连接的 Agent 将立即不能继续查询。历史记录不会删除。`,
     positiveText: '确认停用',
     negativeText: '取消',
     onPositiveClick: async () => {
-      await platformApi.disableDatabaseConnection(item.id, management.key)
+      await platformApi.disableDatabaseConnection(item.id)
       await load()
       message.success('数据库连接已停用')
     },
@@ -516,10 +500,9 @@ onMounted(load)
     <PageHeader title="数据库连接" description="管理内网 PostgreSQL、发现数据资源，并为 Agent 冻结只读数据范围。">
       <template #actions>
         <NButton secondary :loading="loading" @click="load"><template #icon><NIcon :component="Refresh" /></template>刷新</NButton>
-        <NButton type="primary" :disabled="!management.unlocked" @click="openWizard"><template #icon><NIcon :component="Plus" /></template>创建数据库连接</NButton>
+        <NButton type="primary" @click="openWizard"><template #icon><NIcon :component="Plus" /></template>创建数据库连接</NButton>
       </template>
     </PageHeader>
-    <NAlert v-if="!management.unlocked" type="warning" :bordered="false" style="margin-bottom:16px">当前为只读模式，管理员解锁后可以创建、测试和停用连接。</NAlert>
     <div v-if="error" class="error-panel" style="margin-bottom:16px">{{ error }}</div>
     <section class="surface panel-flush">
       <div v-if="loading" class="loading-stack" style="padding:20px"><div v-for="item in 4" :key="item" class="skeleton-line" /></div>

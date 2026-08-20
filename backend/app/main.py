@@ -1,11 +1,9 @@
 import logging
 import hashlib
 import json
-import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.api.agents import router as agents_router
@@ -197,56 +195,6 @@ async def _register_legacy_model(session) -> None:
 
 
 app = FastAPI(title=settings.app_name, version="0.4.0", lifespan=lifespan)
-
-
-@app.middleware("http")
-async def protect_control_plane_writes(request: Request, call_next):
-    if (
-        settings.platform_management_api_key_enabled
-        and request.method in {"POST", "PUT", "PATCH", "DELETE"}
-        and _is_control_plane_write(request.url.path)
-    ):
-        configured = settings.platform_management_api_key
-        supplied = request.headers.get("X-Platform-Management-Key")
-        if configured is None:
-            return JSONResponse(
-                {"detail": "平台管理密钥未配置，控制台当前为只读模式"},
-                status_code=503,
-            )
-        if supplied is None or not secrets.compare_digest(
-            supplied,
-            configured.get_secret_value(),
-        ):
-            return JSONResponse({"detail": "平台管理密钥无效"}, status_code=401)
-    return await call_next(request)
-
-
-def _is_control_plane_write(path: str) -> bool:
-    if path.startswith("/api/public/") or path.startswith("/internal/"):
-        return False
-    if path.endswith("/preflight"):
-        return False
-    if path.startswith("/api/agents/") and (
-        path.endswith("/run") or path.endswith("/stream") or "/tasks" in path
-    ):
-        return False
-    return path == "/api/agents" or path.startswith(
-        (
-            "/api/console/",
-            "/api/agents/",
-            "/api/skills",
-            "/api/mcp-servers",
-            "/api/runtimes",
-            "/api/knowledge-sources",
-            "/api/capabilities",
-            "/api/capability-",
-            "/api/connectors",
-            "/api/connector-",
-            "/api/credentials",
-            "/api/resources",
-            "/api/resource-scopes",
-        )
-    )
 app.include_router(agents_router)
 app.include_router(executions_router)
 app.include_router(knowledge_sources_router)

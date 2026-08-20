@@ -66,7 +66,7 @@ def test_model_endpoint_rejects_embedded_credentials() -> None:
         )
 
 
-def test_model_mutations_do_not_accept_a_dedicated_management_key() -> None:
+def test_model_mutations_do_not_accept_browser_unlock_credentials() -> None:
     for handler in (
         create_model,
         update_model,

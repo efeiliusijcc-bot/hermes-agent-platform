@@ -7,12 +7,10 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
-import { useManagementStore } from '@/stores/management'
 import { formatDate } from '@/utils/format'
 import type { CapabilityRecord, CredentialRecord, PlatformConnection } from '@/types/api'
 
 const message = useMessage()
-const management = useManagementStore()
 const activeTab = ref<'connections' | 'capabilities' | 'credentials'>('connections')
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -65,17 +63,10 @@ async function load() {
   }
 }
 
-function requireManagement(): boolean {
-  if (management.unlocked) return true
-  message.warning('请先使用页面右上角的管理员解锁功能')
-  return false
-}
-
 async function saveCredential() {
-  if (!requireManagement()) return
   saving.value = true
   try {
-    await platformApi.createCredential(credentialForm, management.key)
+    await platformApi.createCredential(credentialForm)
     credentialOpen.value = false
     Object.assign(credentialForm, { name: '', credential_type: 'api_key', secret: '' })
     await load()
@@ -88,10 +79,9 @@ async function saveCredential() {
 }
 
 async function saveCapability() {
-  if (!requireManagement()) return
   saving.value = true
   try {
-    await platformApi.createCapability(capabilityForm, management.key)
+    await platformApi.createCapability(capabilityForm)
     capabilityOpen.value = false
     Object.assign(capabilityForm, { namespace: 'platform', key: '', display_name: '', description: '', risk_level: 'LOW' })
     await load()
@@ -120,7 +110,6 @@ function nextWizard() {
 }
 
 async function finishConnector() {
-  if (!requireManagement()) return
   saving.value = true
   try {
     const requestSchema = jsonObject(connectorForm.request_schema, 'Request Schema')
@@ -130,8 +119,8 @@ async function finishConnector() {
       display_name: connectorForm.display_name,
       description: connectorForm.description,
       type: connectorForm.type,
-    }, management.key)
-    const instance = await platformApi.createConnectorInstance(connector.id, { name: connectorForm.instance_name, environment: 'production' }, management.key)
+    })
+    const instance = await platformApi.createConnectorInstance(connector.id, { name: connectorForm.instance_name, environment: 'production' })
     const revision = await platformApi.createConnectorRevision(instance.id, {
       endpoint: connectorForm.endpoint,
       auth_type: connectorForm.auth_type,
@@ -141,7 +130,7 @@ async function finishConnector() {
       timeout_policy: { connect_seconds: 5, read_seconds: 15 },
       retry_policy: { max_retries: 1 },
       health_check_config: {},
-    }, management.key)
+    })
     const operation = await platformApi.createConnectorOperation(connector.id, {
       operation_key: connectorForm.operation_key,
       display_name: connectorForm.operation_name || connectorForm.operation_key,
@@ -151,25 +140,25 @@ async function finishConnector() {
       request_schema: requestSchema,
       response_schema: responseSchema,
       request_mapping: {}, response_mapping: {}, error_mapping: {}, side_effect: 'READ_ONLY',
-    }, management.key)
+    })
     const capability = await platformApi.createCapability({
       namespace: 'platform', key: connectorForm.capability_key,
       display_name: connectorForm.capability_name, description: connectorForm.description, risk_level: 'LOW',
-    }, management.key)
+    })
     const version = await platformApi.createCapabilityVersion(capability.id, {
       version: connectorForm.capability_version,
       input_schema: requestSchema, output_schema: responseSchema, ui_schema: {}, error_schema: {},
       side_effect: 'READ_ONLY', idempotency: 'SAFE_RETRY', cache_policy: {}, default_timeout_ms: 15000, compatibility: {},
-    }, management.key)
-    await platformApi.testCapabilityVersion(version.id, management.key)
-    await platformApi.publishCapabilityVersion(version.id, management.key)
+    })
+    await platformApi.testCapabilityVersion(version.id)
+    await platformApi.publishCapabilityVersion(version.id)
     await platformApi.createCapabilityImplementation({
       capability_version_id: version.id,
       connector_operation_id: operation.id,
       connector_instance_revision_id: revision.id,
       mapping_override: {}, priority: 100, routing_weight: 100,
-    }, management.key)
-    const health = await platformApi.testConnectorRevision(revision.id, management.key)
+    })
+    const health = await platformApi.testConnectorRevision(revision.id)
     wizardOpen.value = false
     wizardStep.value = 0
     await load()
@@ -189,13 +178,10 @@ onMounted(load)
     <PageHeader title="连接与能力" description="统一管理真实接口、加密凭据和 Agent 可绑定的抽象能力。">
       <template #actions>
         <NButton secondary :loading="loading" @click="load"><template #icon><NIcon :component="Refresh" /></template>刷新</NButton>
-        <NButton type="primary" :disabled="!management.unlocked" @click="wizardOpen = true"><template #icon><NIcon :component="Plus" /></template>创建连接</NButton>
+        <NButton type="primary" @click="wizardOpen = true"><template #icon><NIcon :component="Plus" /></template>创建连接</NButton>
       </template>
     </PageHeader>
 
-    <NAlert v-if="!management.unlocked" type="warning" :bordered="false" style="margin-bottom: 16px">
-      当前为只读模式。使用右上角“管理员解锁”后才能创建、测试或发布连接。
-    </NAlert>
     <div v-if="error" class="error-panel" style="margin-bottom: 16px">{{ error }}</div>
 
     <NTabs v-model:value="activeTab" type="line" animated>
@@ -213,14 +199,14 @@ onMounted(load)
         </section>
       </NTabPane>
       <NTabPane name="capabilities" tab="能力">
-        <div class="toolbar-row"><span class="muted">Published Version 不允许原地修改。</span><NButton :disabled="!management.unlocked" @click="capabilityOpen = true">新建 Capability</NButton></div>
+        <div class="toolbar-row"><span class="muted">Published Version 不允许原地修改。</span><NButton @click="capabilityOpen = true">新建 Capability</NButton></div>
         <section class="surface panel-flush"><div class="registry-list">
           <div v-for="item in capabilities" :key="item.id" class="registry-row"><div><strong>{{ item.display_name }}</strong><span class="mono">{{ item.namespace }}.{{ item.key }}</span></div><span>{{ item.risk_level }}</span><StatusTag :status="item.status" /></div>
           <div v-if="!capabilities.length" class="empty-state"><div><h3>暂无 Capability</h3><p>能力用于解耦 Skill 与真实接口。</p></div></div>
         </div></section>
       </NTabPane>
       <NTabPane name="credentials" tab="凭据">
-        <div class="toolbar-row"><span class="muted">密钥明文不会从后端返回。</span><NButton :disabled="!management.unlocked" @click="credentialOpen = true"><template #icon><NIcon :component="Key" /></template>新增凭据</NButton></div>
+        <div class="toolbar-row"><span class="muted">密钥明文不会从后端返回。</span><NButton @click="credentialOpen = true"><template #icon><NIcon :component="Key" /></template>新增凭据</NButton></div>
         <section class="surface panel-flush"><div class="registry-list">
           <div v-for="item in credentials" :key="item.id" class="registry-row"><div><strong>{{ item.name }}</strong><span>{{ item.credential_type }}</span></div><span class="mono">{{ item.masked_label }}</span><StatusTag :status="item.rotation_status" /><span>{{ formatDate(item.last_rotated_at) }}</span></div>
           <div v-if="!credentials.length" class="empty-state"><div><NIcon :component="ShieldLock" size="28" /><h3>暂无加密凭据</h3><p>凭据通过 Fernet 加密，Runtime 和 Agent 不接触明文。</p></div></div>

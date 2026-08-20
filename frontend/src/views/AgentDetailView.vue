@@ -11,7 +11,6 @@ import StatusTag from '@/components/StatusTag.vue'
 import { getApiErrorMessage } from '@/api/client'
 import { useAgentStore } from '@/stores/agents'
 import { useResourceStore } from '@/stores/resources'
-import { useManagementStore } from '@/stores/management'
 import { formatDate } from '@/utils/format'
 import {
   agentConfigurationLockMessage,
@@ -41,7 +40,6 @@ const message = useMessage()
 const dialog = useDialog()
 const agentStore = useAgentStore()
 const resourceStore = useResourceStore()
-const managementStore = useManagementStore()
 const editorModel = ref<AgentEditorModel | null>(null)
 const agentId = computed(() => String(route.params.id))
 const dialogType = ref<'skills' | 'mcps' | 'knowledge' | null>(null)
@@ -567,7 +565,6 @@ onMounted(load)
 
         <section v-show="activeTab === 'configuration'" class="surface panel">
           <div class="section-heading"><div><h2>能力与资源</h2><p>状态和发布条件全部来自 Console BFF Preflight</p></div><StatusTag :status="editorModel?.preflight.state || 'NEEDS_CONFIGURATION'" /></div>
-          <NAlert v-if="!managementStore.unlocked" type="warning" :bordered="false" style="margin:14px 0">当前为只读模式。解锁管理员模式后才能修改 Capability Binding。</NAlert>
           <div v-if="editorModel?.sections.capabilities.length" class="binding-list" style="margin-top:14px">
             <div v-for="item in editorModel.sections.capabilities" :key="item.binding_id" class="binding-row">
               <div>

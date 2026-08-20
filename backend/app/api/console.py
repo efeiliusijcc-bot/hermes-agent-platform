@@ -30,7 +30,6 @@ from app.db.models import (
     ResourceScopeRevision,
 )
 from app.db.session import get_session
-from app.management import management_mode, require_platform_management_key
 from app.repositories import production as production_repository
 from app.schemas.agent import AgentRunRequest
 from app.config import get_settings
@@ -177,7 +176,6 @@ async def workbench(session: AsyncSession = Depends(get_session)) -> dict[str, A
         )
     )
     return {
-        "mode": management_mode(),
         "summary": {
             "agents": agent_count,
             "executions": execution_count,
@@ -285,7 +283,6 @@ async def agent_editor(
         "issues": [{"code": "DRAFT_REQUIRED", "path": "agent", "message": "请先保存草稿", "severity": "error"}],
     }
     return {
-        "mode": management_mode(),
         "agent": {
             "id": agent.id,
             "name": agent.name,
@@ -347,7 +344,6 @@ async def update_agent_editor_section(
     agent_id: str,
     section: str,
     payload: dict[str, Any],
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     agent = await session.get(Agent, agent_id)
@@ -503,7 +499,6 @@ async def available_components(
 async def update_database_bindings(
     agent_id: str,
     payload: DatabaseAgentBindingsUpdate,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
     version = await _draft_version(session, agent_id, create=True)
@@ -606,7 +601,6 @@ async def update_database_bindings(
 @router.post("/agents/{agent_id}/auto-configure")
 async def auto_configure(
     agent_id: str,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     editor = await agent_editor(agent_id, session)
@@ -636,7 +630,6 @@ async def console_preflight(
 async def console_test_agent(
     agent_id: str,
     payload: AgentRunRequest,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     draft = await _draft_version(session, agent_id, create=True)
@@ -658,7 +651,6 @@ async def console_test_agent(
 @router.post("/agents/{agent_id}/publish")
 async def console_publish_agent(
     agent_id: str,
-    _: None = Depends(require_platform_management_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     agent = await session.get(Agent, agent_id)

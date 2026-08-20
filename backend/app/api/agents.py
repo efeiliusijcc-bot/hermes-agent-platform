@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.session import SessionFactory, get_session
-from app.management import require_platform_management_key_for_capability_control
 from app.db.models import Agent, AgentSession, AgentVersion, Artifact, AgentSchemaVersion, ExecutionLog, agent_mcp
 from app.capabilities import issue_execution_capability_token, resolve_agent_capabilities
 from app.capabilities.resolver import CapabilityResolution
@@ -73,7 +72,7 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("", response_model=AgentRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.post("", response_model=AgentRead, status_code=status.HTTP_201_CREATED)
 async def create_agent(payload: AgentCreate, session: AsyncSession = Depends(get_session)) -> AgentRead:
     if payload.parent_agent_id:
         parent = await repository.get_agent(session, payload.parent_agent_id)
@@ -112,7 +111,7 @@ async def get_agent(agent_id: str, session: AsyncSession = Depends(get_session))
     return AgentRead.model_validate(agent)
 
 
-@router.put("/{agent_id}/schema", response_model=AgentRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.put("/{agent_id}/schema", response_model=AgentRead)
 async def update_agent_schema(
     agent_id: str,
     payload: AgentSchemaUpdate,
@@ -139,7 +138,7 @@ async def update_agent_schema(
     return AgentRead.model_validate(await repository.update_agent_schema(session, agent, payload))
 
 
-@router.put("/{agent_id}/response-mode", response_model=AgentRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.put("/{agent_id}/response-mode", response_model=AgentRead)
 async def update_agent_response_mode(
     agent_id: str,
     payload: AgentResponseModeUpdate,
@@ -154,7 +153,7 @@ async def update_agent_response_mode(
     )
 
 
-@router.put("/{agent_id}/configuration", response_model=AgentRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.put("/{agent_id}/configuration", response_model=AgentRead)
 async def update_agent_configuration(
     agent_id: str,
     payload: AgentConfigurationUpdate,
@@ -195,7 +194,7 @@ async def update_agent_configuration(
     )
 
 
-@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(
     agent_id: str,
     session: AsyncSession = Depends(get_session),
@@ -1536,7 +1535,7 @@ async def list_agent_skills(agent_id: str, session: AsyncSession = Depends(get_s
     return [SkillRead.model_validate(skill) for skill in sorted(agent.skills, key=lambda item: item.id)]
 
 
-@router.put("/{agent_id}/skills/{skill_id}", response_model=AgentSkillBindingRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.put("/{agent_id}/skills/{skill_id}", response_model=AgentSkillBindingRead)
 async def bind_agent_skill(
     agent_id: str,
     skill_id: str,
@@ -1558,7 +1557,7 @@ async def bind_agent_skill(
     return AgentSkillBindingRead(agent_id=agent.id, skill_ids=sorted(item.id for item in agent.skills))
 
 
-@router.delete("/{agent_id}/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.delete("/{agent_id}/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def unbind_agent_skill(
     agent_id: str,
     skill_id: str,
@@ -1584,7 +1583,7 @@ async def list_agent_mcp_servers(
     return [MCPServerRead.model_validate(server) for server in sorted(agent.mcp_servers, key=lambda item: item.id)]
 
 
-@router.put("/{agent_id}/mcp-servers/{mcp_id}", response_model=AgentMCPBindingRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.put("/{agent_id}/mcp-servers/{mcp_id}", response_model=AgentMCPBindingRead)
 async def bind_agent_mcp_server(
     agent_id: str,
     mcp_id: str,
@@ -1606,7 +1605,7 @@ async def bind_agent_mcp_server(
     )
 
 
-@router.delete("/{agent_id}/mcp-servers/{mcp_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.delete("/{agent_id}/mcp-servers/{mcp_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def unbind_agent_mcp_server(
     agent_id: str,
     mcp_id: str,
@@ -1635,7 +1634,7 @@ async def list_agent_knowledge_sources(
     ]
 
 
-@router.put("/{agent_id}/knowledge-sources/{source_id}", response_model=AgentKnowledgeBindingRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.put("/{agent_id}/knowledge-sources/{source_id}", response_model=AgentKnowledgeBindingRead)
 async def bind_agent_knowledge_source(
     agent_id: str,
     source_id: str,
@@ -1655,7 +1654,7 @@ async def bind_agent_knowledge_source(
     )
 
 
-@router.delete("/{agent_id}/knowledge-sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.delete("/{agent_id}/knowledge-sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def unbind_agent_knowledge_source(
     agent_id: str,
     source_id: str,

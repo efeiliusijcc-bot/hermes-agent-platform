@@ -13,8 +13,8 @@
 
 ## 安全边界
 
-- 控制台暂不提供登录。启用 `PLATFORM_MANAGEMENT_API_KEY_ENABLED` 后，控制面写操作必须携带 `X-Platform-Management-Key`。
-- 管理密钥只保存在浏览器内存，刷新后清除。
+- 控制台暂不提供登录，面向可信内网直接开放控制面读写操作；页面不保存或发送平台解锁凭据。
+- 控制台端口不得暴露到不可信网络，后续引入统一身份系统时再实现用户级认证与 RBAC。
 - Credential 明文不得进入 Snapshot、Prompt、Tool Arguments、Trace、Artifact 或普通日志。
 - Gateway 固定解析 Binding，Runtime 不能指定 Endpoint、Credential、Implementation 或 Resource Scope。
 

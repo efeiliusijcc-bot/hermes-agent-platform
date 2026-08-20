@@ -8,10 +8,9 @@ CAPABILITY_GATEWAY_ENABLED=false
 CONSOLE_BFF_ENABLED=false
 LEGACY_MCP_BINDING_READ_ENABLED=true
 LEGACY_VECTOR_TOOL_ENABLED=true
-PLATFORM_MANAGEMENT_API_KEY_ENABLED=true
 ```
 
-`PLATFORM_MANAGEMENT_API_KEY`、`MODEL_REGISTRY_ENCRYPTION_KEY` 和 Connector 真实密钥不得写入仓库或离线包，应在目标节点 `.env` 或 Docker Secret 中单独配置。
+`MODEL_REGISTRY_ENCRYPTION_KEY` 和 Connector 真实密钥不得写入仓库或离线包，应在目标节点 `.env` 或 Docker Secret 中单独配置。
 
 ## 升级顺序
 
@@ -24,11 +23,11 @@ PLATFORM_MANAGEMENT_API_KEY_ENABLED=true
 7. Hermes、Pi、DeepSeek 验收通过后打开 `CONSOLE_BFF_ENABLED`。
 8. 新旧召回对比通过后关闭 `LEGACY_VECTOR_TOOL_ENABLED`。
 
-## 管理模式
+## 控制台写操作
 
-- 页面刷新后默认为只读模式。
-- 点击控制台右上角“管理员解锁”，输入平台管理密钥。
-- 密钥只存在于当前页面内存，不保存到 localStorage。
+- 控制台不再提供解锁、锁定或只读管理模式。
+- Agent、Capability、Connector、数据库和 Runtime 写操作由页面直接调用后端。
+- 本版本面向可信内网部署，控制台端口不得暴露到不可信网络。
 - Credential API 永远只返回 `masked_label`、状态和轮换时间。
 
 ## Capability 调用

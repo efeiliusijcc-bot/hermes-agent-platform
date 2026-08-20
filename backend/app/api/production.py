@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db.models import Agent, AgentVersion
 from app.db.session import get_session
-from app.management import require_platform_management_key_for_capability_control
 from app.repositories import agents as agent_repository
 from app.repositories import production as repository
 from app.schemas.agent import AgentRead, AgentRunRequest, AgentRunResponse
@@ -48,8 +47,8 @@ LIFECYCLE_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
-@router.patch("/api/agents/{agent_id}/lifecycle", response_model=AgentRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
-@router.put("/api/agents/{agent_id}/lifecycle", response_model=AgentRead, include_in_schema=False, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.patch("/api/agents/{agent_id}/lifecycle", response_model=AgentRead)
+@router.put("/api/agents/{agent_id}/lifecycle", response_model=AgentRead, include_in_schema=False)
 async def update_agent_lifecycle(
     agent_id: str,
     payload: LifecycleUpdate,
@@ -85,7 +84,6 @@ async def list_agent_versions(
     "/api/agents/{agent_id}/versions",
     response_model=AgentVersionRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_platform_management_key_for_capability_control)],
 )
 async def create_agent_version(
     agent_id: str,
@@ -120,7 +118,7 @@ async def get_agent_version(
     return AgentVersionRead.model_validate(await _version(session, agent_id, version))
 
 
-@router.patch("/api/agents/{agent_id}/versions/{version}", response_model=AgentVersionRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.patch("/api/agents/{agent_id}/versions/{version}", response_model=AgentVersionRead)
 async def update_agent_version(
     agent_id: str,
     version: str,
@@ -145,7 +143,6 @@ async def update_agent_version(
 
 @router.patch(
     "/api/agents/{agent_id}/versions/{version}/status", response_model=AgentVersionRead,
-    dependencies=[Depends(require_platform_management_key_for_capability_control)],
 )
 async def update_agent_version_status(
     agent_id: str,
@@ -163,7 +160,7 @@ async def update_agent_version_status(
     return AgentVersionRead.model_validate(value)
 
 
-@router.post("/api/agents/{agent_id}/publish", response_model=AgentVersionRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.post("/api/agents/{agent_id}/publish", response_model=AgentVersionRead)
 async def publish_agent(
     agent_id: str,
     payload: AgentVersionCreate | None = None,
@@ -241,7 +238,6 @@ async def publish_agent(
 
 @router.post(
     "/api/agents/{agent_id}/versions/{version}/publish", response_model=AgentVersionRead,
-    dependencies=[Depends(require_platform_management_key_for_capability_control)],
 )
 async def publish_agent_version(
     agent_id: str,
@@ -257,7 +253,6 @@ async def publish_agent_version(
 
 @router.post(
     "/api/agents/{agent_id}/versions/{version}/run", response_model=AgentRunResponse,
-    dependencies=[Depends(require_platform_management_key_for_capability_control)],
 )
 async def run_agent_version(
     agent_id: str,
@@ -294,8 +289,8 @@ async def run_agent_version(
     )
 
 
-@router.post("/api/agents/{agent_id}/versions/{version}/rollback", response_model=AgentRead, dependencies=[Depends(require_platform_management_key_for_capability_control)])
-@router.post("/api/agents/{agent_id}/rollback/{version}", response_model=AgentRead, include_in_schema=False, dependencies=[Depends(require_platform_management_key_for_capability_control)])
+@router.post("/api/agents/{agent_id}/versions/{version}/rollback", response_model=AgentRead)
+@router.post("/api/agents/{agent_id}/rollback/{version}", response_model=AgentRead, include_in_schema=False)
 async def rollback_agent(
     agent_id: str,
     version: str,

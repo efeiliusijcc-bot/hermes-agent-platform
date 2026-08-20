@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
 
-from app.config import get_settings
 from app.capabilities.policy import ParameterPolicyError, apply_parameter_policy
 from app.capabilities.security import (
     CapabilityTokenError,
@@ -17,10 +16,8 @@ from app.repositories.production import validate_agent_snapshot
 from app.runtime.base import RuntimeAdapter
 from app.skills.package import SkillLoadError, skill_contract, validate_skill_contract
 from app.capabilities.resolver import version_satisfies
-from app.management import (
-    authorize_platform_management_key,
-    require_platform_management_key_for_capability_control,
-)
+from app.config import Settings
+from app.main import app
 
 
 def test_execution_capability_token_binds_version_scope_and_expiry() -> None:
@@ -140,15 +137,6 @@ def test_platform_runtimes_with_hidden_token_dispatchers_advertise_capability_ga
     assert deepseek.features["capability_gateway"] is True
 
 
-def test_management_key_is_required_after_control_plane_cutover(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CAPABILITY_PLATFORM_ENABLED", "true")
-    monkeypatch.setenv("PLATFORM_MANAGEMENT_API_KEY_ENABLED", "true")
-    monkeypatch.setenv("PLATFORM_MANAGEMENT_API_KEY", "platform-admin-test-key")
-    get_settings.cache_clear()
-    try:
-        with pytest.raises(HTTPException) as denied:
-            require_platform_management_key_for_capability_control(None)
-        assert denied.value.status_code == 401
-        authorize_platform_management_key("platform-admin-test-key")
-    finally:
-        get_settings.cache_clear()
+def test_control_plane_has_no_browser_unlock_contract() -> None:
+    assert "platform_management_api_key" not in Settings.model_fields
+    assert "X-Platform-Management-Key" not in json.dumps(app.openapi())

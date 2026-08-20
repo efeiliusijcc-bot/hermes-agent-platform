@@ -40,7 +40,6 @@ const agent: Agent = {
 }
 
 const editor: AgentEditorModel = {
-  mode: { management_key_required: false, read_only_without_key: false },
   agent: {
     id: agent.id,
     name: agent.name,
