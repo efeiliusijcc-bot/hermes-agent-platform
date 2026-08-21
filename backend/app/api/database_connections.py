@@ -9,7 +9,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database_connections import (
-    PostgresMCPClient,
+    DATABASE_CONNECTOR_TYPES,
+    DatabaseMCPClient,
     add_implementations,
     add_scope,
     create_database_connection,
@@ -17,11 +18,11 @@ from app.database_connections import (
     decrypt_credential,
     digest,
     encrypt_credential,
-    ensure_postgres_builtins,
+    ensure_database_builtins,
     invalidate_connector_pools,
     masked_username,
     next_revision_number,
-    postgres_instance,
+    database_instance,
     revise_scopes_for_connector_revision,
     store_resources,
     validate_scope,
@@ -43,10 +44,10 @@ from app.schemas.database_connection import (
     DatabaseConnectionCreate,
     DatabaseConnectionTestRequest,
     DatabaseConnectionUpdate,
+    DatabaseCredentialInput,
     DatabaseCredentialReplace,
+    DatabaseEndpoint,
     DatabaseScopeCreate,
-    PostgreSQLCredentialInput,
-    PostgreSQLEndpoint,
 )
 
 
@@ -68,7 +69,7 @@ async def list_database_connections(session: AsyncSession = Depends(get_session)
         await session.scalars(
             select(ConnectorInstance)
             .join(Connector, Connector.id == ConnectorInstance.connector_id)
-            .where(Connector.type == "postgresql_mcp")
+            .where(Connector.type.in_(DATABASE_CONNECTOR_TYPES))
             .order_by(ConnectorInstance.updated_at.desc())
         )
     )
@@ -79,7 +80,7 @@ async def list_database_connections(session: AsyncSession = Depends(get_session)
 async def test_database_connection(
     payload: DatabaseConnectionTestRequest,
 ) -> dict[str, Any]:
-    return await PostgresMCPClient().test_temporary(payload.endpoint, payload.credential)
+    return await DatabaseMCPClient().test_temporary(payload.endpoint, payload.credential)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -87,7 +88,7 @@ async def create_connection(
     payload: DatabaseConnectionCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    discovery = await PostgresMCPClient().test_temporary(payload.endpoint, payload.credential)
+    discovery = await DatabaseMCPClient().test_temporary(payload.endpoint, payload.credential)
     instance = await create_database_connection(session, payload, discovery)
     return await _detail(session, instance)
 
@@ -97,7 +98,7 @@ async def get_database_connection(
     instance_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    return await _detail(session, await postgres_instance(session, instance_id))
+    return await _detail(session, await database_instance(session, instance_id))
 
 
 @router.patch("/{instance_id}")
@@ -106,7 +107,7 @@ async def update_database_connection(
     payload: DatabaseConnectionUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    instance = await postgres_instance(session, instance_id)
+    instance = await database_instance(session, instance_id)
     old_revision = await current_revision(session, instance)
     if payload.name is not None:
         instance.name = payload.name
@@ -115,17 +116,20 @@ async def update_database_connection(
     if payload.enabled is not None:
         instance.enabled = payload.enabled
     if payload.endpoint is not None:
+        previous_type = str((old_revision.connection_config or {}).get("database_type") or "postgresql")
+        if payload.endpoint.database_type != previous_type:
+            raise HTTPException(status_code=422, detail="数据库类型不能在原连接上更换，请新建连接")
         if old_revision.credential_ref is None:
             raise HTTPException(status_code=409, detail="数据库连接没有凭据")
         credential = await session.get(ConnectorCredential, old_revision.credential_ref)
         if credential is None:
             raise HTTPException(status_code=409, detail="数据库凭据不存在")
         plain = decrypt_credential(credential)
-        input_credential = PostgreSQLCredentialInput(**plain)
-        discovery = await PostgresMCPClient().test_temporary(payload.endpoint, input_credential)
+        input_credential = DatabaseCredentialInput(**plain)
+        discovery = await DatabaseMCPClient().test_temporary(payload.endpoint, input_credential)
         if discovery.get("status") != "READY":
             raise HTTPException(status_code=422, detail="新连接配置测试未通过")
-        _, builtins = await ensure_postgres_builtins(session)
+        _, builtins = await ensure_database_builtins(session)
         config = payload.endpoint.model_dump()
         revision = ConnectorInstanceRevision(
             connector_instance_id=instance.id,
@@ -137,7 +141,7 @@ async def update_database_connection(
             connection_config=config,
             timeout_policy={"connect_seconds": payload.endpoint.connect_timeout_seconds, "read_seconds": 30},
             retry_policy={"max_retries": 1},
-            health_check_config={"kind": "postgresql"},
+            health_check_config={"kind": payload.endpoint.database_type},
             config_digest=digest(config),
         )
         session.add(revision)
@@ -164,7 +168,7 @@ async def disable_database_connection(
     instance_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    instance = await postgres_instance(session, instance_id)
+    instance = await database_instance(session, instance_id)
     await current_revision(session, instance)
     instance.enabled = False
     instance.health_status = "offline"
@@ -178,9 +182,9 @@ async def test_saved_database_connection(
     instance_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    instance = await postgres_instance(session, instance_id)
+    instance = await database_instance(session, instance_id)
     revision = await current_revision(session, instance)
-    result = await PostgresMCPClient().test_revision(revision.id)
+    result = await DatabaseMCPClient().test_revision(revision.id)
     instance.health_status = "healthy" if result.get("status") == "READY" else "offline"
     session.add(ConnectorHealthCheck(
         connector_instance_revision_id=revision.id,
@@ -198,9 +202,9 @@ async def discover_database_connection(
     instance_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    instance = await postgres_instance(session, instance_id)
+    instance = await database_instance(session, instance_id)
     revision = await current_revision(session, instance)
-    result = await PostgresMCPClient().discover_revision(revision.id)
+    result = await DatabaseMCPClient().discover_revision(revision.id)
     await store_resources(session, instance, result)
     await session.commit()
     return result
@@ -211,7 +215,7 @@ async def list_database_resources(
     instance_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    await postgres_instance(session, instance_id)
+    await database_instance(session, instance_id)
     resources = list(
         await session.scalars(
             select(CapabilityResource)
@@ -238,9 +242,9 @@ async def create_database_scope(
     payload: DatabaseScopeCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    instance = await postgres_instance(session, instance_id)
+    instance = await database_instance(session, instance_id)
     revision = await current_revision(session, instance)
-    discovery = await PostgresMCPClient().discover_revision(revision.id)
+    discovery = await DatabaseMCPClient().discover_revision(revision.id)
     validate_scope(discovery, payload.scope)
     value = await add_scope(session, instance, revision, payload.scope)
     await session.commit()
@@ -253,20 +257,20 @@ async def replace_database_credential(
     payload: DatabaseCredentialReplace,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    instance = await postgres_instance(session, instance_id)
+    instance = await database_instance(session, instance_id)
     revision = await current_revision(session, instance)
     if revision.credential_ref is None:
         raise HTTPException(status_code=409, detail="数据库连接没有凭据")
     credential = await session.get(ConnectorCredential, revision.credential_ref)
     if credential is None:
         raise HTTPException(status_code=409, detail="数据库凭据不存在")
-    replacement = PostgreSQLCredentialInput(username=payload.username, password=payload.password)
+    replacement = DatabaseCredentialInput(username=payload.username, password=payload.password)
     endpoint = revision.connection_config or {}
     try:
-        endpoint_value = PostgreSQLEndpoint.model_validate(endpoint)
+        endpoint_value = DatabaseEndpoint.model_validate(endpoint)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail="数据库连接配置无效，不能轮换凭据") from exc
-    discovery = await PostgresMCPClient().test_temporary(endpoint_value, replacement)
+    discovery = await DatabaseMCPClient().test_temporary(endpoint_value, replacement)
     if discovery.get("status") != "READY":
         raise HTTPException(status_code=422, detail="新数据库凭据测试未通过")
     credential.encrypted_payload = encrypt_credential(replacement)
@@ -312,6 +316,7 @@ async def _summary(session: AsyncSession, instance: ConnectorInstance) -> dict[s
         "host": config.get("host"),
         "port": config.get("port"),
         "maintenance_database": config.get("maintenance_database"),
+        "database_type": config.get("database_type", "postgresql"),
         "scope_count": scope_count,
         "current_revision_id": str(revision.id),
         "updated_at": instance.updated_at,

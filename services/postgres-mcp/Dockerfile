@@ -11,6 +11,11 @@ WORKDIR /app
 COPY services/postgres-mcp/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir --requirement requirements.txt
 
+COPY drivers/dm/ /opt/dm-driver/
+RUN set -eu; \
+    wheel=$(find /opt/dm-driver -maxdepth 1 -type f -name '*.whl' -print -quit); \
+    if [ -n "$wheel" ]; then pip install --no-cache-dir "$wheel"; fi
+
 COPY services/postgres-mcp/hermes_postgres_mcp ./hermes_postgres_mcp
 RUN chown -R postgres-mcp:postgres-mcp /app
 

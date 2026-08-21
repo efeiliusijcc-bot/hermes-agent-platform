@@ -211,31 +211,32 @@
 
 ### 用途
 
-连接内网 PostgreSQL，发现数据库、Schema、Table、View 和字段，并为 Agent 创建最小只读 Resource Scope。
+连接内网 PostgreSQL、MySQL、MariaDB、Doris、StarRocks、SQL Server、Oracle、达梦 DM、ClickHouse、Elasticsearch 或 SQLite，发现可访问资源，并为 Agent 创建最小只读数据范围。各类型的验证状态和驱动要求见 `docs/multi-database-connection.md`。
 
 ### 使用前准备
 
-- postgres-mcp 容器已加入目标 PostgreSQL 所在 Docker 网络。
-- 准备具有最小只读权限和 CONNECT 权限的数据库账号。
-- 确认维护库名称，通常为 postgres。
+- `agent-database-mcp` 容器已加入目标数据库所在 Docker 网络；SQLite 文件已放入 `data/database-files/`。
+- 准备具有最小只读权限的数据库账号。PostgreSQL 还需 CONNECT 权限；Elasticsearch 还需文档规定的只读发现权限。
+- 达梦环境已提供与目标 CPU 架构和 Python 3.12 匹配的官方 `dmPython` 驱动。
 
 ### 字段说明
 
 | 字段 | 含义 | 推荐配置 |
 | --- | --- | --- |
-| 主机 | PostgreSQL 在容器网络中的 DNS 名称。 | 填写目标容器名，例如 business-postgres；不要填写 127.0.0.1。 |
-| 端口 | PostgreSQL 容器监听端口。 | 通常为 5432，不要求暴露宿主机端口。 |
-| 维护库 | 用于登录并枚举其他数据库的初始数据库。 | 默认 postgres；账号必须有 CONNECT 权限。 |
+| 数据库类型 | 连接所使用的协议和 SQL 方言。 | 创建后不可原地更换；需要更换时创建新连接。 |
+| 主机 | 目标数据库在容器网络中的 DNS 名称。 | 填写目标容器名或内网主机名；不要填写 127.0.0.1。 |
+| 端口 | 目标数据库实际监听端口。 | 使用类型默认端口或目标环境实际端口，不要求暴露宿主机端口。 |
+| 维护库 | 用于初始登录和资源发现的数据库。 | 按数据库类型默认值填写；账号必须能访问。 |
 | SSL 模式 | 数据库连接的 TLS 策略。 | 完全隔离内网可按部署策略使用 disable；跨受控网络按数据库要求配置。 |
-| 用户名 / 密码 | PostgreSQL 登录凭据，加密托管。 | 使用专用只读账号，不复用管理员账号。 |
+| 用户名 / 密码 | 数据库登录凭据，加密托管。 | 使用专用只读账号，不复用管理员账号；SQLite 不需要凭据。 |
 | Schema / Table / View | 数据库内可选择的数据资源层级。 | 只勾选任务所需资源，优先授权 View。 |
 | Scope | 固定一个数据库及允许资源与限制的不可变范围。 | 按 Agent 或业务用途拆分 Scope。 |
 | 最大行数 / 超时 / 配额 | 单次查询和每分钟调用的资源限制。 | 预览 20-50 行，常规查询不超过 200 行；超时从 5-15 秒起。 |
 
 ### 操作步骤
 
-1. 部署人员将 postgres-mcp 容器加入目标数据库网络。
-2. 打开创建向导，填写主机、端口、维护库、SSL、用户名和密码。
+1. 部署人员将 `agent-database-mcp` 容器加入目标数据库网络，或将 SQLite 文件放入平台数据库文件目录。
+2. 打开创建向导，先选择数据库类型，再填写主机、端口、维护库、SSL、用户名和密码。
 3. 执行临时测试，确认 DNS、TCP、认证、SELECT 1 和只读检查通过。
 4. 读取数据库资源树，选择数据库及允许的 Schema、Table 或 View。
 5. 为每个数据库分别设置最大行数、超时和每分钟配额并保存 Scope Revision。
@@ -251,7 +252,9 @@
 
 | 现象 | 常见原因 | 处理方法 |
 | --- | --- | --- |
-| 主机解析失败 | postgres-mcp 未加入目标网络，或填写了错误容器名。 | 由部署人员连接 Docker 网络，并用 docker inspect 核对网络和容器名。 |
+| 主机解析失败 | `agent-database-mcp` 未加入目标网络，或填写了错误容器名。 | 由部署人员连接 Docker 网络，并用 docker inspect 核对网络和容器名。 |
+| Elasticsearch 权限不足 | 账号缺少资源发现所需只读权限。 | 增加 cluster monitor，以及目标索引的 read、view_index_metadata、monitor。 |
+| 达梦驱动未安装 | 镜像中没有匹配目标平台的官方 dmPython。 | 将厂商 wheel 和必需原生库放入 drivers/dm 后重新构建数据库 MCP 镜像。 |
 | 未再次填写密码也能测试已保存连接 | 平台使用之前加密保存的托管凭据。 | 这是正常行为，并非无凭据访问；需要换密码时使用凭据轮换。 |
 | 认证成功但看不到部分数据库 | 账号没有目标数据库 CONNECT 或 Schema USAGE 权限。 | 由数据库管理员补充最小只读权限，再重新发现。 |
 | 查询被安全策略拒绝 | SQL 含写 CTE、锁、危险函数、多语句或跨 Scope 表。 | 改为单条纯 SELECT，并限制在已授权表或视图中。 |
@@ -259,7 +262,7 @@
 ### 安全注意事项
 
 - 模型看不到数据库地址、用户名、密码、Connection ID 或 Credential ID。
-- 数据库账号只读与 postgres-mcp SQL AST 拦截必须同时保留。
+- 数据库账号只读与 `agent-database-mcp` SQL AST 拦截必须同时保留。
 - 连接停用或凭据轮换后应立即失效旧连接池。
 
 ## API Center
@@ -433,7 +436,7 @@
 
 ### 接入一台 PostgreSQL 服务器
 
-1. 由部署人员连接 postgres-mcp 与数据库 Docker 网络。
+1. 由部署人员连接 agent-database-mcp 与数据库 Docker 网络。
 2. 通过向导测试凭据并发现数据库树。
 3. 按数据库分别创建最小 Scope。
 4. 绑定 Agent 后验证允许查询和越权拒绝。

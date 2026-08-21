@@ -43,4 +43,25 @@ describe('AppLayout sidebar', () => {
     expect(wrapper.get('button[aria-label="展开导航"]')).toBeTruthy()
     wrapper.unmount()
   })
+
+  it('uses the fixed viewport main layout only for the chat route', async () => {
+    await router.push('/chat')
+    await router.isReady()
+    const wrapper = mount(AppLayout, {
+      global: {
+        plugins: [router],
+        stubs: {
+          NMenu: true,
+          RouterView: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('main').classes()).toContain('app-main-workspace')
+    await router.push('/agents')
+    await flushPromises()
+    expect(wrapper.get('main').classes()).not.toContain('app-main-workspace')
+    wrapper.unmount()
+  })
 })

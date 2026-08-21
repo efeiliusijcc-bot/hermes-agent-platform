@@ -21,7 +21,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from hermes_postgres_mcp.auth import AccessDenied, bearer, verify_capability_token
-from hermes_postgres_mcp.sql_policy import QueryAnalysis, SQLPolicyError, analyze_select
+from hermes_postgres_mcp.adapters import AdapterError, adapter_for
+from hermes_postgres_mcp.sql_policy import QueryAnalysis, SQLPolicyError, analyze_read_query
 
 
 logging.basicConfig(
@@ -87,8 +88,8 @@ async def lifespan(_: Any) -> AsyncIterator[dict[str, Any]]:
 
 
 mcp = FastMCP(
-    "Hermes PostgreSQL MCP",
-    instructions="Platform-scoped, read-only PostgreSQL tools.",
+    "Agent Database MCP",
+    instructions="Platform-scoped, read-only multi-database tools.",
     host="0.0.0.0",
     port=8091,
     streamable_http_path="/mcp",
@@ -122,6 +123,10 @@ async def db_describe_table(schema: str, table: str, ctx: Context) -> dict[str, 
     runtime = await _authorize(ctx, "db_describe_table")
     _require_permission(runtime["scope"], "describe")
     _require_object(runtime["scope"], schema, table)
+    if runtime["database_type"] != "postgresql":
+        result = await adapter_for(runtime["database_type"]).describe(runtime, schema, table)
+        _require_response_size(result, int(runtime["scope"]["limits"].get("max_response_bytes") or DEFAULT_MAX_RESPONSE_BYTES))
+        return result
     pool = await _target_pool(runtime)
     rows = await pool.fetch(
         """
@@ -143,6 +148,10 @@ async def db_preview_table(schema: str, table: str, ctx: Context, limit: int = 2
     _require_permission(runtime["scope"], "preview")
     _require_object(runtime["scope"], schema, table)
     maximum = min(max(1, int(limit)), int(runtime["scope"]["limits"]["max_rows"]))
+    if runtime["database_type"] != "postgresql":
+        result = await adapter_for(runtime["database_type"]).preview(runtime, schema, table, maximum)
+        _require_response_size(result, int(runtime["scope"]["limits"].get("max_response_bytes") or DEFAULT_MAX_RESPONSE_BYTES))
+        return result
     sql = f'SELECT * FROM {_identifier(schema)}.{_identifier(table)} LIMIT {maximum + 1}'
     return await _execute(runtime, sql, maximum=maximum)
 
@@ -151,7 +160,7 @@ async def db_preview_table(schema: str, table: str, ctx: Context, limit: int = 2
 async def db_select(sql: str, ctx: Context) -> dict[str, Any]:
     runtime = await _authorize(ctx, "db_select")
     _require_permission(runtime["scope"], "query")
-    analysis = analyze_select(sql)
+    analysis = analyze_read_query(sql, runtime["database_type"])
     await _validate_analysis(runtime, analysis)
     return await _execute(runtime, analysis.sql, maximum=int(runtime["scope"]["limits"]["max_rows"]))
 
@@ -160,8 +169,12 @@ async def db_select(sql: str, ctx: Context) -> dict[str, Any]:
 async def db_explain(sql: str, ctx: Context) -> dict[str, Any]:
     runtime = await _authorize(ctx, "db_explain")
     _require_permission(runtime["scope"], "query")
-    analysis = analyze_select(sql)
+    analysis = analyze_read_query(sql, runtime["database_type"])
     await _validate_analysis(runtime, analysis)
+    if runtime["database_type"] != "postgresql":
+        result = await adapter_for(runtime["database_type"]).explain(runtime, analysis.sql)
+        _require_response_size(result, int(runtime["scope"]["limits"].get("max_response_bytes") or DEFAULT_MAX_RESPONSE_BYTES))
+        return result
     pool = await _target_pool(runtime)
     limits = runtime["scope"]["limits"]
     async with pool.acquire() as connection:
@@ -183,7 +196,7 @@ async def test_temporary(request: Request) -> JSONResponse:
     except ValueError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=422)
     except Exception:
-        logger.exception("temporary PostgreSQL test failed")
+        logger.exception("temporary database test failed")
         return JSONResponse({"detail": "数据库连接测试失败"}, status_code=502)
 
 
@@ -219,7 +232,7 @@ async def _revision_discovery(request: Request) -> JSONResponse:
     except (ValueError, AccessDenied) as exc:
         return JSONResponse({"detail": str(exc)}, status_code=422)
     except Exception:
-        logger.exception("saved PostgreSQL test failed")
+        logger.exception("saved database test failed")
         return JSONResponse({"detail": "数据库连接测试失败"}, status_code=502)
 
 
@@ -247,6 +260,9 @@ async def _load_revision(revision_id: UUID) -> dict[str, Any]:
 
 
 async def _test_and_discover(config: dict[str, Any], credential: dict[str, Any]) -> dict[str, Any]:
+    database_type = str(config.get("database_type") or "postgresql")
+    if database_type != "postgresql":
+        return await adapter_for(database_type).test_and_discover(config, credential)
     started = monotonic()
     checks: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -326,6 +342,7 @@ async def _test_and_discover(config: dict[str, Any], credential: dict[str, Any])
     checks.append({"name": "discovery", "status": "passed", "detail": f"发现 {len(databases)} 个数据库"})
     return {
         "status": "READY",
+        "database_type": "postgresql",
         "latency_ms": max(0, round((monotonic() - started) * 1000)),
         "checks": checks,
         "server": {"version": f"PostgreSQL {server_version}"},
@@ -419,7 +436,7 @@ async def _authorize(ctx: Context, tool: str) -> dict[str, Any]:
         JOIN agent_capability_bindings b ON b.id = $2::uuid AND b.agent_version_id = av.id AND b.enabled
         JOIN capability_implementations ci ON ci.id = b.implementation_id AND ci.status = 'active'
         JOIN connector_operations o ON o.id = ci.connector_operation_id
-        JOIN connectors connector ON connector.id = o.connector_id AND connector.type = 'postgresql_mcp'
+        JOIN connectors connector ON connector.id = o.connector_id AND connector.type IN ('postgresql_mcp', 'database_mcp')
         JOIN connector_instance_revisions r ON r.id = ci.connector_instance_revision_id
         JOIN connector_instances i ON i.id = r.connector_instance_id
         JOIN connector_credentials cred ON cred.id = r.credential_ref AND cred.rotation_status = 'active'
@@ -448,6 +465,7 @@ async def _authorize(ctx: Context, tool: str) -> dict[str, Any]:
     return {
         "revision_id": revision_id,
         "database": _required_text(scope, "database"),
+        "database_type": str(_stored_object(row["connection_config"]).get("database_type") or "postgresql"),
         "config": _stored_object(row["connection_config"]),
         "credential": _decrypt(str(row["encrypted_payload"])),
         "credential_epoch": row["last_rotated_at"].isoformat(),
@@ -494,20 +512,33 @@ async def _invalidate(revision_id: str) -> None:
 async def _validate_analysis(runtime: dict[str, Any], analysis: QueryAnalysis) -> None:
     scope = runtime["scope"]
     schemas = _object(scope.get("schemas"))
+    case_insensitive = str(runtime.get("database_type") or "postgresql") in {"oracle", "dm", "sqlserver"}
+    normalized_schemas = {str(key).lower() if case_insensitive else str(key): value for key, value in schemas.items()}
     relation_index: dict[str, list[str]] = {}
-    for schema_name, definition in schemas.items():
+    for schema_name, definition in normalized_schemas.items():
         definition = _object(definition)
         for relation in [*definition.get("tables", []), *definition.get("views", [])]:
-            relation_index.setdefault(str(relation), []).append(str(schema_name))
+            normalized_relation = str(relation).lower() if case_insensitive else str(relation)
+            relation_index.setdefault(normalized_relation, []).append(str(schema_name))
     for schema, relation in analysis.relations:
+        normalized_relation = relation.lower() if case_insensitive else relation
+        normalized_schema = schema.lower() if case_insensitive and schema is not None else schema
         if schema is None:
-            matches = relation_index.get(relation, [])
+            matches = relation_index.get(normalized_relation, [])
             if len(matches) != 1:
                 raise AccessDenied(f"未限定 Schema 的对象 {relation} 不唯一或不在 Scope")
-        elif schema not in schemas or relation not in [*schemas[schema].get("tables", []), *schemas[schema].get("views", [])]:
+        elif normalized_schema not in normalized_schemas or normalized_relation not in [
+            str(item).lower() if case_insensitive else str(item)
+            for item in [
+                *normalized_schemas.get(normalized_schema, {}).get("tables", []),
+                *normalized_schemas.get(normalized_schema, {}).get("views", []),
+            ]
+        ]:
             raise AccessDenied(f"对象 {schema}.{relation} 不在 Scope")
     if analysis.uses_aggregate and not bool(_object(scope.get("permissions")).get("aggregate", True)):
         raise AccessDenied("当前 Scope 禁止聚合查询")
+    if str(runtime.get("database_type") or "postgresql") != "postgresql":
+        return
     if analysis.functions:
         custom = [
             function
@@ -532,6 +563,10 @@ async def _validate_analysis(runtime: dict[str, Any], analysis: QueryAnalysis) -
 
 
 async def _execute(runtime: dict[str, Any], sql: str, *, maximum: int) -> dict[str, Any]:
+    if runtime["database_type"] != "postgresql":
+        result = await adapter_for(runtime["database_type"]).select(runtime, sql, maximum)
+        _require_response_size(result, int(_object(runtime["scope"].get("limits")).get("max_response_bytes") or DEFAULT_MAX_RESPONSE_BYTES))
+        return result
     pool = await _target_pool(runtime)
     limits = _object(runtime["scope"].get("limits"))
     wrapped = f"SELECT * FROM ({sql}) AS hermes_scoped_query LIMIT {maximum + 1}"
@@ -594,8 +629,8 @@ def _decrypt(value: str) -> dict[str, Any]:
     except (InvalidToken, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("数据库凭据无法解密") from exc
     result = _object(payload)
-    _required_text(result, "username")
-    _required_text(result, "password")
+    if not isinstance(result.get("username", ""), str) or not isinstance(result.get("password", ""), str):
+        raise ValueError("数据库凭据格式无效")
     return result
 
 

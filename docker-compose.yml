@@ -1,7 +1,6 @@
-name: hermes-agent-platform
-
 services:
   frontend:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-frontend
     build:
       context: .
       dockerfile: docker/frontend.Dockerfile
@@ -22,6 +21,7 @@ services:
       - platform-edge
 
   agent-api:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-api
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
@@ -156,6 +156,7 @@ services:
       - deepseek-runtime-internal
 
   agent-worker:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-worker
     image: hermes-agent-platform/agent-api:capability-v1
     restart: unless-stopped
     entrypoint: ["python", "-m", "app.worker"]
@@ -279,6 +280,7 @@ services:
       - deepseek-runtime-internal
 
   hermes-orchestrator:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-orchestrator
     image: hermes-agent-platform/agent-api:capability-v1
     restart: unless-stopped
     entrypoint: ["python", "-m", "app.orchestrator_worker"]
@@ -331,6 +333,7 @@ services:
       - platform-internal
 
   source-recall-gateway:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-source-recall
     image: hermes-agent-platform/agent-api:phase7
     restart: unless-stopped
     entrypoint: ["uvicorn", "app.source_recall_gateway:app", "--host", "0.0.0.0", "--port", "8082"]
@@ -360,6 +363,7 @@ services:
       - platform-edge
 
   model-gateway:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-model-gateway
     image: hermes-agent-platform/agent-api:phase7
     restart: unless-stopped
     entrypoint: ["uvicorn", "app.model_gateway:app", "--host", "0.0.0.0", "--port", "8080"]
@@ -398,6 +402,7 @@ services:
       - platform-edge
 
   model-stub:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-model-stub
     profiles: ["test"]
     image: hermes-agent-platform/agent-api:phase7
     restart: "no"
@@ -418,6 +423,7 @@ services:
       - platform-internal
 
   hermes-init:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-runtime-init
     image: nousresearch/hermes-agent:v2026.8.3@sha256:16788311e2fa3035456bdc1bafb8ec2b1777db64ebf020af9bb7eb73c3712c9e
     restart: "no"
     entrypoint: ["/opt/hermes/.venv/bin/python", "/opt/bootstrap/hermes-init.py"]
@@ -431,6 +437,7 @@ services:
       - platform-internal
 
   hermes-runtime:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-runtime
     build:
       context: .
       dockerfile: services/hermes-runtime/Dockerfile
@@ -467,6 +474,7 @@ services:
       - platform-internal
 
   pi-runtime:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-pi-runtime
     build:
       context: .
       dockerfile: services/pi-runtime/Dockerfile
@@ -513,6 +521,7 @@ services:
       - pi-runtime-internal
 
   deepseek-runtime:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-deepseek-runtime
     image: hermes-agent-platform/deepseek-runtime:capability-v1
     restart: unless-stopped
     entrypoint: ["uvicorn", "deepseek_runtime_service.gateway:app", "--host", "0.0.0.0", "--port", "8770"]
@@ -557,6 +566,7 @@ services:
       - platform-internal
 
   deepseek-harness-core:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-deepseek-core
     build:
       context: .
       dockerfile: services/deepseek-runtime/Dockerfile
@@ -618,6 +628,7 @@ services:
       - deepseek-harness-internal
 
   mcp-gateway:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-mcp-gateway
     build:
       context: .
       dockerfile: services/mcp-gateway/Dockerfile
@@ -669,6 +680,7 @@ services:
       - pi-runtime-internal
 
   postgres-mcp:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-database-mcp
     build:
       context: .
       dockerfile: services/postgres-mcp/Dockerfile
@@ -695,6 +707,10 @@ services:
       POSTGRES_MCP_DISCOVERY_CONCURRENCY: ${POSTGRES_MCP_DISCOVERY_CONCURRENCY:-4}
       POSTGRES_MCP_DISCOVERY_MAX_DATABASES: ${POSTGRES_MCP_DISCOVERY_MAX_DATABASES:-100}
       POSTGRES_MCP_MAX_RESPONSE_BYTES: ${POSTGRES_MCP_MAX_RESPONSE_BYTES:-2097152}
+      DATABASE_MCP_SQLITE_ROOT: /data/databases
+      DM_PYTHON_PATH: /opt/dm-driver
+    volumes:
+      - ./data/database-files:/data/databases:ro
     expose:
       - "8091"
     read_only: true
@@ -719,6 +735,7 @@ services:
       - platform-internal
 
   postgres-mcp-test-db:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-postgres-test
     profiles: ["postgres-mcp-e2e"]
     image: pgvector/pgvector:0.8.1-pg17
     restart: unless-stopped
@@ -739,6 +756,7 @@ services:
       - postgres-mcp-test-target
 
   knowledge-service:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-knowledge
     build:
       context: .
       dockerfile: services/knowledge-service/Dockerfile
@@ -779,6 +797,7 @@ services:
       - platform-internal
 
   postgres:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-postgres
     image: pgvector/pgvector:0.8.1-pg17
     restart: unless-stopped
     environment:
@@ -801,6 +820,7 @@ services:
       - platform-internal
 
   redis:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-redis
     image: redis:7.4-alpine
     restart: unless-stopped
     environment:
@@ -824,6 +844,7 @@ services:
       - platform-internal
 
   minio:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-minio
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     restart: unless-stopped
     environment:
@@ -846,6 +867,7 @@ services:
       - platform-internal
 
   minio-init:
+    container_name: ${AGENT_CONTAINER_PREFIX:-agent}-minio-init
     image: minio/mc:RELEASE.2025-04-16T18-13-26Z
     restart: "no"
     depends_on:
@@ -868,21 +890,21 @@ services:
 
 networks:
   platform-internal:
-    name: ${HERMES_INTERNAL_NETWORK_NAME:-hermes-agent-platform-internal}
+    name: ${HERMES_INTERNAL_NETWORK_NAME:-agent-internal}
     internal: true
   platform-edge:
-    name: ${HERMES_EDGE_NETWORK_NAME:-hermes-agent-platform-edge}
+    name: ${HERMES_EDGE_NETWORK_NAME:-agent-edge}
   pi-runtime-internal:
-    name: ${HERMES_PI_RUNTIME_NETWORK_NAME:-hermes-agent-platform-pi-runtime}
+    name: ${HERMES_PI_RUNTIME_NETWORK_NAME:-agent-pi-runtime}
     internal: true
   deepseek-runtime-internal:
-    name: ${HERMES_DEEPSEEK_RUNTIME_NETWORK_NAME:-hermes-agent-platform-deepseek-runtime}
+    name: ${HERMES_DEEPSEEK_RUNTIME_NETWORK_NAME:-agent-deepseek-runtime}
     internal: true
   deepseek-harness-internal:
-    name: ${HERMES_DEEPSEEK_HARNESS_NETWORK_NAME:-hermes-agent-platform-deepseek-harness}
+    name: ${HERMES_DEEPSEEK_HARNESS_NETWORK_NAME:-agent-deepseek-core}
     internal: true
   postgres-mcp-test-target:
-    name: ${HERMES_POSTGRES_MCP_TEST_NETWORK_NAME:-hermes-agent-platform-postgres-mcp-test-target}
+    name: ${HERMES_POSTGRES_MCP_TEST_NETWORK_NAME:-agent-postgres-test}
     internal: true
 
 volumes:

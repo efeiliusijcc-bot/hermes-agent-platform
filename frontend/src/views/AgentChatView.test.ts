@@ -112,7 +112,7 @@ function mountChat() {
         NButton: {
           props: ['disabled', 'loading'],
           emits: ['click'],
-          template: '<button :disabled="disabled" @click="$emit(\'click\')"><slot name="icon" /><slot /></button>',
+          template: '<button :disabled="disabled" @click="$emit(\'click\', $event)"><slot name="icon" /><slot /></button>',
         },
         NInput: {
           props: ['value', 'type', 'disabled', 'placeholder'],
@@ -204,6 +204,34 @@ describe('AgentChatView', () => {
     expect(list).toHaveBeenCalledWith({ agent_id: 'agent-b', limit: 50 })
     expect(router.currentRoute.value.query.agent).toBe('agent-b')
     expect(String(router.currentRoute.value.query.session)).toMatch(/^chat-/)
+    wrapper.unmount()
+  })
+
+  it('opens responsive Agent and session drawers and closes them with Escape', async () => {
+    vi.spyOn(platformApi, 'listAgents').mockResolvedValue([agent()])
+    vi.spyOn(platformApi, 'listExecutions').mockResolvedValue(executionList([]))
+    await router.push('/chat?agent=agent-a&session=chat-a')
+    const wrapper = mountChat()
+    await flushPromises()
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+
+    const agentOpener = wrapper.get('button[aria-label="打开 Agent 列表"]')
+    await agentOpener.trigger('click')
+    expect(wrapper.get('.chat-agent-pane').classes()).toContain('mobile-open')
+    expect(focus.mock.contexts).toContain(wrapper.get('button[aria-label="关闭 Agent 列表"]').element)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.get('.chat-agent-pane').classes()).not.toContain('mobile-open')
+    expect(focus.mock.contexts).toContain(agentOpener.element)
+
+    const sessionOpener = wrapper.get('button[aria-label="打开会话列表"]')
+    await sessionOpener.trigger('click')
+    expect(wrapper.get('.chat-session-pane').classes()).toContain('mobile-open')
+    expect(focus.mock.contexts).toContain(wrapper.get('button[aria-label="关闭会话列表"]').element)
+    await wrapper.get('button[aria-label="关闭会话列表"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.chat-session-pane').classes()).not.toContain('mobile-open')
+    expect(focus.mock.contexts).toContain(sessionOpener.element)
     wrapper.unmount()
   })
 

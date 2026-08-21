@@ -3,20 +3,24 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NIcon } from 'naive-ui'
 import {
+  ArrowDown,
   GitBranch,
+  Menu2,
   Messages,
+  PlayerStop,
   Plus,
   Refresh,
   Search,
   Send,
   Users,
+  X,
 } from '@vicons/tabler'
 
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
-import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import TeamChatRun from '@/components/agent/TeamChatRun.vue'
+import { useChatThreadViewport } from '@/composables/useChatThreadViewport'
 import type {
   AgentTeam,
   TeamConversationSummary,
@@ -43,12 +47,28 @@ const selectedWorkflowValue = ref('direct')
 const composer = ref('')
 const teamSearch = ref('')
 const refreshTick = ref(0)
-const threadElement = ref<HTMLElement | null>(null)
+const mobilePanel = ref<'teams' | 'sessions' | null>(null)
+const detailRunId = ref('')
+const workspaceElement = ref<HTMLElement | null>(null)
+const panelTrigger = ref<HTMLElement | null>(null)
+const detailTrigger = ref<HTMLElement | null>(null)
+const detailActionLoading = ref(false)
 let conversationSerial = 0
 let runSerial = 0
 let pollTimer: number | null = null
 let pollInFlight = false
 let initialized = false
+
+const {
+  threadElement,
+  latestAvailable,
+  rememberThreadPosition,
+  handleThreadScroll,
+  jumpToLatest,
+  restoreSessionPosition,
+  contentChanged,
+} = useChatThreadViewport(selectedSessionId)
+void threadElement
 
 const activeStatuses = new Set(['pending', 'running', 'human_review'])
 const activeTeams = computed(() => teams.value.filter((team) => team.status === 'active'))
@@ -62,6 +82,7 @@ const selectedTeam = computed(() => teams.value.find((team) => team.id === selec
 const selectedConversation = computed(() => conversations.value.find(
   (conversation) => conversation.session_id === selectedSessionId.value,
 ) || null)
+const selectedDetailRun = computed(() => runs.value.find((run) => run.id === detailRunId.value) || null)
 const teamWorkflows = computed(() => workflows.value.filter(
   (workflow) => workflow.team_id === selectedTeamId.value && workflow.status === 'active',
 ))
@@ -138,11 +159,6 @@ function handleVisibilityChange() {
   else if (hasActiveRun.value) schedulePolling(0)
 }
 
-async function scrollToLatest() {
-  await nextTick()
-  if (threadElement.value) threadElement.value.scrollTop = threadElement.value.scrollHeight
-}
-
 async function loadRuns(silent = false) {
   const teamId = selectedTeamId.value
   const sessionId = selectedSessionId.value
@@ -162,6 +178,7 @@ async function loadRuns(silent = false) {
     }
     error.value = ''
     schedulePolling()
+    await contentChanged()
   } catch (value) {
     if (serial === runSerial) error.value = getApiErrorMessage(value)
   } finally {
@@ -170,6 +187,7 @@ async function loadRuns(silent = false) {
 }
 
 async function openConversation(conversation: TeamConversationSummary, push = true) {
+  rememberThreadPosition()
   stopPolling()
   selectedSessionId.value = conversation.session_id
   selectedWorkflowValue.value = conversation.workflow_id || 'direct'
@@ -177,10 +195,13 @@ async function openConversation(conversation: TeamConversationSummary, push = tr
   sendError.value = ''
   if (push) await writeRoute(true)
   await loadRuns()
-  await scrollToLatest()
+  await restoreSessionPosition()
+  mobilePanel.value = null
+  detailRunId.value = ''
 }
 
 async function startNewChat(workflowValue = 'direct', push = true) {
+  rememberThreadPosition()
   stopPolling()
   selectedSessionId.value = newSessionId()
   selectedWorkflowValue.value = workflowValue
@@ -188,6 +209,9 @@ async function startNewChat(workflowValue = 'direct', push = true) {
   composer.value = ''
   sendError.value = ''
   if (push) await writeRoute(true)
+  await jumpToLatest()
+  mobilePanel.value = null
+  detailRunId.value = ''
 }
 
 async function loadConversations(silent = false, requestedSession = '') {
@@ -238,6 +262,7 @@ async function refreshConversationSummaries() {
 
 async function selectTeam(teamId: string, push = true) {
   if (!teamId || teamId === selectedTeamId.value && conversations.value.length) return
+  rememberThreadPosition()
   stopPolling()
   selectedTeamId.value = teamId
   selectedSessionId.value = ''
@@ -247,6 +272,8 @@ async function selectTeam(teamId: string, push = true) {
   sendError.value = ''
   if (push) await writeRoute(true)
   await loadConversations(false)
+  mobilePanel.value = null
+  detailRunId.value = ''
 }
 
 async function changeWorkflow(value: string) {
@@ -278,7 +305,7 @@ async function sendMessage() {
     composer.value = ''
     runs.value = [...runs.value, run].sort((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at))
     await writeRoute(false)
-    await scrollToLatest()
+    await jumpToLatest()
     schedulePolling()
     void refreshConversationSummaries()
   } catch (value) {
@@ -292,6 +319,59 @@ function handleComposerKeydown(event: KeyboardEvent) {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
   event.preventDefault()
   void sendMessage()
+}
+
+function openMobilePanel(panel: 'teams' | 'sessions', event?: MouseEvent) {
+  panelTrigger.value = event?.currentTarget as HTMLElement || document.activeElement as HTMLElement | null
+  mobilePanel.value = panel
+  void nextTick(() => {
+    workspaceElement.value?.querySelector<HTMLElement>(`.${panel === 'teams' ? 'team-picker-pane' : 'team-session-pane'} .team-mobile-close`)?.focus()
+  })
+}
+
+function closeMobilePanel(restoreFocus = true) {
+  if (!mobilePanel.value) return
+  mobilePanel.value = null
+  if (restoreFocus) void nextTick(() => panelTrigger.value?.focus())
+}
+
+function openRunDetails(runId: string, trigger?: HTMLElement) {
+  detailTrigger.value = trigger || document.activeElement as HTMLElement | null
+  detailRunId.value = runId
+  void nextTick(() => {
+    workspaceElement.value?.querySelector<HTMLElement>('button[aria-label="关闭团队协作详情"]')?.focus()
+  })
+}
+
+function closeRunDetails() {
+  if (!detailRunId.value) return
+  detailRunId.value = ''
+  void nextTick(() => detailTrigger.value?.focus())
+}
+
+async function cancelDetailRun() {
+  const run = selectedDetailRun.value
+  if (!run || !activeStatuses.has(run.status) || detailActionLoading.value) return
+  detailActionLoading.value = true
+  try {
+    await platformApi.cancelWorkflowRun(run.id)
+    await refreshCurrent()
+  } catch (value) {
+    error.value = getApiErrorMessage(value)
+  } finally {
+    detailActionLoading.value = false
+  }
+}
+
+function handleEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  if (detailRunId.value) {
+    event.preventDefault()
+    closeRunDetails()
+  } else if (mobilePanel.value) {
+    event.preventDefault()
+    closeMobilePanel()
+  }
 }
 
 async function refreshCurrent() {
@@ -365,27 +445,24 @@ watch(
 
 onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
+  document.addEventListener('keydown', handleEscape)
   void initialize()
 })
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
+  document.removeEventListener('keydown', handleEscape)
   stopPolling()
 })
 </script>
 
 <template>
   <section class="team-chat-page">
-    <PageHeader eyebrow="AGENT TEAM" title="团队聊天" description="在固定 Team 上连续提问，Manager 会汇总每轮协作结果。">
-      <template #actions>
-        <NButton :loading="loading || conversationsLoading || runsLoading" @click="refreshCurrent"><template #icon><NIcon :component="Refresh" /></template>刷新</NButton>
-      </template>
-    </PageHeader>
-
     <NAlert v-if="error" type="error" closable class="team-chat-alert" @close="error = ''">{{ error }}</NAlert>
 
-    <section v-if="activeTeams.length" class="team-chat-workspace">
-      <aside class="team-picker-pane">
-        <header><div><span>Teams</span><strong>Agent Team</strong></div><small>{{ activeTeams.length }} 个可用</small></header>
+    <section v-if="activeTeams.length" ref="workspaceElement" class="team-chat-workspace">
+      <div v-if="mobilePanel" class="team-mobile-scrim" @click="closeMobilePanel()" />
+      <aside class="team-picker-pane" :class="{ 'mobile-open': mobilePanel === 'teams' }" aria-label="Agent Team 选择面板">
+        <header><div><span>Teams</span><strong>Agent Team</strong></div><small>{{ activeTeams.length }} 个可用</small><button class="team-mobile-close" type="button" aria-label="关闭 Agent Team 列表" @click="closeMobilePanel()"><NIcon :component="X" /></button></header>
         <div class="team-chat-search"><NInput v-model:value="teamSearch" clearable size="small" placeholder="搜索 Team"><template #prefix><NIcon :component="Search" /></template></NInput></div>
         <div v-if="filteredTeams.length" class="team-picker-list" role="listbox" aria-label="Agent Team 列表">
           <button v-for="team in filteredTeams" :key="team.id" type="button" role="option" :aria-selected="team.id === selectedTeamId" :class="{ active: team.id === selectedTeamId }" @click="selectTeam(team.id)">
@@ -397,8 +474,8 @@ onBeforeUnmount(() => {
         <footer><NButton block secondary @click="router.push({ name: 'multi-agent' })"><template #icon><NIcon :component="GitBranch" /></template>管理团队编排</NButton></footer>
       </aside>
 
-      <aside class="team-session-pane">
-        <header><div><span>Conversations</span><strong>团队会话</strong></div><NButton quaternary circle size="small" aria-label="新建团队聊天" :disabled="!selectedTeam" @click="startNewChat()"><template #icon><NIcon :component="Plus" /></template></NButton></header>
+      <aside class="team-session-pane" :class="{ 'mobile-open': mobilePanel === 'sessions' }" aria-label="团队会话选择面板">
+        <header><div><span>Conversations</span><strong>团队会话</strong></div><NButton quaternary circle size="small" aria-label="新建团队聊天" :disabled="!selectedTeam" @click="startNewChat()"><template #icon><NIcon :component="Plus" /></template></NButton><button class="team-mobile-close" type="button" aria-label="关闭团队会话列表" @click="closeMobilePanel()"><NIcon :component="X" /></button></header>
         <div v-if="conversationsLoading && !conversations.length" class="team-chat-skeleton"><span v-for="index in 5" :key="index" /></div>
         <div v-else-if="conversations.length" class="team-session-list" role="listbox" aria-label="团队会话列表">
           <button v-for="conversation in conversations" :key="conversation.session_id" type="button" role="option" :aria-selected="conversation.session_id === selectedSessionId" :class="{ active: conversation.session_id === selectedSessionId }" @click="openConversation(conversation)">
@@ -413,19 +490,21 @@ onBeforeUnmount(() => {
 
       <main class="team-thread-pane">
         <header class="team-thread-header">
+          <div class="team-mobile-tools"><NButton class="team-picker-toggle" quaternary circle aria-label="打开 Agent Team 列表" @click="openMobilePanel('teams', $event)"><template #icon><NIcon :component="Menu2" /></template></NButton><NButton class="team-session-toggle" quaternary circle aria-label="打开团队会话列表" @click="openMobilePanel('sessions', $event)"><template #icon><NIcon :component="Messages" /></template></NButton></div>
           <span class="team-thread-avatar"><NIcon :component="Users" size="21" /></span>
-          <div><strong>{{ selectedTeam?.name || '请选择 Agent Team' }}</strong><span v-if="selectedTeam">{{ selectedTeam.members.length }} 个成员，{{ runs.length }} 轮对话</span></div>
+          <div class="team-thread-identity"><strong>{{ selectedTeam?.name || '请选择 Agent Team' }}</strong><span v-if="selectedTeam">{{ selectedTeam.members.length }} 个成员，{{ runs.length }} 轮对话</span></div>
           <div class="team-workflow-control">
             <label for="team-workflow-select">执行方式</label>
             <NSelect id="team-workflow-select" :value="selectedWorkflowValue" :options="workflowOptions" size="small" :disabled="sending" @update:value="changeWorkflow" />
             <small v-if="conversationLocked">已固定为 {{ selectedWorkflowName }}，切换会新建聊天</small>
           </div>
+          <NButton quaternary circle aria-label="刷新团队聊天" :loading="loading || conversationsLoading || runsLoading" @click="refreshCurrent"><template #icon><NIcon :component="Refresh" /></template></NButton>
         </header>
 
-        <div ref="threadElement" class="team-thread" aria-live="polite">
+        <div ref="threadElement" class="team-thread" aria-live="polite" @scroll.passive="handleThreadScroll">
           <div v-if="runsLoading && !runs.length" class="team-thread-skeleton"><span v-for="index in 6" :key="index" /></div>
           <template v-else-if="runs.length">
-            <TeamChatRun v-for="run in runs" :key="run.id" :run="run" :team="selectedTeam!" :refresh-tick="refreshTick" @refresh="refreshCurrent" />
+            <TeamChatRun v-for="run in runs" :key="run.id" :run="run" :team="selectedTeam!" :refresh-tick="refreshTick" @refresh="refreshCurrent" @open-details="openRunDetails" />
           </template>
           <div v-else class="team-chat-welcome">
             <span><NIcon :component="Messages" size="29" /></span>
@@ -435,6 +514,7 @@ onBeforeUnmount(() => {
         </div>
 
         <footer class="team-composer-shell">
+          <div v-if="latestAvailable" class="team-latest-row"><NButton secondary size="small" @click="jumpToLatest"><template #icon><NIcon :component="ArrowDown" /></template>回到最新消息</NButton></div>
           <NAlert v-if="composerDisabledReason" type="warning" :bordered="false" class="team-composer-alert">{{ composerDisabledReason }}</NAlert>
           <div v-if="sendError" class="team-send-error">{{ sendError }}</div>
           <div class="team-composer">
@@ -444,6 +524,12 @@ onBeforeUnmount(() => {
           <div class="team-composer-meta"><span class="mono">Session {{ selectedSessionId || '--' }}</span><span>{{ selectedWorkflowName }}</span></div>
         </footer>
       </main>
+
+      <div v-if="selectedDetailRun" class="team-detail-scrim" @click="closeRunDetails" />
+      <aside v-if="selectedDetailRun" class="team-run-detail-panel" role="dialog" aria-modal="true" aria-label="团队协作详情">
+        <header><div><strong>团队协作详情</strong><span class="mono">Run {{ selectedDetailRun.id }}</span></div><div><NButton v-if="activeStatuses.has(selectedDetailRun.status)" text type="error" :loading="detailActionLoading" @click="cancelDetailRun"><template #icon><NIcon :component="PlayerStop" /></template>取消运行</NButton><NButton quaternary circle aria-label="关闭团队协作详情" @click="closeRunDetails"><template #icon><NIcon :component="X" /></template></NButton></div></header>
+        <div class="team-run-detail-scroll"><TeamChatRun :run="selectedDetailRun" :team="selectedTeam!" :refresh-tick="refreshTick" detail-only @refresh="refreshCurrent" /></div>
+      </aside>
     </section>
 
     <section v-else-if="!loading" class="team-chat-no-teams surface">
@@ -456,5 +542,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.team-chat-page{width:100%;max-width:none}.team-chat-page :deep(.page-header){margin-bottom:18px}.team-chat-alert{margin-bottom:12px}.team-chat-workspace{display:grid;grid-template-columns:250px 270px minmax(0,1fr);height:calc(100dvh - 240px);min-height:650px;overflow:hidden;border:1px solid var(--line);border-radius:11px;background:#222}.team-picker-pane,.team-session-pane,.team-thread-pane{min-width:0;min-height:0}.team-picker-pane,.team-session-pane{display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--surface-subtle)}.team-session-pane{background:#282828}.team-picker-pane>header,.team-session-pane>header,.team-thread-header{display:flex;min-height:70px;align-items:center;gap:12px;padding:14px 15px;border-bottom:1px solid var(--line)}.team-picker-pane>header,.team-session-pane>header{justify-content:space-between}.team-picker-pane>header>div,.team-session-pane>header>div{display:grid;gap:3px}.team-picker-pane>header span,.team-session-pane>header span{color:#777;font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.team-picker-pane>header strong,.team-session-pane>header strong{font-size:12px}.team-picker-pane>header small{color:var(--muted);font-size:8px}.team-chat-search{padding:11px;border-bottom:1px solid var(--line)}.team-picker-list,.team-session-list{flex:1;overflow:auto;padding:7px}.team-picker-list>button,.team-session-list>button{width:100%;border:1px solid transparent;border-radius:8px;color:var(--ink);background:transparent;text-align:left;cursor:pointer}.team-picker-list>button{display:grid;grid-template-columns:38px minmax(0,1fr);gap:9px;align-items:center;padding:10px}.team-picker-list>button:hover,.team-session-list>button:hover{background:#323232}.team-picker-list>button.active,.team-session-list>button.active{border-color:#555;background:#383838}.team-picker-icon,.team-thread-avatar{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;background:#3a3a3a}.team-picker-list>button>span:last-child{display:grid;min-width:0;gap:2px}.team-picker-list strong,.team-picker-list small,.team-picker-list em{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.team-picker-list strong{font-size:11px}.team-picker-list small{color:#aaa;font-size:8px}.team-picker-list em{color:#777;font-size:8px;font-style:normal}.team-picker-pane>footer,.team-session-pane>footer{padding:11px;border-top:1px solid var(--line)}.team-session-list>button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;padding:11px}.team-session-list>button>strong{grid-column:1/-1;overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.team-session-list>button>span{display:flex;gap:7px;color:var(--muted);font-size:8px}.team-session-list>button>div{display:flex;min-width:0;align-items:center;justify-content:flex-end;gap:6px}.team-session-list em{overflow:hidden;color:#888;font-size:8px;font-style:normal;text-overflow:ellipsis;white-space:nowrap}.team-chat-empty{display:grid;flex:1;place-content:center;justify-items:center;gap:6px;padding:20px;color:var(--muted);font-size:9px;text-align:center}.team-chat-empty.compact{display:block;flex:0;padding:20px}.team-chat-empty strong{color:var(--ink);font-size:11px}.team-chat-skeleton,.team-thread-skeleton{display:grid;gap:8px;padding:12px}.team-chat-skeleton span{height:64px;border-radius:7px;background:#353535;animation:team-workspace-pulse 1.3s ease-in-out infinite}.team-thread-pane{display:grid;grid-template-rows:auto minmax(0,1fr) auto}.team-thread-header{background:#292929}.team-thread-header>div:nth-child(2){display:grid;min-width:0;flex:1;gap:3px}.team-thread-header>div:nth-child(2) strong,.team-thread-header>div:nth-child(2) span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.team-thread-header>div:nth-child(2) strong{font-size:13px}.team-thread-header>div:nth-child(2) span{color:var(--muted);font-size:9px}.team-workflow-control{display:grid;width:min(300px,38%);grid-template-columns:auto minmax(130px,1fr);align-items:center;gap:4px 8px}.team-workflow-control label{color:var(--muted);font-size:9px}.team-workflow-control small{grid-column:1/-1;color:#7f7f7f;font-size:8px;text-align:right}.team-thread{overflow:auto;padding:26px clamp(14px,3vw,44px);scroll-behavior:smooth}.team-thread-skeleton{max-width:900px;margin:auto}.team-thread-skeleton span{height:58px;border-radius:8px;background:#303030;animation:team-workspace-pulse 1.3s ease-in-out infinite}.team-chat-welcome{display:grid;min-height:100%;place-content:center;justify-items:center;padding:28px;color:var(--muted);text-align:center}.team-chat-welcome>span{display:grid;width:58px;height:58px;place-items:center;border-radius:14px;background:#303030}.team-chat-welcome strong{margin-top:13px;color:var(--ink);font-size:15px}.team-chat-welcome p{max-width:480px;margin:7px 0;font-size:10px;line-height:1.65}.team-composer-shell{padding:13px clamp(14px,3vw,40px) 11px;border-top:1px solid var(--line);background:#292929}.team-composer{display:flex;max-width:1040px;margin:auto;align-items:flex-end;gap:10px}.team-composer :deep(.n-input){border-radius:9px}.team-composer-alert,.team-send-error{max-width:1040px;margin:0 auto 8px}.team-send-error{color:#ff8a87;font-size:10px}.team-composer-meta{display:flex;justify-content:space-between;gap:14px;max-width:1040px;margin:7px auto 0;color:#777;font-size:8px}.team-chat-no-teams{display:grid;min-height:430px;place-content:center;justify-items:center;gap:9px;text-align:center}.team-chat-no-teams p{margin:0 0 6px;color:var(--muted);font-size:11px}@keyframes team-workspace-pulse{0%,100%{opacity:.48}50%{opacity:1}}@media(prefers-reduced-motion:reduce){.team-chat-skeleton span,.team-thread-skeleton span{animation:none}.team-thread{scroll-behavior:auto}}@media(max-width:1120px){.team-chat-workspace{grid-template-columns:220px 235px minmax(0,1fr)}.team-thread{padding-inline:14px}.team-workflow-control{width:42%}}@media(max-width:880px){.team-chat-workspace{display:grid;height:auto;min-height:0;overflow:visible;grid-template-columns:1fr}.team-picker-pane,.team-session-pane{border-right:0;border-bottom:1px solid var(--line)}.team-picker-list,.team-session-list{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(210px,72vw);max-height:190px;overflow:auto}.team-picker-list{padding-bottom:11px}.team-picker-pane>footer,.team-session-pane>footer{display:none}.team-thread-pane{min-height:680px}.team-workflow-control{width:min(310px,48%)}}@media(max-width:620px){.team-chat-page :deep(.page-header){display:none}.team-chat-workspace{border-radius:0}.team-picker-pane>header,.team-session-pane>header{min-height:58px;padding:10px 12px}.team-picker-pane{max-height:260px}.team-session-pane{max-height:240px}.team-thread-pane{min-height:620px}.team-thread-header{align-items:flex-start;min-height:0;flex-wrap:wrap;padding:11px}.team-thread-avatar{display:none}.team-workflow-control{width:100%;grid-template-columns:70px minmax(0,1fr)}.team-workflow-control small{text-align:left}.team-thread{padding:18px 9px}.team-composer-shell{padding:10px}.team-composer-meta{display:none}}
+.team-chat-page{display:flex;width:100%;max-width:none;height:100%;min-height:0;flex-direction:column;overflow:hidden}.team-chat-alert{max-height:96px;flex:0 0 auto;margin-bottom:12px;overflow:auto}.team-chat-workspace{position:relative;display:grid;grid-template-columns:250px 270px minmax(0,1fr);min-height:0;flex:1;overflow:hidden;border:1px solid var(--line);border-radius:11px;background:#222}.team-picker-pane,.team-session-pane,.team-thread-pane{min-width:0;min-height:0}.team-picker-pane,.team-session-pane{display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--surface-subtle)}.team-session-pane{background:#282828}.team-picker-pane>header,.team-session-pane>header,.team-thread-header{display:flex;min-height:70px;align-items:center;gap:12px;padding:14px 15px;border-bottom:1px solid var(--line)}.team-picker-pane>header,.team-session-pane>header{justify-content:space-between}.team-picker-pane>header>div,.team-session-pane>header>div{display:grid;gap:3px}.team-picker-pane>header span,.team-session-pane>header span{color:#777;font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.team-picker-pane>header strong,.team-session-pane>header strong{font-size:12px}.team-picker-pane>header small{color:var(--muted);font-size:8px}.team-chat-search{padding:11px;border-bottom:1px solid var(--line)}.team-picker-list,.team-session-list{flex:1;overflow:auto;padding:7px}.team-picker-list>button,.team-session-list>button{width:100%;border:1px solid transparent;border-radius:8px;color:var(--ink);background:transparent;text-align:left;cursor:pointer}.team-picker-list>button{display:grid;grid-template-columns:38px minmax(0,1fr);gap:9px;align-items:center;padding:10px}.team-picker-list>button:hover,.team-session-list>button:hover{background:#323232}.team-picker-list>button.active,.team-session-list>button.active{border-color:#555;background:#383838}.team-picker-icon,.team-thread-avatar{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;background:#3a3a3a}.team-picker-list>button>span:last-child{display:grid;min-width:0;gap:2px}.team-picker-list strong,.team-picker-list small,.team-picker-list em{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.team-picker-list strong{font-size:11px}.team-picker-list small{color:#aaa;font-size:8px}.team-picker-list em{color:#777;font-size:8px;font-style:normal}.team-picker-pane>footer,.team-session-pane>footer{padding:11px;border-top:1px solid var(--line)}.team-session-list>button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;padding:11px}.team-session-list>button>strong{grid-column:1/-1;overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.team-session-list>button>span{display:flex;gap:7px;color:var(--muted);font-size:8px}.team-session-list>button>div{display:flex;min-width:0;align-items:center;justify-content:flex-end;gap:6px}.team-session-list em{overflow:hidden;color:#888;font-size:8px;font-style:normal;text-overflow:ellipsis;white-space:nowrap}.team-chat-empty{display:grid;flex:1;place-content:center;justify-items:center;gap:6px;padding:20px;color:var(--muted);font-size:9px;text-align:center}.team-chat-empty.compact{display:block;flex:0;padding:20px}.team-chat-empty strong{color:var(--ink);font-size:11px}.team-chat-skeleton,.team-thread-skeleton{display:grid;gap:8px;padding:12px}.team-chat-skeleton span{height:64px;border-radius:7px;background:#353535;animation:team-workspace-pulse 1.3s ease-in-out infinite}.team-thread-pane{position:relative;display:grid;height:100%;min-height:0;grid-template-rows:auto minmax(0,1fr) auto}.team-thread-header{background:#292929}.team-workflow-control{display:grid;width:min(300px,38%);grid-template-columns:auto minmax(130px,1fr);align-items:center;gap:4px 8px}.team-workflow-control label{color:var(--muted);font-size:9px}.team-workflow-control small{grid-column:1/-1;color:#7f7f7f;font-size:8px;text-align:right}.team-thread{min-height:0;overflow:auto;padding:26px clamp(14px,3vw,44px);scroll-behavior:smooth;overscroll-behavior:contain}.team-thread-skeleton{max-width:900px;margin:auto}.team-thread-skeleton span{height:58px;border-radius:8px;background:#303030;animation:team-workspace-pulse 1.3s ease-in-out infinite}.team-chat-welcome{display:grid;min-height:100%;place-content:center;justify-items:center;padding:28px;color:var(--muted);text-align:center}.team-chat-welcome>span{display:grid;width:58px;height:58px;place-items:center;border-radius:14px;background:#303030}.team-chat-welcome strong{margin-top:13px;color:var(--ink);font-size:15px}.team-chat-welcome p{max-width:480px;margin:7px 0;font-size:10px;line-height:1.65}.team-composer-shell{padding:13px clamp(14px,3vw,40px) 11px;border-top:1px solid var(--line);background:#292929}.team-composer{display:flex;max-width:1040px;margin:auto;align-items:flex-end;gap:10px}.team-composer :deep(.n-input){border-radius:9px}.team-composer-alert,.team-send-error{max-width:1040px;max-height:96px;margin:0 auto 8px;overflow:auto}.team-send-error{color:#ff8a87;font-size:10px}.team-composer-meta{display:flex;justify-content:space-between;gap:14px;max-width:1040px;margin:7px auto 0;color:#777;font-size:8px}.team-chat-no-teams{display:grid;min-height:0;flex:1;place-content:center;justify-items:center;gap:9px;overflow:auto;text-align:center}.team-chat-no-teams p{margin:0 0 6px;color:var(--muted);font-size:11px}@keyframes team-workspace-pulse{0%,100%{opacity:.48}50%{opacity:1}}@media(prefers-reduced-motion:reduce){.team-chat-skeleton span,.team-thread-skeleton span{animation:none}.team-thread{scroll-behavior:auto}}
+/* Full-height Team workspace. Lists, thread and detail panel scroll independently. */
+.team-thread-identity{display:grid;min-width:0;flex:1;gap:3px}.team-thread-identity strong,.team-thread-identity span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.team-thread-identity strong{font-size:13px}.team-thread-identity span{color:var(--muted);font-size:9px}.team-latest-row{display:flex;max-width:1040px;margin:0 auto 8px;justify-content:flex-end}.team-mobile-tools,.team-mobile-close,.team-mobile-scrim{display:none}.team-detail-scrim{position:absolute;z-index:6;inset:0;background:rgba(0,0,0,.38)}.team-run-detail-panel{container:team-run-detail / inline-size;position:absolute;z-index:7;inset:0 0 0 auto;display:grid;width:min(620px,48%);grid-template-rows:auto minmax(0,1fr);border-left:1px solid var(--line);background:#242424;box-shadow:-20px 0 48px rgba(0,0,0,.42)}.team-run-detail-panel>header{display:flex;min-height:64px;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line);background:#292929}.team-run-detail-panel>header>div{display:flex;min-width:0;align-items:center;gap:10px}.team-run-detail-panel>header>div:first-child{display:grid;gap:2px}.team-run-detail-panel>header strong{font-size:12px}.team-run-detail-panel>header span{overflow:hidden;color:var(--muted);font-size:8px;text-overflow:ellipsis;white-space:nowrap}.team-run-detail-scroll{min-height:0;overflow:auto;overscroll-behavior:contain;padding:12px}
+@container chat-workbench (max-width:1180px){.team-chat-workspace{grid-template-columns:250px minmax(0,1fr)}.team-picker-pane{position:absolute;z-index:5;inset:0 auto 0 0;width:min(86cqw,320px);transform:translateX(-105%);transition:transform 180ms ease;box-shadow:18px 0 40px rgba(0,0,0,.36)}.team-picker-pane.mobile-open{transform:translateX(0)}.team-mobile-scrim{position:absolute;z-index:4;inset:0;display:block;background:rgba(0,0,0,.62)}.team-mobile-tools{display:flex;gap:2px}.team-picker-toggle{display:inline-flex!important}.team-session-toggle{display:none!important}.team-mobile-close{display:grid;width:30px;height:30px;place-items:center;border:0;border-radius:6px;color:var(--muted);background:transparent}.team-picker-pane>header{grid-template-columns:minmax(0,1fr) auto auto}.team-picker-pane>footer{display:block}.team-picker-list,.team-session-list{display:block;max-height:none;overflow:auto}.team-run-detail-panel{width:min(620px,58%)}.team-thread{padding-inline:14px}}
+@container chat-workbench (max-width:820px){.team-chat-workspace{grid-template-columns:minmax(0,1fr)}.team-session-pane{position:absolute;z-index:5;inset:0 auto 0 0;width:min(86cqw,320px);transform:translateX(-105%);transition:transform 180ms ease;box-shadow:18px 0 40px rgba(0,0,0,.36)}.team-session-pane.mobile-open{transform:translateX(0)}.team-session-toggle{display:inline-flex!important}.team-session-pane>header{grid-template-columns:minmax(0,1fr) auto auto}.team-session-pane>footer{display:block}.team-run-detail-panel{width:100%}}
+@container chat-workbench (max-width:620px){.team-chat-workspace{border-radius:0}.team-thread-header{align-items:center;min-height:62px;flex-wrap:nowrap;padding:9px}.team-thread-avatar{display:none}.team-thread-identity span{display:none}.team-workflow-control{width:auto;min-width:120px;grid-template-columns:minmax(100px,1fr)}.team-workflow-control label,.team-workflow-control small{display:none}.team-thread{padding:18px 9px}.team-composer-shell{padding:10px}.team-composer-meta{display:none}.team-run-detail-panel>header{min-height:56px}.team-run-detail-scroll{padding:8px}}
 </style>

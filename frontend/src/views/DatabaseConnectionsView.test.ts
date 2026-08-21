@@ -60,4 +60,38 @@ describe('DatabaseConnectionsView connection form', () => {
 
     wrapper.unmount()
   })
+
+  it('exposes DM, Elasticsearch and mainstream database defaults', async () => {
+    vi.spyOn(platformApi, 'listDatabaseConnections').mockResolvedValue([])
+    const wrapper = mount(DatabaseConnectionsView, {
+      global: {
+        stubs: {
+          PageHeader: { template: '<header><slot name="actions" /></header>' },
+          StatusTag: true,
+          NAlert: { template: '<div><slot /></div>' },
+          NButton: { template: '<button @click="$emit(\'click\')"><slot /></button>' },
+          NIcon: { template: '<span><slot /></span>' },
+          NInput: { template: '<input />' },
+          NModal: { props: ['show'], template: '<div v-if="show"><slot /><slot name="footer" /></div>' },
+          NSelect: { props: ['options'], template: '<div />' },
+        },
+      },
+    })
+    await flushPromises()
+    const view = wrapper.vm as unknown as {
+      databaseTypeOptions: Array<{ value: string; port: number | null }>
+      form: { database_type: string; port: number | null; maintenance_database: string }
+      applyDatabaseTypeDefaults: (value: string) => void
+    }
+    expect(view.databaseTypeOptions.map((item) => item.value)).toEqual(expect.arrayContaining([
+      'postgresql', 'mysql', 'mariadb', 'doris', 'starrocks', 'sqlserver',
+      'oracle', 'dm', 'clickhouse', 'elasticsearch', 'sqlite',
+    ]))
+    view.applyDatabaseTypeDefaults('dm')
+    expect(view.form.port).toBe(5236)
+    expect(view.form.maintenance_database).toBe('DM')
+    view.applyDatabaseTypeDefaults('elasticsearch')
+    expect(view.form.port).toBe(9200)
+    wrapper.unmount()
+  })
 })

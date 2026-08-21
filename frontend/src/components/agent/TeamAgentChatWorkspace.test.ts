@@ -84,12 +84,16 @@ function mountWorkspace() {
       stubs: {
         PageHeader: { template: '<header><slot name="actions" /></header>' },
         StatusTag: { props: ['status'], template: '<span>{{ status }}</span>' },
-        TeamChatRun: { props: ['run'], template: '<article class="run-stub">{{ run.input }} / {{ run.output }}</article>' },
+        TeamChatRun: {
+          props: { run: Object, detailOnly: Boolean },
+          emits: ['openDetails'],
+          template: '<article class="run-stub" :data-detail="String(Boolean(detailOnly))">{{ run.input }} / {{ run.output }}<button v-if="!detailOnly" class="open-detail" @click="$emit(\'openDetails\', run.id, $event.currentTarget)">查看协作详情</button></article>',
+        },
         NAlert: { template: '<div><slot /></div>' },
         NButton: {
           props: ['disabled', 'loading'],
           emits: ['click'],
-          template: '<button :disabled="disabled" @click="$emit(\'click\')"><slot name="icon" /><slot /></button>',
+          template: '<button :disabled="disabled" @click="$emit(\'click\', $event)"><slot name="icon" /><slot /></button>',
         },
         NInput: {
           props: ['value', 'type', 'disabled', 'placeholder'],
@@ -175,6 +179,67 @@ describe('TeamAgentChatWorkspace', () => {
     expect(router.currentRoute.value.query.session).toBe('team-chat-new-session')
     expect(router.currentRoute.value.query.workflow).toBe('workflow-a')
     expect(wrapper.text()).toContain('开始新的 Team 对话')
+    wrapper.unmount()
+  })
+
+  it('opens a detached run detail panel and cancels active runs there', async () => {
+    const activeRun = run({ status: 'running', output: null, finished_at: null })
+    vi.spyOn(platformApi, 'listAgentTeams').mockResolvedValue([team])
+    vi.spyOn(platformApi, 'listWorkflows').mockResolvedValue([workflow])
+    vi.spyOn(platformApi, 'listTeamConversations').mockResolvedValue(conversations())
+    vi.spyOn(platformApi, 'listTeamConversationRuns').mockResolvedValue(runList([activeRun]))
+    const cancel = vi.spyOn(platformApi, 'cancelWorkflowRun').mockResolvedValue()
+    await router.push('/chat?mode=team&team=team-a&session=team-chat-a&workflow=direct')
+    const wrapper = mountWorkspace()
+    await flushPromises()
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+
+    const detailOpener = wrapper.get('.open-detail')
+    const detailOpenerElement = detailOpener.element
+    await detailOpener.trigger('click')
+    expect(wrapper.get('.team-run-detail-panel')).toBeTruthy()
+    expect(wrapper.get('.team-run-detail-panel').attributes('role')).toBe('dialog')
+    expect(wrapper.get('.team-run-detail-panel .run-stub').attributes('data-detail')).toBe('true')
+    expect(focus.mock.contexts).toContain(wrapper.get('button[aria-label="关闭团队协作详情"]').element)
+
+    await wrapper.findAll('.team-run-detail-panel button').find((button) => button.text().includes('取消运行'))!.trigger('click')
+    await flushPromises()
+    expect(cancel).toHaveBeenCalledWith('run-a')
+
+    await wrapper.get('button[aria-label="关闭团队协作详情"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.team-run-detail-panel').exists()).toBe(false)
+    expect(focus.mock.contexts).toContain(detailOpenerElement)
+    wrapper.unmount()
+  })
+
+  it('opens responsive Team drawers and restores the thread with Escape', async () => {
+    vi.spyOn(platformApi, 'listAgentTeams').mockResolvedValue([team])
+    vi.spyOn(platformApi, 'listWorkflows').mockResolvedValue([workflow])
+    vi.spyOn(platformApi, 'listTeamConversations').mockResolvedValue(conversations())
+    vi.spyOn(platformApi, 'listTeamConversationRuns').mockResolvedValue(runList())
+    await router.push('/chat?mode=team&team=team-a&session=team-chat-a&workflow=direct')
+    const wrapper = mountWorkspace()
+    await flushPromises()
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+
+    const teamOpener = wrapper.get('button[aria-label="打开 Agent Team 列表"]')
+    await teamOpener.trigger('click')
+    expect(wrapper.get('.team-picker-pane').classes()).toContain('mobile-open')
+    expect(focus.mock.contexts).toContain(wrapper.get('button[aria-label="关闭 Agent Team 列表"]').element)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.get('.team-picker-pane').classes()).not.toContain('mobile-open')
+    expect(focus.mock.contexts).toContain(teamOpener.element)
+
+    const sessionOpener = wrapper.get('button[aria-label="打开团队会话列表"]')
+    await sessionOpener.trigger('click')
+    expect(wrapper.get('.team-session-pane').classes()).toContain('mobile-open')
+    expect(focus.mock.contexts).toContain(wrapper.get('button[aria-label="关闭团队会话列表"]').element)
+    await wrapper.get('button[aria-label="关闭团队会话列表"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.team-session-pane').classes()).not.toContain('mobile-open')
+    expect(focus.mock.contexts).toContain(sessionOpener.element)
     wrapper.unmount()
   })
 })

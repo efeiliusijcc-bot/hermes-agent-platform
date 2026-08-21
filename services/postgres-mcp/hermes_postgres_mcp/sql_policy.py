@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from pglast import ast, parse_sql
+from sqlglot import exp, parse
 
 
 class SQLPolicyError(ValueError):
@@ -15,6 +16,23 @@ AGGREGATE_FUNCTIONS = {
     "array_agg", "avg", "bit_and", "bit_or", "bool_and", "bool_or", "count",
     "every", "json_agg", "json_object_agg", "max", "min", "string_agg", "sum",
     "xmlagg", "jsonb_agg", "jsonb_object_agg",
+}
+GENERIC_DIALECTS = {
+    "mysql": "mysql",
+    "mariadb": "mysql",
+    "doris": "mysql",
+    "starrocks": "mysql",
+    "sqlserver": "tsql",
+    "oracle": "oracle",
+    "dm": "oracle",
+    "clickhouse": "clickhouse",
+    "elasticsearch": "mysql",
+    "sqlite": "sqlite",
+}
+DANGEROUS_FUNCTIONS = {
+    "benchmark", "dblink", "eval", "load_file", "pg_read_binary_file",
+    "pg_read_file", "pg_ls_dir", "sleep", "sys_eval", "sys_exec",
+    "utl_file", "xp_cmdshell",
 }
 DISALLOWED_NODES = tuple(
     value
@@ -92,6 +110,62 @@ def analyze_select(sql: str) -> QueryAnalysis:
         relations=tuple(sorted(relations, key=lambda item: ((item[0] or ""), item[1]))),
         functions=tuple(sorted(functions)),
         uses_aggregate=uses_aggregate,
+    )
+
+
+def analyze_read_query(sql: str, database_type: str) -> QueryAnalysis:
+    if database_type == "postgresql":
+        return analyze_select(sql)
+    dialect = GENERIC_DIALECTS.get(database_type)
+    if dialect is None:
+        raise SQLPolicyError(f"不支持的数据库类型 {database_type}")
+    normalized = sql.strip()
+    if normalized.endswith(";"):
+        normalized = normalized[:-1].rstrip()
+    if not normalized:
+        raise SQLPolicyError("只允许一条 SELECT 语句")
+    try:
+        statements = parse(normalized, read=dialect)
+    except Exception as exc:
+        raise SQLPolicyError("SQL 语法无效") from exc
+    if len(statements) != 1:
+        raise SQLPolicyError("只允许一条 SELECT 语句")
+    root = statements[0]
+    if not isinstance(root, (exp.Query, exp.Union, exp.Except, exp.Intersect)):
+        raise SQLPolicyError("只允许 SELECT 查询")
+    forbidden = tuple(
+        value
+        for name in (
+            "Insert", "Update", "Delete", "Merge", "Create", "Drop", "Alter",
+            "Command", "Transaction", "Commit", "Rollback", "Grant", "Revoke",
+            "Copy", "Execute",
+        )
+        if (value := getattr(exp, name, None)) is not None
+    )
+    if any(root.find_all(*forbidden)):
+        raise SQLPolicyError("查询包含写操作或管理语句")
+    if root.find(exp.Into) is not None or root.find(exp.Lock) is not None:
+        raise SQLPolicyError("查询包含 SELECT INTO 或锁定语句")
+    cte_names = {str(item.alias_or_name) for item in root.find_all(exp.CTE)}
+    relations: set[tuple[str | None, str]] = set()
+    for table in root.find_all(exp.Table):
+        name = str(table.name or "")
+        if not name or (not table.db and name in cte_names):
+            continue
+        schema = str(table.db) if table.db else None
+        relations.add((schema, name))
+    functions: set[tuple[str, ...]] = set()
+    for function in root.find_all(exp.Func):
+        name = str(function.sql_name() or function.name or "").lower()
+        if name:
+            functions.add((name,))
+            if name in DANGEROUS_FUNCTIONS:
+                raise SQLPolicyError(f"禁止调用函数 {name}")
+    return QueryAnalysis(
+        sql=normalized,
+        relations=tuple(sorted(relations, key=lambda item: ((item[0] or ""), item[1]))),
+        functions=tuple(sorted(functions)),
+        uses_aggregate=any(root.find_all(exp.AggFunc, exp.Window)),
     )
 
 

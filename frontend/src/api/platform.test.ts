@@ -302,6 +302,7 @@ describe('platformApi contract', () => {
     const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: [] })
     const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: {} })
     const endpoint = {
+      database_type: 'postgresql' as const,
       host: 'business-postgres', port: 5432, maintenance_database: 'postgres',
       ssl_mode: 'disable' as const, connect_timeout_seconds: 5,
     }

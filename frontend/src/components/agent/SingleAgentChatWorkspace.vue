@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
 import {
   Activity,
+  ArrowDown,
   Download,
   ExternalLink,
   ListDetails,
@@ -17,8 +18,8 @@ import {
 } from '@vicons/tabler'
 import { useRoute, useRouter } from 'vue-router'
 
-import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import { useChatThreadViewport } from '@/composables/useChatThreadViewport'
 import { getApiErrorMessage } from '@/api/client'
 import { platformApi } from '@/api/platform'
 import { buildConversationSessions, executionReplyText } from '@/utils/agentConversation'
@@ -50,11 +51,23 @@ const streamedOutput = ref('')
 const sendError = ref<string | null>(null)
 const failedTurn = ref<{ input: string; error: string } | null>(null)
 const mobilePanel = ref<SingleAgentMobilePanel>(null)
-const threadElement = ref<HTMLElement | null>(null)
+const workspaceElement = ref<HTMLElement | null>(null)
+const panelTrigger = ref<HTMLElement | null>(null)
 const detailCache = new Map<string, ExecutionDetail>()
 let initialized = false
 let historySerial = 0
 let transcriptSerial = 0
+
+const {
+  threadElement,
+  latestAvailable,
+  rememberThreadPosition,
+  handleThreadScroll,
+  jumpToLatest,
+  restoreSessionPosition,
+  contentChanged,
+} = useChatThreadViewport(activeSessionId)
+void threadElement
 
 const sortedAgents = computed(() => [...agents.value].sort((left, right) => {
   if ((left.status === 'active') !== (right.status === 'active')) return left.status === 'active' ? -1 : 1
@@ -90,11 +103,6 @@ function createSessionId(): string {
 
 function messageBlocks(value: string) {
   return parseSafeMarkdown(value)
-}
-
-async function scrollThreadToBottom() {
-  await nextTick()
-  if (threadElement.value) threadElement.value.scrollTop = threadElement.value.scrollHeight
 }
 
 async function loadAgents() {
@@ -152,7 +160,7 @@ async function loadTranscript() {
   } finally {
     if (serial === transcriptSerial) transcriptLoading.value = false
   }
-  await scrollThreadToBottom()
+  await restoreSessionPosition()
 }
 
 async function normalizeRouteSelection() {
@@ -170,6 +178,7 @@ async function normalizeRouteSelection() {
 
   let agentChanged = false
   if (selectedAgentId.value !== agent.id) {
+    rememberThreadPosition()
     agentChanged = true
     selectedAgentId.value = agent.id
     histories.value = []
@@ -188,6 +197,7 @@ async function normalizeRouteSelection() {
   }
 
   if (activeSessionId.value !== requestedSessionId) {
+    rememberThreadPosition()
     activeSessionId.value = requestedSessionId
     pendingInput.value = ''
     streamedOutput.value = ''
@@ -204,6 +214,7 @@ function selectAgent(agent: Agent) {
     mobilePanel.value = null
     return
   }
+  rememberThreadPosition()
   void router.push({ name: 'agent-chat', query: { agent: agent.id } })
   mobilePanel.value = null
 }
@@ -213,12 +224,14 @@ function selectSession(sessionId: string) {
     mobilePanel.value = null
     return
   }
+  rememberThreadPosition()
   void router.push({ name: 'agent-chat', query: { agent: selectedAgentId.value, session: sessionId } })
   mobilePanel.value = null
 }
 
 function startNewChat() {
   if (sending.value || !selectedAgent.value) return
+  rememberThreadPosition()
   void router.push({
     name: 'agent-chat',
     query: { agent: selectedAgent.value.id, session: createSessionId() },
@@ -247,7 +260,7 @@ async function sendMessage() {
   sendError.value = null
   failedTurn.value = null
   composer.value = ''
-  await scrollThreadToBottom()
+  await jumpToLatest()
   let executionId = ''
 
   try {
@@ -260,7 +273,7 @@ async function sendMessage() {
         }
         if (event.event === 'token') streamedOutput.value += String(event.text || '')
         if (event.event === 'error') streamFailure = String(event.message || '流式执行失败')
-        void scrollThreadToBottom()
+        void contentChanged()
       })
       if (streamFailure) throw new Error(streamFailure)
     } else {
@@ -282,7 +295,28 @@ async function sendMessage() {
     sending.value = false
     pendingInput.value = ''
     streamedOutput.value = ''
-    await scrollThreadToBottom()
+    await contentChanged()
+  }
+}
+
+function openMobilePanel(panel: Exclude<SingleAgentMobilePanel, null>, event?: MouseEvent) {
+  panelTrigger.value = event?.currentTarget as HTMLElement || document.activeElement as HTMLElement | null
+  mobilePanel.value = panel
+  void nextTick(() => {
+    workspaceElement.value?.querySelector<HTMLElement>(`.${panel === 'agents' ? 'chat-agent-pane' : 'chat-session-pane'} .chat-mobile-close`)?.focus()
+  })
+}
+
+function closeMobilePanel(restoreFocus = true) {
+  if (!mobilePanel.value) return
+  mobilePanel.value = null
+  if (restoreFocus) void nextTick(() => panelTrigger.value?.focus())
+}
+
+function handleEscape(event: KeyboardEvent) {
+  if (event.key === 'Escape' && mobilePanel.value) {
+    event.preventDefault()
+    closeMobilePanel()
   }
 }
 
@@ -297,24 +331,27 @@ watch(() => [route.query.agent, route.query.session], () => {
 })
 
 onMounted(async () => {
+  document.addEventListener('keydown', handleEscape)
   await loadAgents()
   initialized = true
   await normalizeRouteSelection()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handleEscape)
 })
 </script>
 
 <template>
   <div class="agent-chat-page">
-    <PageHeader title="智能体聊天" description="选择任意 Agent，按会话连续对话；所有消息、产物和 Trace 均来自真实 Execution。" />
-
     <div v-if="agentsError" class="error-panel chat-load-error">{{ agentsError }}</div>
-    <section class="agent-chat-workspace surface" aria-label="智能体聊天工作台">
-      <div v-if="mobilePanel" class="chat-mobile-scrim" @click="mobilePanel = null" />
+    <section ref="workspaceElement" class="agent-chat-workspace surface" aria-label="智能体聊天工作台">
+      <div v-if="mobilePanel" class="chat-mobile-scrim" @click="closeMobilePanel()" />
 
-      <aside class="chat-agent-pane" :class="{ 'mobile-open': mobilePanel === 'agents' }">
+      <aside class="chat-agent-pane" :class="{ 'mobile-open': mobilePanel === 'agents' }" aria-label="Agent 选择面板">
         <header class="chat-pane-header">
           <div><span>Agents</span><strong>选择智能体</strong></div>
-          <button class="chat-mobile-close" type="button" aria-label="关闭 Agent 列表" @click="mobilePanel = null"><NIcon :component="X" /></button>
+          <button class="chat-mobile-close" type="button" aria-label="关闭 Agent 列表" @click="closeMobilePanel()"><NIcon :component="X" /></button>
         </header>
         <div class="chat-search"><NInput v-model:value="agentSearch" clearable placeholder="搜索名称、ID、模型"><template #prefix><NIcon :component="Search" /></template></NInput></div>
         <div v-if="agentsLoading" class="chat-list-skeleton"><div v-for="index in 6" :key="index" class="skeleton-line" /></div>
@@ -337,12 +374,12 @@ onMounted(async () => {
         <div v-else class="chat-pane-empty">没有匹配的 Agent</div>
       </aside>
 
-      <aside class="chat-session-pane" :class="{ 'mobile-open': mobilePanel === 'sessions' }">
+      <aside class="chat-session-pane" :class="{ 'mobile-open': mobilePanel === 'sessions' }" aria-label="会话选择面板">
         <header class="chat-pane-header">
           <div><span>Sessions</span><strong>会话记录</strong></div>
           <div class="chat-pane-actions">
             <NButton quaternary circle size="small" aria-label="新建对话" :disabled="sending || !selectedAgent" @click="startNewChat"><template #icon><NIcon :component="Plus" /></template></NButton>
-            <button class="chat-mobile-close" type="button" aria-label="关闭会话列表" @click="mobilePanel = null"><NIcon :component="X" /></button>
+            <button class="chat-mobile-close" type="button" aria-label="关闭会话列表" @click="closeMobilePanel()"><NIcon :component="X" /></button>
           </div>
         </header>
         <div v-if="historyLoading" class="chat-list-skeleton"><div v-for="index in 5" :key="index" class="skeleton-line" /></div>
@@ -370,8 +407,8 @@ onMounted(async () => {
       <main class="chat-thread-pane">
         <header class="chat-thread-header">
           <div class="chat-mobile-tools">
-            <NButton quaternary circle aria-label="打开 Agent 列表" @click="mobilePanel = 'agents'"><template #icon><NIcon :component="Menu2" /></template></NButton>
-            <NButton quaternary circle aria-label="打开会话列表" @click="mobilePanel = 'sessions'"><template #icon><NIcon :component="Messages" /></template></NButton>
+            <NButton class="chat-agent-toggle" quaternary circle aria-label="打开 Agent 列表" @click="openMobilePanel('agents', $event)"><template #icon><NIcon :component="Menu2" /></template></NButton>
+            <NButton class="chat-session-toggle" quaternary circle aria-label="打开会话列表" @click="openMobilePanel('sessions', $event)"><template #icon><NIcon :component="Messages" /></template></NButton>
           </div>
           <span class="chat-agent-avatar chat-agent-avatar-large"><NIcon :component="Robot" size="21" /></span>
           <div class="chat-thread-identity"><strong>{{ selectedAgent?.name || '请选择 Agent' }}</strong><span v-if="selectedAgent">{{ selectedAgent.runtime_type }} · {{ selectedAgent.model }} · {{ selectedAgent.response_mode.toUpperCase() }}</span></div>
@@ -379,7 +416,7 @@ onMounted(async () => {
           <NButton v-if="selectedAgent" text size="small" @click="router.push({ name: 'agent-playground', params: { id: selectedAgent.id } })"><template #icon><NIcon :component="ExternalLink" /></template>高级执行台</NButton>
         </header>
 
-        <div ref="threadElement" class="chat-thread" aria-live="polite">
+        <div ref="threadElement" class="chat-thread" aria-live="polite" @scroll.passive="handleThreadScroll">
           <div v-if="transcriptLoading" class="chat-thread-loading"><div v-for="index in 5" :key="index" class="skeleton-line" /></div>
           <div v-else-if="transcriptError" class="chat-thread-state"><strong>对话正文加载失败</strong><p>{{ transcriptError }}</p><NButton secondary @click="loadTranscript">重新加载</NButton></div>
           <template v-else>
@@ -409,6 +446,7 @@ onMounted(async () => {
         </div>
 
         <footer class="chat-composer-shell">
+          <div v-if="latestAvailable" class="chat-latest-row"><NButton secondary size="small" @click="jumpToLatest"><template #icon><NIcon :component="ArrowDown" /></template>回到最新消息</NButton></div>
           <NAlert v-if="blockedReason" type="warning" :bordered="false" class="chat-blocked-alert">
             {{ blockedReason }}
             <NButton v-if="selectedAgent && requiredFields.length" text type="primary" @click="router.push({name:'agent-playground',params:{id:selectedAgent.id}})">前往执行工作台</NButton>
@@ -426,8 +464,8 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.agent-chat-page{width:100%!important;max-width:none!important}.agent-chat-page :deep(.page-header){margin-bottom:18px}.chat-load-error{margin-bottom:12px}.agent-chat-workspace{position:relative;display:grid;grid-template-columns:270px 260px minmax(0,1fr);height:calc(100dvh - 190px);min-height:650px;overflow:hidden}.chat-agent-pane,.chat-session-pane,.chat-thread-pane{min-width:0;min-height:0}.chat-agent-pane,.chat-session-pane{display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--surface-subtle)}.chat-session-pane{background:#282828}.chat-pane-header,.chat-thread-header{display:flex;min-height:70px;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}.chat-pane-header{justify-content:space-between}.chat-pane-header>div:first-child{display:grid;gap:3px}.chat-pane-header span{color:#777;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.chat-pane-header strong{font-size:13px}.chat-pane-actions{display:flex!important;align-items:center;gap:4px}.chat-search{padding:12px;border-bottom:1px solid var(--line)}.chat-agent-list,.chat-session-list{flex:1;overflow:auto;padding:8px}.chat-agent-list>button,.chat-session-list>button{position:relative;width:100%;border:1px solid transparent;border-radius:7px;color:var(--ink);background:transparent;text-align:left;cursor:pointer}.chat-agent-list>button{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:9px;align-items:center;padding:10px}.chat-agent-list>button:hover,.chat-session-list>button:hover{background:#323232}.chat-agent-list>button.active,.chat-session-list>button.active{border-color:#555;background:#373737}.chat-agent-list>button.unavailable{opacity:.62}.chat-agent-avatar,.chat-message-avatar{display:grid;flex:0 0 auto;place-items:center;border-radius:9px;color:var(--ink);background:#3a3a3a}.chat-agent-avatar{width:36px;height:36px}.chat-agent-avatar-large{width:40px;height:40px}.chat-agent-copy{display:grid;min-width:0;gap:2px}.chat-agent-copy strong,.chat-agent-copy small,.chat-agent-copy span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chat-agent-copy strong{font-size:12px}.chat-agent-copy small{color:#8d8d8d;font-size:9px}.chat-agent-copy span{color:var(--muted);font-size:10px}.chat-session-list>button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px}.chat-session-list strong{grid-column:1/-1;overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.chat-session-list>button>span{display:flex;gap:7px;color:var(--muted);font-size:9px}.chat-session-list small{font-size:9px}.chat-session-pane>footer{padding:12px;border-top:1px solid var(--line)}.chat-list-skeleton{display:grid;gap:8px;padding:12px}.chat-list-skeleton .skeleton-line{height:58px}.chat-pane-state,.chat-pane-empty{display:grid;flex:1;place-content:center;gap:7px;padding:20px;color:var(--muted);text-align:center}.chat-pane-state strong{color:var(--ink);font-size:12px}.chat-pane-state span,.chat-pane-empty{font-size:10px;line-height:1.5}.chat-thread-pane{display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:#222}.chat-thread-header{background:#292929}.chat-thread-identity{display:grid;min-width:0;flex:1;gap:3px}.chat-thread-identity strong{overflow:hidden;font-size:14px;text-overflow:ellipsis;white-space:nowrap}.chat-thread-identity span{overflow:hidden;color:var(--muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.chat-thread{overflow:auto;padding:26px clamp(18px,4vw,54px);scroll-behavior:smooth}.chat-thread-loading{display:grid;gap:12px;max-width:760px;margin:auto}.chat-turn{display:grid;gap:18px;max-width:920px;margin:0 auto 28px}.chat-message{display:flex;gap:10px;align-items:flex-start}.chat-message-user{padding-left:clamp(24px,8vw,110px)}.chat-message-agent{padding-right:clamp(12px,5vw,70px)}.chat-message-avatar{width:32px;height:32px;margin-top:2px}.chat-message-user .chat-message-avatar{order:2;background:#d8d8d8;color:#222}.chat-message-user .chat-bubble{margin-left:auto;background:#363636}.chat-bubble{min-width:0;max-width:min(100%,760px);padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:#2b2b2b}.chat-bubble>header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:9px}.chat-bubble header strong{font-size:11px}.chat-bubble header time,.chat-bubble header>span{color:#888;font-size:9px}.chat-bubble header>span{display:flex;align-items:center;gap:8px}.chat-copy{display:grid;gap:8px;color:#d6d6d6;font-size:13px;line-height:1.7}.chat-copy h3,.chat-copy p{margin:0}.chat-copy h3{font-size:15px}.chat-copy pre{max-width:100%;margin:2px 0;padding:12px;overflow:auto;border:1px solid #383838;border-radius:6px;background:#1b1b1b;font-size:11px;white-space:pre-wrap}.chat-list-line{padding-left:13px}.chat-list-line:before{content:'•';margin-left:-12px;margin-right:7px}.chat-bubble>footer{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:9px;border-top:1px solid var(--line)}.chat-bubble>footer>span{min-width:0;flex:1;overflow:hidden;color:#777;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.chat-artifacts{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px}.chat-artifacts a{display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;color:#c8c8c8;background:#252525;font-size:9px}.chat-bubble-error{border-color:rgba(239,83,80,.45);color:#ff8a87;background:rgba(239,83,80,.07)}.chat-bubble-error p,.chat-waiting{margin:0;font-size:12px;line-height:1.55}.chat-waiting{color:var(--muted)}.chat-thinking{display:flex!important;gap:3px!important}.chat-thinking i{width:4px;height:4px;border-radius:50%;background:#aaa;animation:chat-pulse 1s ease infinite}.chat-thinking i:nth-child(2){animation-delay:.15s}.chat-thinking i:nth-child(3){animation-delay:.3s}@keyframes chat-pulse{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}.chat-thread-state{display:grid;min-height:100%;place-content:center;justify-items:center;padding:30px;color:var(--muted);text-align:center}.chat-thread-state>span{display:grid;width:56px;height:56px;place-items:center;border-radius:14px;background:#303030}.chat-thread-state strong{margin-top:13px;color:var(--ink);font-size:15px}.chat-thread-state p{max-width:420px;margin:7px 0 14px;font-size:11px;line-height:1.6}.chat-composer-shell{padding:14px clamp(16px,4vw,48px) 12px;border-top:1px solid var(--line);background:#292929}.chat-composer{display:flex;align-items:flex-end;gap:10px;max-width:940px;margin:auto}.chat-composer :deep(.n-input){border-radius:9px}.chat-composer-meta{display:flex;justify-content:space-between;gap:16px;max-width:940px;margin:7px auto 0;color:#777;font-size:8px}.chat-blocked-alert,.chat-send-error{max-width:940px;margin:0 auto 9px}.chat-send-error{color:#ff8a87;font-size:10px}.chat-mobile-tools,.chat-mobile-close,.chat-mobile-scrim{display:none}
-@media(max-width:1050px){.agent-chat-workspace{grid-template-columns:230px 220px minmax(0,1fr)}.chat-agent-copy span{display:none}.chat-thread{padding-inline:18px}.chat-message-user{padding-left:24px}.chat-message-agent{padding-right:12px}}
-@media(max-width:820px){.agent-chat-workspace{display:block;height:calc(100dvh - 170px);min-height:580px}.chat-thread-pane{height:100%}.chat-agent-pane,.chat-session-pane{position:absolute;z-index:5;inset:0 auto 0 0;width:min(86vw,310px);transform:translateX(-105%);transition:transform 180ms ease;box-shadow:18px 0 40px rgba(0,0,0,.36)}.chat-agent-pane.mobile-open,.chat-session-pane.mobile-open{transform:translateX(0)}.chat-mobile-scrim{position:absolute;z-index:4;inset:0;display:block;background:rgba(0,0,0,.62)}.chat-mobile-tools{display:flex;gap:2px}.chat-mobile-close{display:grid;width:30px;height:30px;place-items:center;border:0;border-radius:6px;color:var(--muted);background:transparent}.chat-thread-header>.n-button:last-child{display:none}}
-@media(max-width:600px){.agent-chat-page :deep(.page-header){display:none}.agent-chat-workspace{height:calc(100dvh - 92px);min-height:520px;border-radius:0}.chat-thread-header{min-height:62px;padding:10px}.chat-agent-avatar-large{display:none}.chat-thread{padding:18px 10px}.chat-message-user{padding-left:16px}.chat-message-agent{padding-right:0}.chat-message-avatar{width:28px;height:28px}.chat-bubble{padding:11px 12px}.chat-composer-shell{padding:10px}.chat-composer-meta{display:none}}
+.agent-chat-page{display:flex;width:100%!important;max-width:none!important;height:100%;min-height:0;flex-direction:column;overflow:hidden}.chat-load-error{max-height:96px;flex:0 0 auto;margin-bottom:12px;overflow:auto}.agent-chat-workspace{position:relative;display:grid;grid-template-columns:270px 260px minmax(0,1fr);min-height:0;flex:1;overflow:hidden}.chat-agent-pane,.chat-session-pane,.chat-thread-pane{min-width:0;min-height:0}.chat-agent-pane,.chat-session-pane{display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--surface-subtle)}.chat-session-pane{background:#282828}.chat-pane-header,.chat-thread-header{display:flex;min-height:70px;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}.chat-pane-header{justify-content:space-between}.chat-pane-header>div:first-child{display:grid;gap:3px}.chat-pane-header span{color:#777;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.chat-pane-header strong{font-size:13px}.chat-pane-actions{display:flex!important;align-items:center;gap:4px}.chat-search{padding:12px;border-bottom:1px solid var(--line)}.chat-agent-list,.chat-session-list{flex:1;overflow:auto;padding:8px}.chat-agent-list>button,.chat-session-list>button{position:relative;width:100%;border:1px solid transparent;border-radius:7px;color:var(--ink);background:transparent;text-align:left;cursor:pointer}.chat-agent-list>button{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:9px;align-items:center;padding:10px}.chat-agent-list>button:hover,.chat-session-list>button:hover{background:#323232}.chat-agent-list>button.active,.chat-session-list>button.active{border-color:#555;background:#373737}.chat-agent-list>button.unavailable{opacity:.62}.chat-agent-avatar,.chat-message-avatar{display:grid;flex:0 0 auto;place-items:center;border-radius:9px;color:var(--ink);background:#3a3a3a}.chat-agent-avatar{width:36px;height:36px}.chat-agent-avatar-large{width:40px;height:40px}.chat-agent-copy{display:grid;min-width:0;gap:2px}.chat-agent-copy strong,.chat-agent-copy small,.chat-agent-copy span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chat-agent-copy strong{font-size:12px}.chat-agent-copy small{color:#8d8d8d;font-size:9px}.chat-agent-copy span{color:var(--muted);font-size:10px}.chat-session-list>button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px}.chat-session-list strong{grid-column:1/-1;overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.chat-session-list>button>span{display:flex;gap:7px;color:var(--muted);font-size:9px}.chat-session-list small{font-size:9px}.chat-session-pane>footer{padding:12px;border-top:1px solid var(--line)}.chat-list-skeleton{display:grid;gap:8px;padding:12px}.chat-list-skeleton .skeleton-line{height:58px}.chat-pane-state,.chat-pane-empty{display:grid;flex:1;place-content:center;gap:7px;padding:20px;color:var(--muted);text-align:center}.chat-pane-state strong{color:var(--ink);font-size:12px}.chat-pane-state span,.chat-pane-empty{font-size:10px;line-height:1.5}.chat-thread-pane{position:relative;display:grid;height:100%;min-height:0;grid-template-rows:auto minmax(0,1fr) auto;background:#222}.chat-thread-header{background:#292929}.chat-thread-identity{display:grid;min-width:0;flex:1;gap:3px}.chat-thread-identity strong{overflow:hidden;font-size:14px;text-overflow:ellipsis;white-space:nowrap}.chat-thread-identity span{overflow:hidden;color:var(--muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.chat-thread{min-height:0;overflow:auto;padding:26px clamp(18px,4vw,54px);scroll-behavior:smooth;overscroll-behavior:contain}.chat-thread-loading{display:grid;gap:12px;max-width:760px;margin:auto}.chat-turn{display:grid;gap:18px;max-width:920px;margin:0 auto 28px}.chat-message{display:flex;gap:10px;align-items:flex-start}.chat-message-user{padding-left:clamp(24px,8vw,110px)}.chat-message-agent{padding-right:clamp(12px,5vw,70px)}.chat-message-avatar{width:32px;height:32px;margin-top:2px}.chat-message-user .chat-message-avatar{order:2;background:#d8d8d8;color:#222}.chat-message-user .chat-bubble{max-width:70%;margin-left:auto;background:#363636}.chat-message-agent .chat-bubble{max-width:min(100%,960px)}.chat-bubble{min-width:0;max-width:min(100%,760px);padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:#2b2b2b}.chat-bubble>header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:9px}.chat-bubble header strong{font-size:11px}.chat-bubble header time,.chat-bubble header>span{color:#888;font-size:9px}.chat-bubble header>span{display:flex;align-items:center;gap:8px}.chat-copy{display:grid;max-width:100%;gap:8px;color:#d6d6d6;font-size:13px;line-height:1.7}.chat-copy h3,.chat-copy p{margin:0}.chat-copy h3{font-size:15px}.chat-copy pre{max-width:100%;margin:2px 0;padding:12px;overflow:auto;border:1px solid #383838;border-radius:6px;background:#1b1b1b;font-size:11px;white-space:pre-wrap}.chat-copy table{display:block;max-width:100%;overflow-x:auto}.chat-list-line{padding-left:13px}.chat-list-line:before{content:'•';margin-left:-12px;margin-right:7px}.chat-bubble>footer{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:9px;border-top:1px solid var(--line)}.chat-bubble>footer>span{min-width:0;flex:1;overflow:hidden;color:#777;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.chat-artifacts{display:flex;max-width:100%;flex-wrap:wrap;gap:6px;margin-top:11px;overflow-x:auto}.chat-artifacts a{display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;color:#c8c8c8;background:#252525;font-size:9px}.chat-bubble-error{border-color:rgba(239,83,80,.45);color:#ff8a87;background:rgba(239,83,80,.07)}.chat-bubble-error p,.chat-waiting{margin:0;font-size:12px;line-height:1.55}.chat-waiting{color:var(--muted)}.chat-thinking{display:flex!important;gap:3px!important}.chat-thinking i{width:4px;height:4px;border-radius:50%;background:#aaa;animation:chat-pulse 1s ease infinite}.chat-thinking i:nth-child(2){animation-delay:.15s}.chat-thinking i:nth-child(3){animation-delay:.3s}@keyframes chat-pulse{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}.chat-thread-state{display:grid;min-height:100%;place-content:center;justify-items:center;padding:30px;color:var(--muted);text-align:center}.chat-thread-state>span{display:grid;width:56px;height:56px;place-items:center;border-radius:14px;background:#303030}.chat-thread-state strong{margin-top:13px;color:var(--ink);font-size:15px}.chat-thread-state p{max-width:420px;margin:7px 0 14px;font-size:11px;line-height:1.6}.chat-composer-shell{padding:14px clamp(16px,4vw,48px) 12px;border-top:1px solid var(--line);background:#292929}.chat-composer{display:flex;align-items:flex-end;gap:10px;max-width:940px;margin:auto}.chat-composer :deep(.n-input){border-radius:9px}.chat-composer-meta{display:flex;justify-content:space-between;gap:16px;max-width:940px;margin:7px auto 0;color:#777;font-size:8px}.chat-blocked-alert,.chat-send-error{max-width:940px;max-height:96px;margin:0 auto 9px;overflow:auto}.chat-send-error{color:#ff8a87;font-size:10px}.chat-latest-row{display:flex;max-width:940px;margin:0 auto 8px;justify-content:flex-end}.chat-mobile-tools,.chat-mobile-close,.chat-mobile-scrim{display:none}.chat-agent-toggle,.chat-session-toggle{display:none!important}
+@container chat-workbench (max-width:1180px){.agent-chat-workspace{grid-template-columns:260px minmax(0,1fr)}.chat-agent-pane{position:absolute;z-index:5;inset:0 auto 0 0;width:min(86cqw,320px);transform:translateX(-105%);transition:transform 180ms ease;box-shadow:18px 0 40px rgba(0,0,0,.36)}.chat-agent-pane.mobile-open{transform:translateX(0)}.chat-mobile-scrim{position:absolute;z-index:4;inset:0;display:block;background:rgba(0,0,0,.62)}.chat-mobile-tools{display:flex;gap:2px}.chat-agent-toggle{display:inline-flex!important}.chat-session-toggle{display:none!important}.chat-mobile-close{display:grid;width:30px;height:30px;place-items:center;border:0;border-radius:6px;color:var(--muted);background:transparent}.chat-thread-header>.n-button:last-child{display:none}.chat-thread{padding-inline:18px}.chat-message-user{padding-left:24px}.chat-message-agent{padding-right:12px}}
+@container chat-workbench (max-width:820px){.agent-chat-workspace{grid-template-columns:minmax(0,1fr)}.chat-session-pane{position:absolute;z-index:5;inset:0 auto 0 0;width:min(86cqw,320px);transform:translateX(-105%);transition:transform 180ms ease;box-shadow:18px 0 40px rgba(0,0,0,.36)}.chat-session-pane.mobile-open{transform:translateX(0)}.chat-session-toggle{display:inline-flex!important}}
+@container chat-workbench (max-width:600px){.agent-chat-workspace{border-radius:0}.chat-thread-header{min-height:62px;padding:10px}.chat-agent-avatar-large{display:none}.chat-thread{padding:18px 10px}.chat-message-user{padding-left:16px}.chat-message-agent{padding-right:0}.chat-message-avatar{width:28px;height:28px}.chat-message-user .chat-bubble{max-width:86%}.chat-bubble{padding:11px 12px}.chat-composer-shell{padding:10px}.chat-composer-meta{display:none}}
 </style>

@@ -21,12 +21,8 @@ for file in $required_files; do
 done
 
 if [ "${HAP_VALIDATE_COMPOSE:-0}" = "1" ]; then
-  command -v docker >/dev/null 2>&1 || {
-    echo "docker is required when HAP_VALIDATE_COMPOSE=1" >&2
-    exit 1
-  }
-  COMPOSE="docker compose -p hermes-agent-platform -f $PROJECT_ROOT/docker-compose.yml"
   . "$PROJECT_ROOT/scripts/compose-compat.sh"
+  compose_compat_init "${HERMES_COMPOSE_PROJECT_NAME:-agent}" "$PROJECT_ROOT/docker-compose.yml"
   compose_compat_config_check
 fi
 

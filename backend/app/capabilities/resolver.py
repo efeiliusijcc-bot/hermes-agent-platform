@@ -191,7 +191,7 @@ async def resolve_agent_capabilities(
             if binding.resource_scope_revision_id
             else None
         )
-        if connector is not None and connector.type == "postgresql_mcp":
+        if connector is not None and connector.type in {"postgresql_mcp", "database_mcp"}:
             if scope_revision is None:
                 issues.append(
                     PreflightIssue(

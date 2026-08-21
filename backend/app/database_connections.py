@@ -30,14 +30,16 @@ from app.db.models import (
 from app.model_secrets import ModelSecretCipher, ModelSecretError
 from app.schemas.database_connection import (
     DatabaseConnectionCreate,
+    DatabaseCredentialInput,
+    DatabaseEndpoint,
     DatabaseObjectSelection,
     DatabaseScopeSelection,
-    PostgreSQLCredentialInput,
-    PostgreSQLEndpoint,
 )
 
 
 POSTGRES_CONNECTOR_KEY = "postgresql_mcp"
+DATABASE_CONNECTOR_KEY = "database_mcp"
+DATABASE_CONNECTOR_TYPES = {"postgresql_mcp", "database_mcp"}
 POSTGRES_MCP_TOOLS: dict[str, dict[str, Any]] = {
     "list_schemas": {
         "capability": "database.list_schemas",
@@ -107,6 +109,7 @@ POSTGRES_MCP_TOOLS: dict[str, dict[str, Any]] = {
         },
     },
 }
+DATABASE_MCP_TOOLS = POSTGRES_MCP_TOOLS
 
 
 def digest(value: Any) -> str:
@@ -114,7 +117,7 @@ def digest(value: Any) -> str:
     return f"sha256:{hashlib.sha256(raw.encode()).hexdigest()}"
 
 
-def credential_payload(value: PostgreSQLCredentialInput) -> dict[str, str]:
+def credential_payload(value: DatabaseCredentialInput) -> dict[str, str]:
     return {"username": value.username, "password": value.password.get_secret_value()}
 
 
@@ -131,7 +134,7 @@ def cipher() -> ModelSecretCipher:
     return ModelSecretCipher(configured.get_secret_value())
 
 
-def encrypt_credential(value: PostgreSQLCredentialInput) -> str:
+def encrypt_credential(value: DatabaseCredentialInput) -> str:
     return cipher().encrypt(json.dumps(credential_payload(value), ensure_ascii=False, separators=(",", ":")))
 
 
@@ -145,13 +148,13 @@ def decrypt_credential(value: ConnectorCredential) -> dict[str, str]:
     return {"username": decoded["username"], "password": decoded["password"]}
 
 
-class PostgresMCPClient:
+class DatabaseMCPClient:
     def __init__(self) -> None:
         settings = get_settings()
         self.endpoint = settings.postgres_mcp_endpoint.rstrip("/")
         self.timeout = settings.postgres_mcp_timeout_seconds
 
-    async def test_temporary(self, endpoint: PostgreSQLEndpoint, credential: PostgreSQLCredentialInput) -> dict[str, Any]:
+    async def test_temporary(self, endpoint: DatabaseEndpoint, credential: DatabaseCredentialInput) -> dict[str, Any]:
         return await self._post(
             "/internal/admin/test",
             {"endpoint": endpoint.model_dump(), "credential": credential_payload(credential)},
@@ -172,13 +175,17 @@ class PostgresMCPClient:
                 response = await client.post(f"{self.endpoint}{path}", json=payload)
             data = response.json()
         except (httpx.HTTPError, ValueError, json.JSONDecodeError) as exc:
-            raise HTTPException(status_code=502, detail="PostgreSQL MCP 服务不可用") from exc
+            raise HTTPException(status_code=502, detail="Database MCP 服务不可用") from exc
         if response.status_code >= 400:
             detail = data.get("detail") if isinstance(data, dict) else None
             raise HTTPException(status_code=422 if response.status_code < 500 else 502, detail=detail or "数据库连接测试失败")
         if not isinstance(data, dict):
-            raise HTTPException(status_code=502, detail="PostgreSQL MCP 返回格式无效")
+            raise HTTPException(status_code=502, detail="Database MCP 返回格式无效")
         return data
+
+
+# Compatibility alias retained for old code and tests.
+PostgresMCPClient = DatabaseMCPClient
 
 
 async def invalidate_connector_pools(
@@ -192,7 +199,7 @@ async def invalidate_connector_pools(
             )
         )
     )
-    client = PostgresMCPClient()
+    client = DatabaseMCPClient()
     await asyncio.gather(
         *(client.invalidate(revision_id) for revision_id in revision_ids),
         return_exceptions=True,
@@ -282,6 +289,89 @@ async def ensure_postgres_builtins(session: AsyncSession) -> tuple[Connector, di
     return connector, values
 
 
+async def ensure_database_builtins(session: AsyncSession) -> tuple[Connector, dict[str, tuple[CapabilityVersion, ConnectorOperation]]]:
+    connector = await session.scalar(select(Connector).where(Connector.key == DATABASE_CONNECTOR_KEY))
+    if connector is None:
+        connector = Connector(
+            key=DATABASE_CONNECTOR_KEY,
+            display_name="Database MCP",
+            type="database_mcp",
+            description="平台托管的多数据库只读能力",
+            status="published",
+        )
+        session.add(connector)
+        await session.flush()
+    else:
+        connector.type = "database_mcp"
+        connector.status = "published"
+
+    values: dict[str, tuple[CapabilityVersion, ConnectorOperation]] = {}
+    for operation_key, specification in DATABASE_MCP_TOOLS.items():
+        capability = await session.scalar(
+            select(Capability).where(
+                Capability.namespace == "platform",
+                Capability.key == specification["capability"],
+            )
+        )
+        if capability is None:
+            capability = Capability(
+                namespace="platform",
+                key=specification["capability"],
+                display_name=specification["label"],
+                description="通用只读数据库能力",
+                risk_level="LOW",
+                status="published",
+            )
+            session.add(capability)
+            await session.flush()
+        version = await session.scalar(
+            select(CapabilityVersion).where(
+                CapabilityVersion.capability_id == capability.id,
+                CapabilityVersion.version == "1.0.0",
+            )
+        )
+        if version is None:
+            version = CapabilityVersion(
+                capability_id=capability.id,
+                version="1.0.0",
+                input_schema=specification["input"],
+                output_schema={"type": "object"},
+                ui_schema={},
+                error_schema={},
+                side_effect="READ_ONLY",
+                idempotency="SAFE_RETRY",
+                cache_policy={"ttl_seconds": 30 if operation_key in {"list_schemas", "list_tables", "describe_table"} else 0},
+                default_timeout_ms=15_000,
+                compatibility={"required_features": ["capability_gateway"]},
+                status="published",
+                published_at=datetime.now(timezone.utc),
+            )
+            session.add(version)
+            await session.flush()
+        operation = await session.scalar(
+            select(ConnectorOperation).where(
+                ConnectorOperation.connector_id == connector.id,
+                ConnectorOperation.operation_key == operation_key,
+            )
+        )
+        if operation is None:
+            operation = ConnectorOperation(
+                connector_id=connector.id,
+                operation_key=operation_key,
+                display_name=specification["label"],
+                protocol="mcp",
+                path_or_tool=specification["tool"],
+                request_schema=specification["input"],
+                response_schema={"type": "object"},
+                side_effect="READ_ONLY",
+                status="published",
+            )
+            session.add(operation)
+            await session.flush()
+        values[operation_key] = (version, operation)
+    return connector, values
+
+
 def validate_scope(discovery: dict[str, Any], scope: DatabaseScopeSelection) -> None:
     databases = discovery.get("databases")
     database = next((item for item in databases or [] if isinstance(item, dict) and item.get("name") == scope.database), None)
@@ -300,10 +390,16 @@ def validate_scope(discovery: dict[str, Any], scope: DatabaseScopeSelection) -> 
             raise HTTPException(status_code=422, detail=f"Scope 包含未发现的对象：{unknown_tables + unknown_views}")
 
 
-def scope_definition(instance_id: UUID, revision_id: UUID, scope: DatabaseScopeSelection) -> dict[str, Any]:
+def scope_definition(
+    instance_id: UUID,
+    revision_id: UUID,
+    scope: DatabaseScopeSelection,
+    database_type: str = "postgresql",
+) -> dict[str, Any]:
     return {
         "connector_instance_id": str(instance_id),
         "connector_revision_id": str(revision_id),
+        "database_type": database_type,
         "database": scope.database,
         "schemas": {
             item.name: {"tables": sorted(set(item.tables)), "views": sorted(set(item.views))}
@@ -331,10 +427,15 @@ async def add_scope(
     revision: ConnectorInstanceRevision,
     scope: DatabaseScopeSelection,
 ) -> ResourceScopeRevision:
-    definition = scope_definition(instance.id, revision.id, scope)
+    definition = scope_definition(
+        instance.id,
+        revision.id,
+        scope,
+        str((getattr(revision, "connection_config", None) or {}).get("database_type") or "postgresql"),
+    )
     value = ResourceScope(
         name=scope.name or f"{instance.name} / {scope.database}",
-        resource_type="postgresql_database",
+        resource_type="database_resource",
         owner_type="connector_instance",
         owner_id=str(instance.id),
     )
@@ -369,7 +470,7 @@ async def revise_scopes_for_connector_revision(
             .where(
                 ResourceScope.owner_type == "connector_instance",
                 ResourceScope.owner_id == str(instance.id),
-                ResourceScope.resource_type == "postgresql_database",
+                ResourceScope.resource_type.in_({"postgresql_database", "database_resource"}),
             )
             .order_by(ResourceScope.created_at)
         )
@@ -407,7 +508,12 @@ async def revise_scopes_for_connector_revision(
             requests_per_minute=int(limits.get("requests_per_minute") or 60),
         )
         validate_scope(discovery, selection)
-        definition = scope_definition(instance.id, revision.id, selection)
+        definition = scope_definition(
+            instance.id,
+            revision.id,
+            selection,
+            str((getattr(revision, "connection_config", None) or {}).get("database_type") or previous.get("database_type") or "postgresql"),
+        )
         value = ResourceScopeRevision(
             resource_scope_id=scope.id,
             revision=int(current.revision) + 1,
@@ -491,7 +597,7 @@ async def create_database_connection(
         raise HTTPException(status_code=422, detail="数据库连接测试未通过")
     for selected in payload.scopes:
         validate_scope(discovery, selected)
-    connector, builtins = await ensure_postgres_builtins(session)
+    connector, builtins = await ensure_database_builtins(session)
     duplicate = await session.scalar(
         select(ConnectorInstance).where(
             ConnectorInstance.connector_id == connector.id,
@@ -501,8 +607,8 @@ async def create_database_connection(
     if duplicate is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="数据库连接名称已存在")
     credential = ConnectorCredential(
-        name=f"postgresql:{payload.name}:{uuid4().hex[:8]}",
-        credential_type="postgresql_password",
+        name=f"database:{payload.endpoint.database_type}:{payload.name}:{uuid4().hex[:8]}",
+        credential_type=f"{payload.endpoint.database_type}_password",
         encrypted_payload=encrypt_credential(payload.credential),
         masked_label=masked_username(payload.credential.username),
     )
@@ -531,7 +637,7 @@ async def create_database_connection(
             "read_seconds": max(item.statement_timeout_ms for item in payload.scopes) / 1000 + 5,
         },
         retry_policy={"max_retries": 1},
-        health_check_config={"kind": "postgresql"},
+        health_check_config={"kind": payload.endpoint.database_type},
         config_digest=digest(connection_config),
     )
     session.add(revision)
@@ -561,15 +667,18 @@ async def current_revision(session: AsyncSession, instance: ConnectorInstance) -
     return value
 
 
-async def postgres_instance(session: AsyncSession, instance_id: UUID) -> ConnectorInstance:
+async def database_instance(session: AsyncSession, instance_id: UUID) -> ConnectorInstance:
     value = await session.scalar(
         select(ConnectorInstance)
         .join(Connector, Connector.id == ConnectorInstance.connector_id)
-        .where(ConnectorInstance.id == instance_id, Connector.type == "postgresql_mcp")
+        .where(ConnectorInstance.id == instance_id, Connector.type.in_(DATABASE_CONNECTOR_TYPES))
     )
     if value is None:
         raise HTTPException(status_code=404, detail="数据库连接不存在")
     return value
+
+
+postgres_instance = database_instance
 
 
 async def next_revision_number(session: AsyncSession, instance_id: UUID) -> int:

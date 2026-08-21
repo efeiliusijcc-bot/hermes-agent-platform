@@ -299,7 +299,7 @@ async def invoke_capability(
             )
         secret = (
             _decrypt(provider["encrypted_payload"])
-            if provider["encrypted_payload"] and provider["connector_type"] != "postgresql_mcp"
+            if provider["encrypted_payload"] and provider["connector_type"] not in {"postgresql_mcp", "database_mcp"}
             else None
         )
         result = await _invoke_provider(
@@ -711,9 +711,9 @@ async def _invoke_provider(
         connect=float(timeout_policy.get("connect_seconds") or 5),
     )
     if provider["protocol"] == "mcp":
-        if provider["connector_type"] == "postgresql_mcp":
+        if provider["connector_type"] in {"postgresql_mcp", "database_mcp"}:
             if not scope_revision_id:
-                raise GatewayError("PERMISSION_DENIED", "PostgreSQL 能力缺少 Resource Scope")
+                raise GatewayError("PERMISSION_DENIED", "数据库能力缺少 Resource Scope")
             request_data.pop("resource_scope", None)
             headers.update(
                 {
@@ -725,7 +725,7 @@ async def _invoke_provider(
                 }
             )
         if auth_type == "execution_capability":
-            if provider["connector_type"] != "postgresql_mcp":
+            if provider["connector_type"] not in {"postgresql_mcp", "database_mcp"}:
                 request_data["access_token"] = execution_token
         async with httpx.AsyncClient(headers=headers, timeout=timeout, trust_env=False) as mcp_http:
             async with streamable_http_client(endpoint, http_client=mcp_http) as (read, write, _):
@@ -805,7 +805,7 @@ async def _invoke_provider(
 
 
 def _mcp_failure(result: Any, connector_type: str) -> GatewayError:
-    if connector_type == "postgresql_mcp":
+    if connector_type in {"postgresql_mcp", "database_mcp"}:
         texts = [
             str(item.text)
             for item in getattr(result, "content", [])

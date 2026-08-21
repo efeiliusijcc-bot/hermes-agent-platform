@@ -6,12 +6,10 @@ import {
   Activity,
   AlertCircle,
   ChevronDown,
-  ChevronUp,
   Clock,
   Download,
   FileText,
   ListDetails,
-  PlayerStop,
   Robot,
   User,
 } from '@vicons/tabler'
@@ -38,14 +36,16 @@ const props = defineProps<{
   run: WorkflowRun
   team: AgentTeam
   refreshTick?: number
+  detailOnly?: boolean
 }>()
 
 const emit = defineEmits<{
   refresh: []
+  openDetails: [runId: string, trigger?: HTMLElement]
 }>()
 
 const router = useRouter()
-const expanded = ref(false)
+const expanded = ref(Boolean(props.detailOnly))
 const tasks = ref<AgentTask[]>([])
 const tasksLoading = ref(false)
 const tasksError = ref('')
@@ -68,7 +68,6 @@ const terminalTaskStatuses = new Set(['succeeded', 'failed', 'cancelled'])
 const executionCache = new Map<string, ExecutionDetail>()
 const historyCache = new Map<string, ExecutionSummary[]>()
 
-const activeRun = computed(() => ['pending', 'running', 'human_review'].includes(props.run.status))
 const presentation = computed(() => presentTeamRunResult(props.run.output))
 const outputModes = computed<OutputMode[]>(() => {
   const modes: OutputMode[] = ['readable']
@@ -77,6 +76,7 @@ const outputModes = computed<OutputMode[]>(() => {
   return modes
 })
 const outputText = computed(() => {
+  if (!props.detailOnly) return presentation.value.readable
   if (outputMode.value === 'structured') return presentation.value.structuredText
   if (outputMode.value === 'raw') return presentation.value.raw
   return presentation.value.readable
@@ -165,9 +165,10 @@ async function loadTasks(silent = false) {
   }
 }
 
-async function toggleExpanded() {
-  expanded.value = !expanded.value
-  if (expanded.value && !tasks.value.length) await loadTasks()
+async function toggleExpanded(event?: MouseEvent) {
+  const trigger = event?.currentTarget
+  if (trigger instanceof HTMLElement) emit('openDetails', props.run.id, trigger)
+  else emit('openDetails', props.run.id)
 }
 
 async function loadExecution() {
@@ -223,19 +224,6 @@ async function loadHistory() {
   }
 }
 
-async function cancelRun() {
-  if (!activeRun.value || actionLoading.value) return
-  actionLoading.value = true
-  try {
-    await platformApi.cancelWorkflowRun(props.run.id)
-    emit('refresh')
-  } catch (error) {
-    tasksError.value = getApiErrorMessage(error)
-  } finally {
-    actionLoading.value = false
-  }
-}
-
 async function review(task: AgentTask, approved: boolean) {
   if (actionLoading.value) return
   actionLoading.value = true
@@ -255,15 +243,19 @@ watch(agentScope, (scope) => {
   if (scope === 'history') void loadHistory()
 })
 watch(() => props.refreshTick, () => {
-  if (expanded.value && activeRun.value) void loadTasks(true)
+  if (expanded.value && ['pending', 'running', 'human_review'].includes(props.run.status)) void loadTasks(true)
 })
 watch(() => props.run.status, (next, previous) => {
   if (expanded.value && next !== previous) void loadTasks(true)
 })
+watch(() => props.detailOnly, (detailOnly) => {
+  expanded.value = Boolean(detailOnly)
+  if (detailOnly && !tasks.value.length) void loadTasks()
+}, { immediate: true })
 </script>
 
 <template>
-  <article class="team-chat-turn" :data-run-id="run.id">
+  <article class="team-chat-turn" :class="{ 'team-chat-detail-only': detailOnly }" :data-run-id="run.id">
     <section class="team-chat-message team-chat-message-user">
       <span class="team-chat-avatar"><NIcon :component="User" size="17" /></span>
       <div class="team-chat-bubble">
@@ -280,7 +272,7 @@ watch(() => props.run.status, (next, previous) => {
           <span><StatusTag :status="run.status" /><time>{{ formatDate(run.finished_at || run.started_at || run.created_at) }}</time></span>
         </header>
 
-        <div v-if="outputModes.length > 1" class="team-output-tabs" role="tablist" aria-label="Manager 输出格式">
+        <div v-if="detailOnly && outputModes.length > 1" class="team-output-tabs" role="tablist" aria-label="Manager 输出格式">
           <button v-for="mode in outputModes" :key="mode" type="button" role="tab" :aria-selected="outputMode === mode" :class="{ active: outputMode === mode }" @click="outputMode = mode">
             {{ outputModeLabel(mode) }}
           </button>
@@ -314,12 +306,9 @@ watch(() => props.run.status, (next, previous) => {
         <footer class="team-run-actions">
           <span class="mono">Run {{ run.id }}</span>
           <div>
-            <NButton v-if="activeRun" text size="tiny" type="error" :loading="actionLoading" @click="cancelRun">
-              <template #icon><NIcon :component="PlayerStop" /></template>取消运行
-            </NButton>
             <NButton text size="tiny" @click="toggleExpanded">
-              <template #icon><NIcon :component="expanded ? ChevronUp : ChevronDown" /></template>
-              {{ expanded ? '收起协作过程' : '查看协作过程' }}
+              <template #icon><NIcon :component="ChevronDown" /></template>
+              查看协作详情
             </NButton>
           </div>
         </footer>
@@ -408,5 +397,6 @@ watch(() => props.run.status, (next, previous) => {
 </template>
 
 <style scoped>
-.team-chat-turn{display:grid;gap:14px;max-width:1100px;margin:0 auto 30px}.team-chat-message{display:flex;gap:10px;align-items:flex-start}.team-chat-message-user{padding-left:clamp(36px,10vw,140px)}.team-chat-message-manager{padding-right:clamp(12px,4vw,56px)}.team-chat-avatar{display:grid;width:32px;height:32px;flex:0 0 auto;place-items:center;border-radius:9px;color:var(--ink);background:#3a3a3a}.team-chat-message-user .team-chat-avatar{order:2;color:#202020;background:#d8d8d8}.team-chat-message-user .team-chat-bubble{max-width:720px;margin-left:auto;background:#363636}.team-chat-bubble{min-width:0;max-width:100%;flex:1;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:#2b2b2b}.team-chat-bubble>header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px}.team-chat-bubble>header strong{font-size:11px}.team-chat-bubble>header>span{display:flex;align-items:center;gap:8px}.team-chat-bubble time{color:#888;font-size:9px}.team-chat-copy{color:#d6d6d6;font-size:13px;line-height:1.72;white-space:pre-wrap;overflow-wrap:anywhere}.team-chat-copy h3,.team-chat-copy p{margin:0 0 9px}.team-chat-copy h3{font-size:15px}.team-chat-copy pre{max-width:100%;margin:7px 0;padding:12px;overflow:auto;border:1px solid #3a3a3a;border-radius:7px;background:#1c1c1c;font-size:11px;white-space:pre-wrap}.team-chat-list-item{padding-left:14px}.team-chat-list-item:before{content:'•';margin-left:-12px;margin-right:7px}.team-output-tabs,.team-agent-scope-tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px}.team-output-tabs button,.team-agent-scope-tabs button{padding:5px 9px;border:1px solid transparent;border-radius:6px;color:var(--muted);background:transparent;font:600 9px/1.2 inherit;cursor:pointer}.team-output-tabs button.active,.team-agent-scope-tabs button.active{border-color:#555;color:var(--ink);background:#383838}.team-output-tabs button:focus-visible,.team-agent-scope-tabs button:focus-visible,.team-task-list button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.team-run-state{display:flex;align-items:flex-start;gap:9px;padding:12px;border:1px solid var(--line);border-radius:8px;color:var(--muted);background:#252525}.team-run-state div{display:grid;gap:3px}.team-run-state strong{color:var(--ink);font-size:11px}.team-run-state span{font-size:10px;line-height:1.5}.team-run-error{border-color:rgba(239,83,80,.34);color:#ff8a87;background:rgba(239,83,80,.06)}.team-run-review{border-color:rgba(240,180,41,.3)}.team-run-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:13px;padding-top:10px;border-top:1px solid var(--line)}.team-run-actions>span{min-width:0;overflow:hidden;color:#757575;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.team-run-actions>div{display:flex;gap:8px}.team-collaboration{display:grid;grid-template-columns:minmax(190px,240px) minmax(0,1fr);margin:12px -4px -4px;padding-top:12px;border-top:1px solid var(--line)}.team-task-list{display:grid;align-content:start;max-height:520px;overflow:auto;border-right:1px solid var(--line)}.team-task-list button{display:grid;gap:4px;padding:10px;border:0;border-bottom:1px solid #363636;color:var(--muted);background:transparent;text-align:left;cursor:pointer}.team-task-list button:hover,.team-task-list button.active{color:var(--ink);background:#353535}.team-task-list button>span{display:flex;align-items:center;justify-content:space-between;gap:7px}.team-task-list strong{overflow:hidden;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.team-task-list small{overflow:hidden;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.team-agent-detail{min-width:0;padding:2px 0 2px 14px}.team-agent-detail>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.team-agent-detail>header>div{display:grid;min-width:0;gap:2px}.team-agent-detail>header strong{font-size:12px}.team-agent-detail>header span{color:var(--muted);font-size:9px}.team-agent-input{display:grid;gap:6px;margin-bottom:12px;padding:10px;border-radius:7px;background:#242424}.team-agent-input>strong{font-size:9px}.team-agent-input>div{max-height:180px;overflow:auto;color:#bcbcbc;font-size:10px;line-height:1.6;white-space:pre-wrap}.team-agent-output{max-height:460px;overflow:auto;padding:2px}.team-agent-links{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;padding-top:9px;border-top:1px solid var(--line)}.team-agent-artifacts{display:grid;gap:5px;margin-top:12px}.team-agent-artifacts>header{display:flex;align-items:center;gap:6px}.team-agent-artifacts>header strong{font-size:10px}.team-agent-artifacts>header span{margin-left:auto;color:var(--muted);font-size:8px}.team-agent-artifacts>a{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px;border:1px solid var(--line);border-radius:7px;color:var(--ink);background:#252525}.team-agent-artifacts>a>span{display:grid;min-width:0;gap:2px}.team-agent-artifacts>a strong,.team-agent-artifacts>a small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.team-agent-artifacts>a strong{font-size:9px}.team-agent-artifacts>a small{color:var(--muted);font-size:8px}.team-inline-error{grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:9px;color:#ff8a87;font-size:10px}.team-task-skeleton{grid-column:1/-1;display:grid;gap:7px;padding:10px}.team-task-skeleton span{height:38px;border-radius:6px;background:#353535;animation:team-chat-pulse 1.3s ease-in-out infinite}.team-task-skeleton.result span{height:18px}.team-task-empty{grid-column:1/-1;padding:24px;color:var(--muted);font-size:10px;text-align:center}.team-approval-actions{display:grid;gap:10px;padding:13px;border:1px solid rgba(240,180,41,.3);border-radius:8px}.team-approval-actions p{margin:0;color:var(--muted);font-size:10px}.team-approval-actions>div{display:flex;gap:8px}@keyframes team-chat-pulse{0%,100%{opacity:.5}50%{opacity:1}}@media(prefers-reduced-motion:reduce){.team-task-skeleton span{animation:none}}@media(max-width:760px){.team-chat-message-user{padding-left:20px}.team-chat-message-manager{padding-right:0}.team-collaboration{grid-template-columns:1fr}.team-task-list{grid-template-columns:repeat(2,minmax(0,1fr));max-height:260px;border-right:0;border-bottom:1px solid var(--line)}.team-task-list button:nth-child(odd){border-right:1px solid #363636}.team-agent-detail{padding:14px 0 0}.team-run-actions{align-items:flex-start;flex-direction:column}.team-run-actions>div{width:100%;justify-content:flex-end}}@media(max-width:520px){.team-chat-turn{margin-bottom:22px}.team-chat-message-user{padding-left:8px}.team-chat-avatar{width:28px;height:28px}.team-chat-bubble{padding:11px 12px}.team-task-list{grid-template-columns:1fr}.team-task-list button:nth-child(odd){border-right:0}.team-chat-bubble>header{align-items:flex-start;flex-direction:column}.team-run-actions>div{flex-wrap:wrap;justify-content:flex-start}.team-agent-links{justify-content:flex-start}}
+.team-chat-turn{display:grid;gap:14px;max-width:1100px;margin:0 auto 30px}.team-chat-message{display:flex;gap:10px;align-items:flex-start}.team-chat-message-user{padding-left:clamp(36px,10vw,140px)}.team-chat-message-manager{padding-right:clamp(12px,4vw,56px)}.team-chat-avatar{display:grid;width:32px;height:32px;flex:0 0 auto;place-items:center;border-radius:9px;color:var(--ink);background:#3a3a3a}.team-chat-message-user .team-chat-avatar{order:2;color:#202020;background:#d8d8d8}.team-chat-message-user .team-chat-bubble{max-width:70%;margin-left:auto;background:#363636}.team-chat-bubble{min-width:0;max-width:100%;flex:1;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:#2b2b2b}.team-chat-bubble>header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px}.team-chat-bubble>header strong{font-size:11px}.team-chat-bubble>header>span{display:flex;align-items:center;gap:8px}.team-chat-bubble time{color:#888;font-size:9px}.team-chat-copy{max-width:100%;color:#d6d6d6;font-size:13px;line-height:1.72;white-space:pre-wrap;overflow-wrap:anywhere}.team-chat-copy h3,.team-chat-copy p{margin:0 0 9px}.team-chat-copy h3{font-size:15px}.team-chat-copy pre{max-width:100%;margin:7px 0;padding:12px;overflow:auto;border:1px solid #3a3a3a;border-radius:7px;background:#1c1c1c;font-size:11px;white-space:pre-wrap}.team-chat-copy table{display:block;max-width:100%;overflow-x:auto}.team-chat-list-item{padding-left:14px}.team-chat-list-item:before{content:'•';margin-left:-12px;margin-right:7px}.team-output-tabs,.team-agent-scope-tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px}.team-output-tabs button,.team-agent-scope-tabs button{padding:5px 9px;border:1px solid transparent;border-radius:6px;color:var(--muted);background:transparent;font:600 9px/1.2 inherit;cursor:pointer}.team-output-tabs button.active,.team-agent-scope-tabs button.active{border-color:#555;color:var(--ink);background:#383838}.team-output-tabs button:focus-visible,.team-agent-scope-tabs button:focus-visible,.team-task-list button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.team-run-state{display:flex;align-items:flex-start;gap:9px;padding:12px;border:1px solid var(--line);border-radius:8px;color:var(--muted);background:#252525}.team-run-state div{display:grid;gap:3px}.team-run-state strong{color:var(--ink);font-size:11px}.team-run-state span{font-size:10px;line-height:1.5}.team-run-error{border-color:rgba(239,83,80,.34);color:#ff8a87;background:rgba(239,83,80,.06)}.team-run-review{border-color:rgba(240,180,41,.3)}.team-run-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:13px;padding-top:10px;border-top:1px solid var(--line)}.team-run-actions>span{min-width:0;overflow:hidden;color:#757575;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.team-run-actions>div{display:flex;gap:8px}.team-collaboration{display:grid;grid-template-columns:minmax(190px,240px) minmax(0,1fr);margin:12px -4px -4px;padding-top:12px;border-top:1px solid var(--line)}.team-task-list{display:grid;align-content:start;max-height:520px;overflow:auto;border-right:1px solid var(--line)}.team-task-list button{display:grid;gap:4px;padding:10px;border:0;border-bottom:1px solid #363636;color:var(--muted);background:transparent;text-align:left;cursor:pointer}.team-task-list button:hover,.team-task-list button.active{color:var(--ink);background:#353535}.team-task-list button>span{display:flex;align-items:center;justify-content:space-between;gap:7px}.team-task-list strong{overflow:hidden;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.team-task-list small{overflow:hidden;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.team-agent-detail{min-width:0;padding:2px 0 2px 14px}.team-agent-detail>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.team-agent-detail>header>div{display:grid;min-width:0;gap:2px}.team-agent-detail>header strong{font-size:12px}.team-agent-detail>header span{color:var(--muted);font-size:9px}.team-agent-input{display:grid;gap:6px;margin-bottom:12px;padding:10px;border-radius:7px;background:#242424}.team-agent-input>strong{font-size:9px}.team-agent-input>div{max-height:180px;overflow:auto;color:#bcbcbc;font-size:10px;line-height:1.6;white-space:pre-wrap}.team-agent-output{max-height:460px;overflow:auto;padding:2px}.team-agent-links{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;padding-top:9px;border-top:1px solid var(--line)}.team-agent-artifacts{display:grid;gap:5px;margin-top:12px}.team-agent-artifacts>header{display:flex;align-items:center;gap:6px}.team-agent-artifacts>header strong{font-size:10px}.team-agent-artifacts>header span{margin-left:auto;color:var(--muted);font-size:8px}.team-agent-artifacts>a{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px;border:1px solid var(--line);border-radius:7px;color:var(--ink);background:#252525}.team-agent-artifacts>a>span{display:grid;min-width:0;gap:2px}.team-agent-artifacts>a strong,.team-agent-artifacts>a small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.team-agent-artifacts>a strong{font-size:9px}.team-agent-artifacts>a small{color:var(--muted);font-size:8px}.team-inline-error{grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:9px;color:#ff8a87;font-size:10px}.team-task-skeleton{grid-column:1/-1;display:grid;gap:7px;padding:10px}.team-task-skeleton span{height:38px;border-radius:6px;background:#353535;animation:team-chat-pulse 1.3s ease-in-out infinite}.team-task-skeleton.result span{height:18px}.team-task-empty{grid-column:1/-1;padding:24px;color:var(--muted);font-size:10px;text-align:center}.team-approval-actions{display:grid;gap:10px;padding:13px;border:1px solid rgba(240,180,41,.3);border-radius:8px}.team-approval-actions p{margin:0;color:var(--muted);font-size:10px}.team-approval-actions>div{display:flex;gap:8px}@keyframes team-chat-pulse{0%,100%{opacity:.5}50%{opacity:1}}@media(prefers-reduced-motion:reduce){.team-task-skeleton span{animation:none}}@media(max-width:760px){.team-chat-message-user{padding-left:20px}.team-chat-message-manager{padding-right:0}.team-collaboration{grid-template-columns:1fr}.team-task-list{grid-template-columns:repeat(2,minmax(0,1fr));max-height:260px;border-right:0;border-bottom:1px solid var(--line)}.team-task-list button:nth-child(odd){border-right:1px solid #363636}.team-agent-detail{padding:14px 0 0}.team-run-actions{align-items:flex-start;flex-direction:column}.team-run-actions>div{width:100%;justify-content:flex-end}}@media(max-width:520px){.team-chat-turn{margin-bottom:22px}.team-chat-message-user{padding-left:8px}.team-chat-message-user .team-chat-bubble{max-width:86%}.team-chat-avatar{width:28px;height:28px}.team-chat-bubble{padding:11px 12px}.team-task-list{grid-template-columns:1fr}.team-task-list button:nth-child(odd){border-right:0}.team-chat-bubble>header{align-items:flex-start;flex-direction:column}.team-run-actions>div{flex-wrap:wrap;justify-content:flex-start}.team-agent-links{justify-content:flex-start}}
+.team-chat-detail-only{max-width:none;margin:0}.team-chat-detail-only>.team-chat-message-user{display:none}.team-chat-detail-only>.team-chat-message-manager{padding:0}.team-chat-detail-only>.team-chat-message-manager>.team-chat-avatar{display:none}.team-chat-detail-only>.team-chat-message-manager>.team-chat-bubble{border:0;border-radius:0;background:transparent}.team-chat-detail-only .team-run-actions{display:none}.team-chat-detail-only .team-collaboration{grid-template-columns:minmax(160px,210px) minmax(0,1fr);margin-inline:0}.team-chat-detail-only .team-task-list,.team-chat-detail-only .team-agent-output{max-height:none}.team-chat-detail-only :deep(.conversation-workspace){grid-template-columns:180px minmax(0,1fr);min-height:520px}.team-chat-detail-only :deep(.conversation-session-list),.team-chat-detail-only :deep(.conversation-transcript){max-height:520px}@media(max-width:760px){.team-chat-detail-only .team-collaboration{grid-template-columns:1fr}.team-chat-detail-only :deep(.conversation-workspace){grid-template-columns:1fr}.team-chat-detail-only :deep(.conversation-session-list){max-height:220px}}@container team-run-detail (max-width:520px){.team-chat-detail-only .team-collaboration{grid-template-columns:1fr}.team-chat-detail-only :deep(.conversation-workspace){grid-template-columns:1fr}.team-chat-detail-only :deep(.conversation-session-list){max-height:220px}}
 </style>

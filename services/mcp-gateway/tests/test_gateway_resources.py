@@ -38,6 +38,8 @@ class JsonObjectTests(unittest.TestCase):
         error = capability_gateway._mcp_failure(result, "postgresql_mcp")
         self.assertEqual(error.code, "PERMISSION_DENIED")
         self.assertEqual(error.message, "对象 public.skills 不在 Scope")
+        generic_error = capability_gateway._mcp_failure(result, "database_mcp")
+        self.assertEqual(generic_error.code, "PERMISSION_DENIED")
 
         unknown = capability_gateway._mcp_failure(result, "mcp")
         self.assertEqual(unknown.code, "PROVIDER_UNAVAILABLE")
@@ -142,7 +144,7 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
                 )
         self.assertEqual(denied.exception.code, "PERMISSION_DENIED")
 
-    async def test_postgresql_mcp_receives_authority_only_in_internal_headers(self) -> None:
+    async def test_database_mcp_receives_authority_only_in_internal_headers(self) -> None:
         captured: dict[str, object] = {}
 
         @asynccontextmanager
@@ -166,7 +168,7 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         provider = {
             "protocol": "mcp",
-            "connector_type": "postgresql_mcp",
+            "connector_type": "database_mcp",
             "auth_type": "execution_capability",
             "connection_config": {},
             "endpoint": "http://postgres-mcp:8091/mcp",

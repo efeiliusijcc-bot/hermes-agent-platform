@@ -142,7 +142,7 @@ onBeforeUnmount(() => {
           {{ systemStore.health ? 'Runtime online' : 'Runtime unavailable' }}
         </div>
       </header>
-      <main class="app-main">
+      <main class="app-main" :class="{ 'app-main-workspace': route.meta.layout === 'workspace' }">
         <RouterView />
       </main>
     </div>

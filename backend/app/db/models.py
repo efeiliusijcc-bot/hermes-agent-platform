@@ -1010,7 +1010,7 @@ class Connector(Base):
     __table_args__ = (
         UniqueConstraint("key", name="uq_connectors_key"),
         CheckConstraint(
-            "type IN ('internal_rest', 'mcp', 'postgresql_mcp')",
+            "type IN ('internal_rest', 'mcp', 'postgresql_mcp', 'database_mcp')",
             name="ck_connectors_type",
         ),
         CheckConstraint("status IN ('draft', 'published', 'disabled')", name="ck_connectors_status"),

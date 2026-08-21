@@ -305,7 +305,7 @@ export const platformApi = {
     return data
   },
 
-  async createConnector(payload: { key: string; display_name: string; type: 'internal_rest' | 'mcp' | 'postgresql_mcp'; description?: string }): Promise<{ id: string }> {
+  async createConnector(payload: { key: string; display_name: string; type: 'internal_rest' | 'mcp' | 'postgresql_mcp' | 'database_mcp'; description?: string }): Promise<{ id: string }> {
     const { data } = await apiClient.post<{ id: string }>('/api/connectors', payload)
     return data
   },

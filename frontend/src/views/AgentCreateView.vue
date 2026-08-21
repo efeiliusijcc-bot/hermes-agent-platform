@@ -52,7 +52,7 @@ const modelOptions = computed(() => models.value.filter((item) => item.is_enable
 const runtimeOptions = computed(() => runtimes.value.filter((item) => item.type === form.runtime_type && item.status !== 'disabled').map((item) => ({ label: `${item.name} / ${item.version} / ${item.status}`, value: item.id })))
 const skillOptions = computed(() => resources.skills.map((item) => ({ label: `${item.name} / v${item.version}`, value: item.id, disabled: !item.runtime_support.includes(form.runtime_type) })))
 const capabilityOptions = computed(() => capabilities.value.filter((item) => !item.key.startsWith('database.')).map((item) => ({ label: `${item.label} / ${item.key}@${item.version}`, value: item.id })))
-const scopeOptions = computed(() => scopes.value.filter((item) => item.resource_type !== 'postgresql_database').map((item) => ({ label: `${item.name} / ${item.resource_type}`, value: item.current_revision_id, disabled: !item.current_revision_id })))
+const scopeOptions = computed(() => scopes.value.filter((item) => !['postgresql_database', 'database_resource'].includes(item.resource_type)).map((item) => ({ label: `${item.name} / ${item.resource_type}`, value: item.current_revision_id, disabled: !item.current_revision_id })))
 const databaseScopeOptions = computed(() => databaseConnections.value.map((item) => ({
   label: `${item.connection_name} / ${item.database} / ${item.scope_name}`,
   value: item.scope_revision_id,

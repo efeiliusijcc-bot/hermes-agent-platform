@@ -119,9 +119,9 @@ function execution(id: string, agentId: string, output: string): ExecutionDetail
   }
 }
 
-function mountRun(values: WorkflowRun = run) {
+function mountRun(values: WorkflowRun = run, detailOnly = false) {
   return mount(TeamChatRun, {
-    props: { run: values, team },
+    props: { run: values, team, detailOnly },
     global: {
       plugins: [router],
       stubs: {
@@ -153,38 +153,36 @@ describe('TeamChatRun', () => {
     expect(listTasks).not.toHaveBeenCalled()
     expect(getExecution).not.toHaveBeenCalled()
 
-    await wrapper.findAll('button').find((button) => button.text().includes('查看协作过程'))!.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text().includes('查看协作详情'))!.trigger('click')
+    expect(wrapper.emitted('openDetails')).toEqual([['run-a']])
+    expect(listTasks).not.toHaveBeenCalled()
+    wrapper.unmount()
+
+    const detailWrapper = mountRun(run, true)
     await flushPromises()
     expect(listTasks).toHaveBeenCalledWith('run-a')
     expect(getExecution).toHaveBeenCalledWith('execution-manager')
 
-    await wrapper.findAll('.team-task-list button').find((button) => button.text().includes('材料分析'))!.trigger('click')
+    await detailWrapper.findAll('.team-task-list button').find((button) => button.text().includes('材料分析'))!.trigger('click')
     await flushPromises()
     expect(getExecution).toHaveBeenCalledWith('execution-worker')
-    expect(wrapper.text()).toContain('Worker 输出')
-    expect(wrapper.text()).toContain('result.md')
+    expect(detailWrapper.text()).toContain('Worker 输出')
+    expect(detailWrapper.text()).toContain('result.md')
 
-    await wrapper.findAll('button').find((button) => button.text().includes('全部历史'))!.trigger('click')
+    await detailWrapper.findAll('button').find((button) => button.text().includes('全部历史'))!.trigger('click')
     await flushPromises()
     expect(listHistory).toHaveBeenCalledWith({ agent_id: 'worker-a', limit: 50, offset: 0 })
-    expect(wrapper.text()).toContain('历史 0')
-    wrapper.unmount()
+    expect(detailWrapper.text()).toContain('历史 0')
+    detailWrapper.unmount()
   })
 
-  it('offers real approval and cancellation actions for active runs', async () => {
+  it('offers real approval actions inside the detached detail panel', async () => {
     const reviewTask = task({ id: 'task-review', node_key: 'approval', node_type: 'human_approval', execution_id: null, status: 'human_review' })
     vi.spyOn(platformApi, 'listWorkflowRunTasks').mockResolvedValue([reviewTask])
     const review = vi.spyOn(platformApi, 'reviewHumanTask').mockResolvedValue({ ...reviewTask, status: 'succeeded' })
-    const cancel = vi.spyOn(platformApi, 'cancelWorkflowRun').mockResolvedValue()
-    const wrapper = mountRun({ ...run, status: 'human_review', output: null, finished_at: null })
+    const wrapper = mountRun({ ...run, status: 'human_review', output: null, finished_at: null }, true)
     await flushPromises()
 
-    await wrapper.findAll('button').find((button) => button.text().includes('取消运行'))!.trigger('click')
-    await flushPromises()
-    expect(cancel).toHaveBeenCalledWith('run-a')
-
-    await wrapper.findAll('button').find((button) => button.text().includes('查看协作过程'))!.trigger('click')
-    await flushPromises()
     await wrapper.findAll('button').find((button) => button.text() === '通过')!.trigger('click')
     await flushPromises()
     expect(review).toHaveBeenCalledWith('task-review', true, '聊天工作台审批通过')

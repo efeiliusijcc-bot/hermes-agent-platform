@@ -1,5 +1,11 @@
 asyncpg==0.30.0
+clickhouse-connect==0.8.18
 cryptography==45.0.6
+httpx==0.28.1
 mcp==1.28.1
+oracledb==3.4.2
 pglast==7.7
+pymssql==2.3.13
+PyMySQL==1.1.1
 redis==5.2.1
+sqlglot==27.14.0

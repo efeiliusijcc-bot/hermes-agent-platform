@@ -4,10 +4,15 @@ import base64
 import hashlib
 import hmac
 import json
+import os
+import sqlite3
+from pathlib import Path
 from time import time
 
+import httpx
 import pytest
 
+from hermes_postgres_mcp.adapters import AdapterError, adapter_for
 from hermes_postgres_mcp.auth import AccessDenied, verify_capability_token
 from hermes_postgres_mcp.server import (
     _require_permission,
@@ -16,7 +21,7 @@ from hermes_postgres_mcp.server import (
     _timeouts,
     _validate_analysis,
 )
-from hermes_postgres_mcp.sql_policy import SQLPolicyError, analyze_select
+from hermes_postgres_mcp.sql_policy import SQLPolicyError, analyze_read_query, analyze_select
 
 
 @pytest.mark.parametrize(
@@ -92,6 +97,80 @@ def test_permissions_and_response_limit_fail_closed() -> None:
 def test_sql_policy_errors_carry_the_standard_gateway_code() -> None:
     with pytest.raises(SQLPolicyError, match="INVALID_ARGUMENT"):
         analyze_select("DELETE FROM public.items")
+
+
+@pytest.mark.parametrize(
+    ("database_type", "sql", "relation"),
+    [
+        ("mysql", "SELECT * FROM business.items", ("business", "items")),
+        ("sqlserver", "SELECT TOP 10 * FROM dbo.items", ("dbo", "items")),
+        ("oracle", "SELECT * FROM REPORTING.ITEMS", ("REPORTING", "ITEMS")),
+        ("dm", "SELECT * FROM REPORTING.ITEMS", ("REPORTING", "ITEMS")),
+        ("clickhouse", "SELECT * FROM analytics.events", ("analytics", "events")),
+        ("elasticsearch", 'SELECT * FROM "news-index"', (None, "news-index")),
+        ("sqlite", "SELECT * FROM main.items", ("main", "items")),
+    ],
+)
+def test_generic_sql_policy_extracts_scoped_relations(database_type: str, sql: str, relation: tuple[str | None, str]) -> None:
+    assert relation in analyze_read_query(sql, database_type).relations
+
+
+@pytest.mark.parametrize(
+    ("database_type", "sql"),
+    [
+        ("mysql", "WITH changed AS (DELETE FROM users RETURNING *) SELECT * FROM changed"),
+        ("sqlserver", "EXEC xp_cmdshell 'whoami'"),
+        ("sqlite", "PRAGMA writable_schema=ON"),
+        ("clickhouse", "DROP TABLE analytics.events"),
+    ],
+)
+def test_generic_sql_policy_rejects_non_read_operations(database_type: str, sql: str) -> None:
+    with pytest.raises(SQLPolicyError):
+        analyze_read_query(sql, database_type)
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (401, "用户名或密码无效"),
+        (403, "cluster monitor"),
+        (429, "HTTP 429"),
+    ],
+)
+def test_elasticsearch_http_errors_are_explicit_and_do_not_echo_request_credentials(status: int, expected: str) -> None:
+    adapter = adapter_for("elasticsearch")
+    request = httpx.Request("GET", "http://elastic.internal:9200", headers={"authorization": "secret-value"})
+    error = httpx.HTTPStatusError("provider failure", request=request, response=httpx.Response(status, request=request))
+    rendered = str(adapter._http_error(error))
+    assert expected in rendered
+    assert "secret-value" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_sqlite_adapter_discovers_and_reads_only_from_scoped_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    database = tmp_path / "demo.db"
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE items(id INTEGER, name TEXT)")
+    connection.execute("INSERT INTO items VALUES (1, 'ok')")
+    connection.commit()
+    connection.close()
+    monkeypatch.setenv("DATABASE_MCP_SQLITE_ROOT", str(tmp_path))
+    config = {"database_type": "sqlite", "database_file": "demo.db", "maintenance_database": "main"}
+    adapter = adapter_for("sqlite")
+    discovery = await adapter.test_and_discover(config, {"username": "", "password": ""})
+    assert discovery["database_type"] == "sqlite"
+    assert discovery["databases"][0]["schemas"][0]["tables"][0]["name"] == "items"
+    result = await adapter.select(
+        {"config": config, "credential": {"username": "", "password": ""}, "database": "main", "scope": {"limits": {}}},
+        "SELECT * FROM items",
+        10,
+    )
+    assert result["rows"] == [{"id": 1, "name": "ok"}]
+    outside = tmp_path.parent / "outside.db"
+    outside.touch()
+    config["database_file"] = str(outside)
+    with pytest.raises(AdapterError, match="目录内"):
+        await adapter.test_and_discover(config, {"username": "", "password": ""})
 
 
 def test_stored_json_objects_accept_asyncpg_jsonb_strings_and_reject_non_objects() -> None:

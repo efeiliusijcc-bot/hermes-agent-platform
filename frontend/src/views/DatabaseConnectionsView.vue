@@ -28,6 +28,7 @@ import type {
   DatabaseDiscovery,
   DatabaseScopePayload,
   DatabaseScopeRecord,
+  DatabaseType,
 } from '@/types/api'
 
 interface ScopeConfig {
@@ -65,7 +66,21 @@ const scopeSelectedObjects = ref<string[]>([])
 const selectedObjects = ref<string[]>([])
 const scopeConfigs = reactive<Record<string, ScopeConfig>>({})
 const steps = ['基础连接', '数据库凭据', '测试与发现', '数据范围']
+const databaseTypeOptions: Array<{ label: string; value: DatabaseType; port: number | null; maintenance: string }> = [
+  { label: 'PostgreSQL', value: 'postgresql', port: 5432, maintenance: 'postgres' },
+  { label: 'MySQL', value: 'mysql', port: 3306, maintenance: 'mysql' },
+  { label: 'MariaDB', value: 'mariadb', port: 3306, maintenance: 'mysql' },
+  { label: 'Apache Doris', value: 'doris', port: 9030, maintenance: 'information_schema' },
+  { label: 'StarRocks', value: 'starrocks', port: 9030, maintenance: 'information_schema' },
+  { label: 'SQL Server', value: 'sqlserver', port: 1433, maintenance: 'master' },
+  { label: 'Oracle', value: 'oracle', port: 1521, maintenance: 'ORCL' },
+  { label: '达梦 DM', value: 'dm', port: 5236, maintenance: 'DM' },
+  { label: 'ClickHouse', value: 'clickhouse', port: 8123, maintenance: 'default' },
+  { label: 'Elasticsearch', value: 'elasticsearch', port: 9200, maintenance: '_cluster' },
+  { label: 'SQLite', value: 'sqlite', port: null, maintenance: 'main' },
+]
 const form = reactive({
+  database_type: 'postgresql' as DatabaseType,
   name: '',
   environment: 'production' as 'development' | 'test' | 'production',
   host: '',
@@ -73,10 +88,14 @@ const form = reactive({
   maintenance_database: 'postgres',
   ssl_mode: 'disable' as 'disable' | 'prefer' | 'require' | 'verify-ca' | 'verify-full',
   connect_timeout_seconds: 5,
+  service_name: '',
+  database_file: '',
+  url_path_prefix: '',
   username: '',
   password: '',
 })
 const editForm = reactive({
+  database_type: 'postgresql' as DatabaseType,
   name: '',
   environment: 'production' as 'development' | 'test' | 'production',
   host: '',
@@ -84,6 +103,9 @@ const editForm = reactive({
   maintenance_database: 'postgres',
   ssl_mode: 'disable' as 'disable' | 'prefer' | 'require' | 'verify-ca' | 'verify-full',
   connect_timeout_seconds: 5,
+  service_name: '',
+  database_file: '',
+  url_path_prefix: '',
 })
 const credentialForm = reactive({ username: '', password: '' })
 const newScope = reactive<ScopeConfig & { name: string }>({
@@ -103,21 +125,29 @@ const managedDatabase = computed(() => managedDiscovery.value?.databases.find((i
 
 function endpoint() {
   return {
+    database_type: form.database_type,
     host: form.host.trim(),
     port: form.port,
     maintenance_database: form.maintenance_database.trim(),
     ssl_mode: form.ssl_mode,
     connect_timeout_seconds: form.connect_timeout_seconds,
+    service_name: form.service_name.trim() || null,
+    database_file: form.database_file.trim() || null,
+    url_path_prefix: form.url_path_prefix.trim(),
   }
 }
 
 function editedEndpoint() {
   return {
+    database_type: editForm.database_type,
     host: editForm.host.trim(),
     port: editForm.port,
     maintenance_database: editForm.maintenance_database.trim(),
     ssl_mode: editForm.ssl_mode,
     connect_timeout_seconds: editForm.connect_timeout_seconds,
+    service_name: editForm.service_name.trim() || null,
+    database_file: editForm.database_file.trim() || null,
+    url_path_prefix: editForm.url_path_prefix.trim(),
   }
 }
 
@@ -161,14 +191,15 @@ function openWizard() {
   selectedObjects.value = []
   Object.keys(scopeConfigs).forEach((item) => delete scopeConfigs[item])
   Object.assign(form, {
-    name: '', environment: 'production', host: '', port: 5432, maintenance_database: 'postgres',
-    ssl_mode: 'disable', connect_timeout_seconds: 5, username: '', password: '',
+    database_type: 'postgresql', name: '', environment: 'production', host: '', port: 5432, maintenance_database: 'postgres',
+    ssl_mode: 'disable', connect_timeout_seconds: 5, service_name: '', database_file: '', url_path_prefix: '', username: '', password: '',
   })
   wizardOpen.value = true
 }
 
 function populateEditForm(value: DatabaseConnectionDetail) {
   Object.assign(editForm, {
+    database_type: value.database_type,
     name: value.name,
     environment: value.environment,
     host: value.endpoint.host,
@@ -176,7 +207,25 @@ function populateEditForm(value: DatabaseConnectionDetail) {
     maintenance_database: value.endpoint.maintenance_database,
     ssl_mode: value.endpoint.ssl_mode,
     connect_timeout_seconds: value.endpoint.connect_timeout_seconds,
+    service_name: value.endpoint.service_name || '',
+    database_file: value.endpoint.database_file || '',
+    url_path_prefix: value.endpoint.url_path_prefix || '',
   })
+}
+
+function applyDatabaseTypeDefaults(type: DatabaseType) {
+  const selected = databaseTypeOptions.find((item) => item.value === type)
+  if (!selected) return
+  form.port = selected.port as number
+  form.maintenance_database = selected.maintenance
+  form.service_name = type === 'oracle' ? selected.maintenance : ''
+  form.database_file = ''
+  form.url_path_prefix = ''
+  discovery.value = null
+}
+
+function databaseTypeLabel(type: DatabaseType) {
+  return databaseTypeOptions.find((item) => item.value === type)?.label || type
 }
 
 async function openManager(item: DatabaseConnectionSummary) {
@@ -221,12 +270,12 @@ async function load() {
 
 function next() {
   if (wizardStep.value === 0) {
-    if (!form.name.trim() || !form.host.trim() || !form.maintenance_database.trim()) {
-      message.warning('请填写连接名称、主机和维护库')
+    if (!form.name.trim() || (form.database_type === 'sqlite' ? !form.database_file.trim() : !form.host.trim())) {
+      message.warning(form.database_type === 'sqlite' ? '请填写连接名称和 SQLite 文件' : '请填写连接名称和主机')
       return
     }
   }
-  if (wizardStep.value === 1 && (!form.username.trim() || !form.password)) {
+  if (wizardStep.value === 1 && form.database_type !== 'sqlite' && (!form.username.trim() || !form.password)) {
     message.warning('请填写数据库用户名和密码')
     return
   }
@@ -264,7 +313,7 @@ async function testTemporary() {
         schema.views.forEach((item) => selectedObjects.value.push(key(database.name, schema.name, 'view', item.name)))
       })
     })
-    message.success(`连接正常，发现 ${result.databases.length} 个数据库`)
+    message.success(`${databaseTypeLabel(form.database_type)} 连接正常，发现 ${result.databases.length} 个数据库`)
   } catch (cause) {
     discovery.value = null
     message.error(getApiErrorMessage(cause), { duration: 8000 })
@@ -371,8 +420,8 @@ async function discoverManaged() {
 
 async function saveManagedConnection() {
   if (!activeConnection.value) return
-  if (!editForm.name.trim() || !editForm.host.trim() || !editForm.maintenance_database.trim()) {
-    message.warning('请填写连接名称、主机和维护库')
+  if (!editForm.name.trim() || (editForm.database_type === 'sqlite' ? !editForm.database_file.trim() : !editForm.host.trim())) {
+    message.warning('请完整填写连接配置')
     return
   }
   managerSaving.value = true
@@ -524,7 +573,7 @@ onMounted(load)
 
 <template>
   <div>
-    <PageHeader title="数据库连接" description="管理内网 PostgreSQL、发现数据资源，并为 Agent 冻结只读数据范围。">
+    <PageHeader title="数据库连接" description="统一管理主流 SQL 数据库、达梦 DM 和 Elasticsearch，并为 Agent 冻结只读数据范围。">
       <template #actions>
         <AdminGuideLink section="database" />
         <NButton secondary :loading="loading" @click="load"><template #icon><NIcon :component="Refresh" /></template>刷新</NButton>
@@ -534,10 +583,10 @@ onMounted(load)
     <div v-if="error" class="error-panel" style="margin-bottom:16px">{{ error }}</div>
     <section class="surface panel-flush">
       <div v-if="loading" class="loading-stack" style="padding:20px"><div v-for="item in 4" :key="item" class="skeleton-line" /></div>
-      <div v-else-if="!connections.length" class="empty-state"><div><NIcon :component="Database" size="30" /><h3>暂无数据库连接</h3><p>先将 postgres-mcp 容器加入目标数据库网络，再通过向导完成配置。</p></div></div>
+      <div v-else-if="!connections.length" class="empty-state"><div><NIcon :component="Database" size="30" /><h3>暂无数据库连接</h3><p>先将 agent-database-mcp 容器加入目标数据库网络，再通过向导完成配置。</p></div></div>
       <div v-else class="connection-list">
         <article v-for="item in connections" :key="item.id" class="connection-row">
-          <div><strong>{{ item.name }}</strong><span class="mono">{{ item.host }}:{{ item.port }} / {{ item.maintenance_database }}</span></div>
+          <div><strong>{{ item.name }}</strong><span>{{ databaseTypeLabel(item.database_type) }}</span><span class="mono">{{ item.database_type === 'sqlite' ? item.maintenance_database : `${item.host}:${item.port} / ${item.maintenance_database}` }}</span></div>
           <div><span>{{ item.environment }}</span><small>{{ item.scope_count }} 个数据访问范围</small></div>
           <StatusTag :status="item.status" />
           <span class="muted">{{ formatDate(item.updated_at) }}</span>
@@ -546,23 +595,29 @@ onMounted(load)
       </div>
     </section>
 
-    <NModal v-model:show="wizardOpen" preset="card" title="创建 PostgreSQL 连接" style="width:min(1120px,calc(100vw - 32px))" :mask-closable="false">
+    <NModal v-model:show="wizardOpen" preset="card" title="创建数据库连接" style="width:min(1120px,calc(100vw - 32px))" :mask-closable="false">
       <nav class="db-steps" aria-label="数据库连接创建步骤"><span v-for="(title,index) in steps" :key="title" :class="{active:index===wizardStep,complete:index<wizardStep}">{{ index + 1 }}. {{ title }}</span></nav>
       <div class="wizard-body">
         <NForm v-if="wizardStep===0" label-placement="top"><div class="form-grid">
+          <NFormItem label="数据库类型" required><NSelect v-model:value="form.database_type" :options="databaseTypeOptions" @update:value="applyDatabaseTypeDefaults" /></NFormItem>
           <NFormItem label="连接名称" required><NInput v-model:value="form.name" placeholder="业务知识库" /></NFormItem>
           <NFormItem label="环境"><NSelect v-model:value="form.environment" :options="[{label:'开发',value:'development'},{label:'测试',value:'test'},{label:'生产',value:'production'}]" /></NFormItem>
-          <NFormItem label="主机 / 容器名" required><NInput v-model:value="form.host" placeholder="business-postgres" /></NFormItem>
-          <NFormItem label="端口"><NInputNumber v-model:value="form.port" aria-label="端口" :min="1" :max="65535" /></NFormItem>
-          <NFormItem label="维护库"><NInput v-model:value="form.maintenance_database" /></NFormItem>
-          <NFormItem label="SSL 模式"><NSelect v-model:value="form.ssl_mode" :options="['disable','prefer','require','verify-ca','verify-full'].map(value=>({label:value,value}))" /></NFormItem>
+          <NFormItem v-if="form.database_type !== 'sqlite'" label="主机 / 容器名" required><NInput v-model:value="form.host" placeholder="business-database" /></NFormItem>
+          <NFormItem v-if="form.database_type !== 'sqlite'" label="端口"><NInputNumber v-model:value="form.port" aria-label="端口" :min="1" :max="65535" /></NFormItem>
+          <NFormItem v-if="form.database_type !== 'sqlite'" :label="form.database_type === 'elasticsearch' ? '集群显示名' : '维护库'"><NInput v-model:value="form.maintenance_database" /></NFormItem>
+          <NFormItem v-if="form.database_type === 'oracle'" label="Oracle Service Name"><NInput v-model:value="form.service_name" /></NFormItem>
+          <NFormItem v-if="form.database_type === 'elasticsearch'" label="URL 路径前缀"><NInput v-model:value="form.url_path_prefix" placeholder="/elastic" /></NFormItem>
+          <NFormItem v-if="form.database_type === 'sqlite'" class="span-2" label="SQLite 文件" required><NInput v-model:value="form.database_file" placeholder="business/business.db" /></NFormItem>
+          <NFormItem v-if="form.database_type !== 'sqlite'" label="SSL 模式"><NSelect v-model:value="form.ssl_mode" :options="['disable','prefer','require','verify-ca','verify-full'].map(value=>({label:value,value}))" /></NFormItem>
           <NFormItem label="连接超时（秒）"><NInputNumber v-model:value="form.connect_timeout_seconds" :min="1" :max="60" /></NFormItem>
-          <NAlert class="span-2" type="info" :bordered="false">容器间访问请填写 PostgreSQL 容器名，不要填写 127.0.0.1。平台不会修改 Docker 网络。</NAlert>
+          <NAlert class="span-2" type="info" :bordered="false">{{ form.database_type === 'sqlite' ? 'SQLite 文件路径相对于 data/database-files，运行时只读打开。' : '容器间访问请填写目标数据库容器名，不要填写 127.0.0.1。平台不会修改 Docker 网络。' }}</NAlert>
         </div></NForm>
         <NForm v-else-if="wizardStep===1" label-placement="top"><div class="form-grid credential-grid">
-          <NFormItem label="数据库用户名" required><NInput v-model:value="form.username" autocomplete="off" /></NFormItem>
-          <NFormItem label="数据库密码" required><NInput v-model:value="form.password" type="password" show-password-on="click" autocomplete="new-password" /></NFormItem>
+          <NFormItem label="数据库用户名" :required="form.database_type !== 'sqlite'"><NInput v-model:value="form.username" autocomplete="off" :disabled="form.database_type === 'sqlite'" /></NFormItem>
+          <NFormItem label="数据库密码" :required="form.database_type !== 'sqlite'"><NInput v-model:value="form.password" type="password" show-password-on="click" autocomplete="new-password" :disabled="form.database_type === 'sqlite'" /></NFormItem>
           <NAlert class="span-2" type="info" :bordered="false">密码通过内网提交并加密保存，保存后前端不再回显；模型、Trace 和 Artifact 均不会获得密码。</NAlert>
+          <NAlert v-if="form.database_type === 'elasticsearch'" class="span-2" type="warning" :bordered="false">Elasticsearch 账号需要 cluster monitor，并对允许发现的索引具有 read、view_index_metadata、monitor 权限；这些权限均为只读。</NAlert>
+          <NAlert v-if="form.database_type === 'dm'" class="span-2" type="warning" :bordered="false">达梦连接依赖与离线环境 CPU 架构及 Python 3.12 匹配的官方 dmPython 驱动，制作离线包前必须放入 drivers/dm。</NAlert>
         </div></NForm>
         <div v-else-if="wizardStep===2" class="test-stage">
           <div class="test-toolbar"><div><h3>连接测试与资源发现</h3><p>一次检查连接，并读取所有可访问数据库、Schema、表、视图和字段。</p></div><NButton type="primary" :loading="testing" @click="testTemporary"><template #icon><NIcon :component="TestPipe" /></template>开始测试</NButton></div>
@@ -631,14 +686,18 @@ onMounted(load)
         <NTabs v-model:value="managerTab" type="line" animated>
           <NTabPane name="overview" tab="连接配置">
             <div class="manager-pane">
-              <NAlert type="info" :bordered="false">修改主机、端口、维护库、SSL 或超时会先用现有凭据真实测试，成功后创建新的不可变 Connector Revision；历史 Execution 仍引用旧 Revision。</NAlert>
+              <NAlert type="info" :bordered="false">数据库类型创建后不可更换。修改端点配置会先用现有凭据真实测试，成功后创建新的不可变 Connector Revision。</NAlert>
               <NForm label-placement="top"><div class="form-grid">
+                <NFormItem label="数据库类型"><NInput :value="databaseTypeLabel(editForm.database_type)" disabled /></NFormItem>
                 <NFormItem label="连接名称"><NInput v-model:value="editForm.name" /></NFormItem>
                 <NFormItem label="环境"><NSelect v-model:value="editForm.environment" :options="[{label:'开发',value:'development'},{label:'测试',value:'test'},{label:'生产',value:'production'}]" /></NFormItem>
-                <NFormItem label="主机 / 容器名"><NInput v-model:value="editForm.host" /></NFormItem>
-                <NFormItem label="端口"><NInputNumber v-model:value="editForm.port" aria-label="端口" :min="1" :max="65535" /></NFormItem>
-                <NFormItem label="维护库"><NInput v-model:value="editForm.maintenance_database" /></NFormItem>
-                <NFormItem label="SSL 模式"><NSelect v-model:value="editForm.ssl_mode" :options="['disable','prefer','require','verify-ca','verify-full'].map(value=>({label:value,value}))" /></NFormItem>
+                <NFormItem v-if="editForm.database_type !== 'sqlite'" label="主机 / 容器名"><NInput v-model:value="editForm.host" /></NFormItem>
+                <NFormItem v-if="editForm.database_type !== 'sqlite'" label="端口"><NInputNumber v-model:value="editForm.port" aria-label="端口" :min="1" :max="65535" /></NFormItem>
+                <NFormItem v-if="editForm.database_type !== 'sqlite'" label="维护库"><NInput v-model:value="editForm.maintenance_database" /></NFormItem>
+                <NFormItem v-if="editForm.database_type === 'oracle'" label="Oracle Service Name"><NInput v-model:value="editForm.service_name" /></NFormItem>
+                <NFormItem v-if="editForm.database_type === 'elasticsearch'" label="URL 路径前缀"><NInput v-model:value="editForm.url_path_prefix" /></NFormItem>
+                <NFormItem v-if="editForm.database_type === 'sqlite'" label="SQLite 文件"><NInput v-model:value="editForm.database_file" /></NFormItem>
+                <NFormItem v-if="editForm.database_type !== 'sqlite'" label="SSL 模式"><NSelect v-model:value="editForm.ssl_mode" :options="['disable','prefer','require','verify-ca','verify-full'].map(value=>({label:value,value}))" /></NFormItem>
                 <NFormItem label="连接超时（秒）"><NInputNumber v-model:value="editForm.connect_timeout_seconds" :min="1" :max="60" /></NFormItem>
               </div></NForm>
               <div class="manager-actions"><NButton :loading="testing" @click="testManaged"><template #icon><NIcon :component="TestPipe" /></template>使用已保存凭据测试</NButton><span /><NButton v-if="activeConnection.enabled" type="error" secondary :loading="managerSaving" @click="setManagedEnabled(false)">停用连接</NButton><NButton v-else type="success" secondary :loading="managerSaving" @click="setManagedEnabled(true)">重新启用</NButton><NButton type="primary" :loading="managerSaving" @click="saveManagedConnection">保存配置</NButton></div>

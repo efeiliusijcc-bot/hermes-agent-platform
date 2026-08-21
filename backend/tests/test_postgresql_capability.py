@@ -39,6 +39,7 @@ from app.db.models import (
 from app.main import app
 from app.schemas.database_connection import (
     DatabaseAgentBinding,
+    DatabaseConnectionTestRequest,
     DatabaseObjectSelection,
     DatabaseScopeSelection,
     PostgreSQLCredentialInput,
@@ -132,7 +133,14 @@ def test_database_binding_schema_supports_multiple_independent_bindings() -> Non
 
 
 @pytest.mark.asyncio
-async def test_database_binding_accepts_only_current_healthy_postgresql_scope() -> None:
+@pytest.mark.parametrize(
+    ("resource_type", "connector_type"),
+    [("postgresql_database", "postgresql_mcp"), ("database_resource", "database_mcp")],
+)
+async def test_database_binding_accepts_current_healthy_legacy_and_generic_scope(
+    resource_type: str,
+    connector_type: str,
+) -> None:
     scope_revision_id, scope_id, instance_id, connector_id, connector_revision_id = (
         uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
     )
@@ -143,7 +151,7 @@ async def test_database_binding_accepts_only_current_healthy_postgresql_scope() 
     )
     resource_scope = SimpleNamespace(
         id=scope_id,
-        resource_type="postgresql_database",
+        resource_type=resource_type,
         owner_type="connector_instance",
         owner_id=str(instance_id),
         current_revision_id=scope_revision_id,
@@ -155,7 +163,7 @@ async def test_database_binding_accepts_only_current_healthy_postgresql_scope() 
         enabled=True,
         health_status="healthy",
     )
-    connector = SimpleNamespace(id=connector_id, type="postgresql_mcp")
+    connector = SimpleNamespace(id=connector_id, type=connector_type)
     values = {
         (ResourceScope, scope_id): resource_scope,
         (ConnectorInstance, instance_id): instance,
@@ -307,6 +315,56 @@ def test_database_console_routes_and_incremental_migration_are_present() -> None
     assert 'down_revision: str | None = "0016_capability_binding_and_invocation"' in migration
     assert "postgresql_mcp" in migration
     assert "drop_table" not in migration
+    multi_database = Path("backend/alembic/versions/0019_multi_database_connector.py").read_text()
+    assert 'down_revision: str | None = "0018_team_conversation_context"' in multi_database
+    assert "database_mcp" in multi_database
+
+
+@pytest.mark.parametrize(
+    ("database_type", "port", "maintenance"),
+    [
+        ("postgresql", 5432, "postgres"),
+        ("mysql", 3306, "mysql"),
+        ("mariadb", 3306, "mysql"),
+        ("doris", 9030, "information_schema"),
+        ("starrocks", 9030, "information_schema"),
+        ("sqlserver", 1433, "master"),
+        ("oracle", 1521, "ORCL"),
+        ("dm", 5236, "DM"),
+        ("clickhouse", 8123, "default"),
+        ("elasticsearch", 9200, "_cluster"),
+    ],
+)
+def test_network_database_types_have_explicit_defaults_and_require_credentials(
+    database_type: str,
+    port: int,
+    maintenance: str,
+) -> None:
+    value = DatabaseConnectionTestRequest.model_validate({
+        "endpoint": {"database_type": database_type, "host": "database.internal"},
+        "credential": {"username": "reader", "password": "secret"},
+    })
+    assert value.endpoint.port == port
+    assert value.endpoint.maintenance_database == maintenance
+    with pytest.raises(ValidationError, match="用户名和密码"):
+        DatabaseConnectionTestRequest.model_validate({
+            "endpoint": {"database_type": database_type, "host": "database.internal"},
+            "credential": {},
+        })
+
+
+def test_sqlite_requires_a_scoped_file_but_not_network_credentials() -> None:
+    value = DatabaseConnectionTestRequest.model_validate({
+        "endpoint": {"database_type": "sqlite", "database_file": "reports/read-only.db"},
+        "credential": {},
+    })
+    assert value.endpoint.port is None
+    assert value.endpoint.maintenance_database == "main"
+    with pytest.raises(ValidationError, match="SQLite"):
+        DatabaseConnectionTestRequest.model_validate({
+            "endpoint": {"database_type": "sqlite"},
+            "credential": {},
+        })
 
 
 def test_offline_configuration_enables_capabilities_and_keeps_recall_upstream_empty() -> None:
@@ -324,7 +382,8 @@ def test_offline_configuration_enables_capabilities_and_keeps_recall_upstream_em
     assert 'set_value SOURCE_RECALL_UPSTREAM_ENDPOINT ""' in script
     assert 'set_value SOURCE_RECALL_UPSTREAM_API_KEY ""' in script
     assert 'set_value SOURCE_RECALL_GATEWAY_API_KEY "$SOURCE_RECALL_GATEWAY_API_KEY"' in script
-    assert 'docker run --rm --network none --entrypoint python "$GENERATOR_IMAGE" -c' in script
+    assert 'docker_compat_run run --rm --network none --entrypoint python "$GENERATOR_IMAGE" -c' in script
+    assert 'print("A" + token_urlsafe(36))' in script
     assert "CAPABILITY_PLATFORM_ENABLED=true" in environment
     assert "CAPABILITY_GATEWAY_ENABLED=true" in environment
     assert "CONSOLE_BFF_ENABLED=true" in environment
@@ -339,9 +398,13 @@ def test_offline_configuration_enables_capabilities_and_keeps_recall_upstream_em
     assert "run --rm --no-deps --pull never" not in restore
     assert "OFFLINE_COMPOSE_WAIT_MODE=manual" in phase9
     assert "ps --status running" not in phase9
-    assert "COMPOSE_COMPAT_WAIT_MODE=manual" in compose_compat
-    assert "docker inspect --format '{{.State.Status}}'" in compose_compat
-    assert "docker inspect --format '{{if .State.Health}}" in compose_compat
+    assert 'COMPOSE_COMPAT_WAIT_MODE=${OFFLINE_COMPOSE_WAIT_MODE:-manual}' in compose_compat
+    assert "docker_compat_run inspect --format '{{.State.Status}}'" in compose_compat
+    assert "docker_compat_run inspect --format '{{if .State.Health}}" in compose_compat
+    assert 'TARGET_CONTAINER_PREFIX=${OFFLINE_CONTAINER_PREFIX:-agent}' in restore
+    assert 'checksum_mode=${OFFLINE_CHECKSUM_MODE:-warn}' in restore
+    assert "compose_compat_init" in compose_compat
+    assert "docker-compose" in compose_compat
 
 
 def test_database_console_routes_follow_the_console_bff_feature_flag() -> None:

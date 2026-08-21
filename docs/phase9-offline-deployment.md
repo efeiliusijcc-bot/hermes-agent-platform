@@ -11,7 +11,7 @@
 - PostgreSQL custom-format 逻辑备份；
 - Redis RDB 与支持 TTL 的逻辑键快照；Stream 会恢复条目和 Consumer Group 游标，但不恢复源节点 pending consumer 的所有权，避免离线节点错误续跑源节点处理中任务；
 - MinIO `artifacts`、`knowledge` 两个 bucket 的对象镜像；
-- Hermes 数据目录、工作目录和 MCP 只读文件；
+- 已脱敏的 Runtime 能力数据、工作目录和 MCP 只读文件；Runtime 配置、认证文件、请求抓包、日志、缓存和状态库不进包；
 - 已固化官方 `@earendil-works/pi-agent-core 0.84.2` 依赖的 `pi-runtime` 镜像；
 - 已固化官方 DeepSeek Harness npm `0.1.0-rc.6` 依赖和锁文件的 DeepSeek Runtime 镜像、隔离网关和 Harness JSONL Session 数据目录；
 - PostgreSQL MCP 镜像、`0017` 迁移、数据库资源发现/Scope 管理前后端和隔离 E2E 种子数据；
@@ -33,27 +33,27 @@
 
 ## 3. 在新内网节点导入
 
-新节点只需要预装兼容的 Docker Engine、Docker Compose v2、`tar`、`gzip`、`sha256sum` 和 `curl`。允许 Compose v2 不支持 `up --wait`、`config --quiet` 或 `run --pull`；恢复脚本会自动降级为 `docker inspect` 手动健康轮询。复制 `.tar.gz` 与同名 `.sha256` 后：
+新节点只需要预装兼容的 Docker Engine、`docker compose` 插件或 `docker-compose` 独立命令，以及 `tar`、`gzip`、`sha256sum` 和 `curl`。不需要 `up --wait`、`config --quiet` 或 `run --pull`；恢复脚本默认使用 `docker inspect` 手动健康轮询。复制 `.tar.gz` 与同名 `.sha256` 后：
 
 ```sh
-sha256sum -c hermes-agent-platform-v1.0.0-*.tar.gz.sha256
-mkdir -p /opt/hermes-agent-platform
-tar -xzf hermes-agent-platform-v1.0.0-*.tar.gz \
-  -C /opt/hermes-agent-platform --strip-components=1
-cd /opt/hermes-agent-platform
+sha256sum -c hermes-agent-platform-v2.6.0-*.tar.gz.sha256
+mkdir -p /opt/agent-platform
+tar -xzf hermes-agent-platform-v2.6.0-*.tar.gz \
+  -C /opt/agent-platform --strip-components=1
+cd /opt/agent-platform
 ./scripts/configure-offline-env.sh
 ./scripts/restore-offline-bundle.sh
 ```
 
-配置脚本先执行 `docker load`，再通过 `--network none` 的包内镜像生成目标节点新密钥，并现场接收内网模型地址、模型名和 API Key；这些值不会打印到终端。恢复脚本随后完成内部校验、`docker load`、逐镜像存在性检查、持久目录准备、Redis RDB 放置与逻辑键恢复、PostgreSQL 恢复、MinIO 对象导入、服务启动和 API 健康检查。镜像缺失会在 Compose 启动前失败，因此兼容旧 Compose 时不依赖 `--pull never`，也不会在线补拉镜像。Redis 7 在 AOF 模式下不会直接采用外部 RDB，因此 RDB 作为完整备份保留，运行恢复使用带类型和 TTL 的逻辑快照。
+配置脚本先执行 `docker load`，再通过 `--network none` 的包内镜像生成目标节点新密钥，并现场接收内网模型地址、模型名和 API Key；这些值不会打印到终端。恢复脚本随后完成内部校验、镜像导入与存在性检查、持久数据恢复、服务启动和 API 健康检查。校验和不一致默认会报告并继续；镜像本身无法导入或缺失时仍会在启动前失败，不会在线补拉镜像。默认容器前缀为 `agent-`。
 
 ## 4. 116 隔离验收
 
 Phase 9 在 116 使用以下完全独立的验证边界模拟新节点：
 
-- 目录：`/opt/hermes-agent-platform-offline-verify`；
-- Compose 项目：`hermes-agent-platform-offline-verify`；
-- 网络：`hermes-agent-platform-offline-verify-internal`、`hermes-agent-platform-offline-verify-edge`；
+- 目录：`/opt/agent-platform-offline-verify`；
+- Compose 项目：`agent-offline-verify`；
+- 容器前缀：`agent-verify-`；
 - Agent API：`127.0.0.1:28088`。
 - 管理控制台：`127.0.0.1:28080`。
 

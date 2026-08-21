@@ -39,20 +39,25 @@ function switchMode(value: ChatMode) {
 
 <template>
   <div class="chat-mode-page">
-    <nav class="chat-mode-switch" aria-label="智能体聊天模式">
-      <button type="button" :class="{ active: mode === 'agent' }" :aria-pressed="mode === 'agent'" @click="switchMode('agent')">
-        <NIcon :component="Robot" />单 Agent
-      </button>
-      <button type="button" :class="{ active: mode === 'team' }" :aria-pressed="mode === 'team'" @click="switchMode('team')">
-        <NIcon :component="Users" />Agent Team
-      </button>
-    </nav>
+    <header class="chat-mode-bar">
+      <nav class="chat-mode-switch" aria-label="智能体聊天模式">
+        <button type="button" :class="{ active: mode === 'agent' }" :aria-pressed="mode === 'agent'" @click="switchMode('agent')">
+          <NIcon :component="Robot" />单 Agent
+        </button>
+        <button type="button" :class="{ active: mode === 'team' }" :aria-pressed="mode === 'team'" @click="switchMode('team')">
+          <NIcon :component="Users" />Agent Team
+        </button>
+      </nav>
+      <span>{{ mode === 'agent' ? '独立智能体会话' : '多智能体协作会话' }}</span>
+    </header>
 
-    <SingleAgentChatWorkspace v-if="mode === 'agent'" />
-    <TeamAgentChatWorkspace v-else />
+    <div class="chat-workspace-stage">
+      <SingleAgentChatWorkspace v-if="mode === 'agent'" />
+      <TeamAgentChatWorkspace v-else />
+    </div>
   </div>
 </template>
 
 <style scoped>
-.chat-mode-page{display:grid;gap:14px;min-width:0}.chat-mode-switch{display:inline-flex;width:fit-content;padding:4px;border:1px solid var(--line);border-radius:9px;background:var(--surface-subtle)}.chat-mode-switch button{display:flex;min-width:132px;align-items:center;justify-content:center;gap:7px;padding:8px 14px;border:0;border-radius:6px;color:var(--muted);background:transparent;font:600 11px/1.2 inherit;cursor:pointer}.chat-mode-switch button.active{color:#171717;background:var(--accent)}.chat-mode-switch button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}@media(max-width:620px){.chat-mode-switch{width:100%}.chat-mode-switch button{flex:1;min-width:0}}
+.chat-mode-page{container:chat-workbench / inline-size;display:grid;grid-template-rows:auto minmax(0,1fr);gap:10px;min-width:0;min-height:0;height:100%;overflow:hidden}.chat-mode-bar{display:flex;min-height:42px;align-items:center;justify-content:space-between;gap:16px}.chat-mode-bar>span{overflow:hidden;color:var(--muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.chat-mode-switch{display:inline-flex;width:fit-content;padding:3px;border:1px solid var(--line);border-radius:9px;background:var(--surface-subtle)}.chat-mode-switch button{display:flex;min-width:124px;align-items:center;justify-content:center;gap:7px;padding:7px 13px;border:0;border-radius:6px;color:var(--muted);background:transparent;font:600 11px/1.2 inherit;cursor:pointer}.chat-mode-switch button.active{color:#171717;background:var(--accent)}.chat-mode-switch button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.chat-workspace-stage{min-width:0;min-height:0;height:100%;overflow:hidden}@media(max-width:620px){.chat-mode-page{gap:0}.chat-mode-bar{min-height:48px;padding:6px 10px;border-bottom:1px solid var(--line);background:#202020}.chat-mode-bar>span{display:none}.chat-mode-switch{width:100%}.chat-mode-switch button{flex:1;min-width:0}}
 </style>

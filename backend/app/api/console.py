@@ -34,7 +34,7 @@ from app.db.session import get_session
 from app.repositories import production as production_repository
 from app.schemas.agent import AgentRunRequest
 from app.config import get_settings
-from app.database_connections import POSTGRES_MCP_TOOLS
+from app.database_connections import DATABASE_CONNECTOR_TYPES, DATABASE_MCP_TOOLS
 from app.schemas.database_connection import DatabaseAgentBindingsUpdate
 
 
@@ -57,10 +57,10 @@ async def _database_scope_context(
     scope = await session.get(ResourceScope, scope_revision.resource_scope_id)
     if (
         scope is None
-        or scope.resource_type != "postgresql_database"
+        or scope.resource_type not in {"postgresql_database", "database_resource"}
         or scope.owner_type != "connector_instance"
     ):
-        raise HTTPException(status_code=422, detail="数据库 Binding 必须使用 PostgreSQL 数据库 Scope")
+        raise HTTPException(status_code=422, detail="数据库 Binding 必须使用数据库 Scope")
     if scope.current_revision_id != scope_revision.id:
         raise HTTPException(status_code=409, detail="数据库 Scope Revision 已过期，请选择当前 Revision")
     try:
@@ -69,8 +69,8 @@ async def _database_scope_context(
         raise HTTPException(status_code=422, detail="数据库 Scope 所属连接无效") from exc
     instance = await session.get(ConnectorInstance, instance_id)
     connector = await session.get(Connector, instance.connector_id) if instance else None
-    if instance is None or connector is None or connector.type != "postgresql_mcp":
-        raise HTTPException(status_code=422, detail="数据库 Scope 未关联 PostgreSQL MCP 连接")
+    if instance is None or connector is None or connector.type not in DATABASE_CONNECTOR_TYPES:
+        raise HTTPException(status_code=422, detail="数据库 Scope 未关联 Database MCP 连接")
     if not instance.enabled or instance.health_status != "healthy":
         raise HTTPException(status_code=409, detail="数据库连接未启用或健康检查未通过")
     definition = scope_revision.scope_definition or {}
@@ -461,7 +461,7 @@ async def available_components(
             select(ResourceScope, ResourceScopeRevision)
             .join(ResourceScopeRevision, ResourceScopeRevision.id == ResourceScope.current_revision_id)
             .where(
-                ResourceScope.resource_type == "postgresql_database",
+                ResourceScope.resource_type.in_({"postgresql_database", "database_resource"}),
                 ResourceScope.owner_type == "connector_instance",
             )
             .order_by(ResourceScope.name)
@@ -479,7 +479,7 @@ async def available_components(
         if (
             instance is None
             or connector is None
-            or connector.type != "postgresql_mcp"
+            or connector.type not in DATABASE_CONNECTOR_TYPES
             or not instance.enabled
             or definition.get("connector_revision_id")
             != (str(instance.current_revision_id) if instance.current_revision_id else None)
@@ -493,6 +493,7 @@ async def available_components(
                 "scope_revision_id": str(revision.id),
                 "scope_name": scope.name,
                 "database": definition.get("database"),
+                "database_type": definition.get("database_type", "postgresql"),
                 "schemas": definition.get("schemas", {}),
                 "permissions": definition.get("permissions", {}),
                 "limits": definition.get("limits", {}),
@@ -502,7 +503,7 @@ async def available_components(
                         "suffix": operation,
                         "label": specification["label"],
                     }
-                    for operation, specification in POSTGRES_MCP_TOOLS.items()
+                    for operation, specification in DATABASE_MCP_TOOLS.items()
                 ],
             }
         )
@@ -573,7 +574,7 @@ async def update_database_bindings(
         definition, connector_revision_id = await _database_scope_context(session, scope)
         for operation_key in database_binding.operations:
             _require_database_operation_permission(definition, operation_key)
-            specification = POSTGRES_MCP_TOOLS[operation_key]
+            specification = DATABASE_MCP_TOOLS[operation_key]
             alias = f"{database_binding.tool_prefix}_{operation_key}"
             if alias in aliases or len(alias) > 128:
                 raise HTTPException(status_code=422, detail=f"Tool Alias 冲突或过长：{alias}")

@@ -155,6 +155,7 @@ export interface DatabaseAvailableBinding {
   scope_revision_id: string
   scope_name: string
   database: string
+  database_type?: DatabaseType
   schemas: Record<string, { tables: string[]; views: string[] }>
   permissions: Record<string, boolean>
   limits: Record<string, number>
@@ -166,7 +167,7 @@ export type DatabaseOperation = 'list_schemas' | 'list_tables' | 'describe_table
 export interface DatabaseColumn {
   name: string
   type: string
-  udt: string
+  udt?: string
   nullable: boolean
 }
 
@@ -183,6 +184,7 @@ export interface DatabaseDiscoveredSchema {
 
 export interface DatabaseDiscovery {
   status: 'READY' | 'UNAVAILABLE'
+  database_type?: DatabaseType
   latency_ms: number
   checks: Array<{ name: string; status: string; detail?: string }>
   server: { version: string }
@@ -190,12 +192,29 @@ export interface DatabaseDiscovery {
   warnings: string[]
 }
 
+export type DatabaseType =
+  | 'postgresql'
+  | 'mysql'
+  | 'mariadb'
+  | 'doris'
+  | 'starrocks'
+  | 'sqlserver'
+  | 'oracle'
+  | 'dm'
+  | 'clickhouse'
+  | 'elasticsearch'
+  | 'sqlite'
+
 export interface DatabaseEndpoint {
+  database_type: DatabaseType
   host: string
-  port: number
+  port: number | null
   maintenance_database: string
   ssl_mode: 'disable' | 'prefer' | 'require' | 'verify-ca' | 'verify-full'
   connect_timeout_seconds: number
+  service_name?: string | null
+  database_file?: string | null
+  url_path_prefix?: string
 }
 
 export interface DatabaseScopePayload {
@@ -226,8 +245,9 @@ export interface DatabaseConnectionSummary {
   name: string
   environment: string
   status: string
+  database_type: DatabaseType
   host: string
-  port: number
+  port: number | null
   maintenance_database: string
   scope_count: number
   current_revision_id: string
@@ -249,6 +269,7 @@ export interface DatabaseScopeDefinition {
   connector_instance_id: string
   connector_revision_id: string
   database: string
+  database_type?: DatabaseType
   schemas: Record<string, { tables: string[]; views: string[] }>
   permissions: Record<string, boolean>
   limits: Record<string, number>
@@ -303,7 +324,7 @@ export interface PlatformConnection {
   id: string
   key: string
   name: string
-  type: 'internal_rest' | 'mcp' | 'postgresql_mcp'
+  type: 'internal_rest' | 'mcp' | 'postgresql_mcp' | 'database_mcp'
   status: CapabilityState
   capability_count: number
   instances: number

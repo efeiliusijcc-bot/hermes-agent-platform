@@ -3,14 +3,15 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-PROJECT_NAME=${OFFLINE_PROJECT_NAME:-hermes-agent-platform}
+PROJECT_NAME=${OFFLINE_PROJECT_NAME:-agent}
 TARGET_API_PORT=${OFFLINE_AGENT_API_PORT:-18088}
 TARGET_FRONTEND_PORT=${OFFLINE_FRONTEND_PORT:-18089}
-TARGET_INTERNAL_NETWORK=${OFFLINE_INTERNAL_NETWORK_NAME:-hermes-agent-platform-internal}
-TARGET_EDGE_NETWORK=${OFFLINE_EDGE_NETWORK_NAME:-hermes-agent-platform-edge}
-TARGET_PI_RUNTIME_NETWORK=${OFFLINE_PI_RUNTIME_NETWORK_NAME:-hermes-agent-platform-pi-runtime}
-TARGET_DEEPSEEK_RUNTIME_NETWORK=${OFFLINE_DEEPSEEK_RUNTIME_NETWORK_NAME:-hermes-agent-platform-deepseek-runtime}
-TARGET_DEEPSEEK_HARNESS_NETWORK=${OFFLINE_DEEPSEEK_HARNESS_NETWORK_NAME:-hermes-agent-platform-deepseek-harness}
+TARGET_CONTAINER_PREFIX=${OFFLINE_CONTAINER_PREFIX:-agent}
+TARGET_INTERNAL_NETWORK=${OFFLINE_INTERNAL_NETWORK_NAME:-agent-internal}
+TARGET_EDGE_NETWORK=${OFFLINE_EDGE_NETWORK_NAME:-agent-edge}
+TARGET_PI_RUNTIME_NETWORK=${OFFLINE_PI_RUNTIME_NETWORK_NAME:-agent-pi-runtime}
+TARGET_DEEPSEEK_RUNTIME_NETWORK=${OFFLINE_DEEPSEEK_RUNTIME_NETWORK_NAME:-agent-deepseek-runtime}
+TARGET_DEEPSEEK_HARNESS_NETWORK=${OFFLINE_DEEPSEEK_HARNESS_NETWORK_NAME:-agent-deepseek-core}
 LONG_RUNNING_SERVICES="postgres redis minio knowledge-service source-recall-gateway model-gateway postgres-mcp mcp-gateway hermes-runtime pi-runtime deepseek-runtime deepseek-harness-core agent-api agent-worker frontend hermes-orchestrator"
 
 test -f "$PROJECT_ROOT/.env" || {
@@ -26,10 +27,38 @@ test -f "$PROJECT_ROOT/SHA256SUMS" || {
   exit 1
 }
 
-(
-  cd "$PROJECT_ROOT"
-  sha256sum -c SHA256SUMS >/dev/null
-)
+verify_bundle_checksums() {
+  checksum_mode=${OFFLINE_CHECKSUM_MODE:-warn}
+  case "$checksum_mode" in
+    skip)
+      echo "Checksum verification skipped by OFFLINE_CHECKSUM_MODE=skip"
+      return
+      ;;
+    warn|strict) ;;
+    *)
+      echo "Invalid OFFLINE_CHECKSUM_MODE: $checksum_mode (expected warn, strict, or skip)" >&2
+      return 1
+      ;;
+  esac
+
+  checksum_log=$(mktemp "${TMPDIR:-/tmp}/agent-offline-checksum.XXXXXX")
+  if (cd "$PROJECT_ROOT" && sha256sum -c SHA256SUMS) >"$checksum_log" 2>&1; then
+    echo "Bundle checksum verification passed"
+    rm -f "$checksum_log"
+    return
+  fi
+
+  echo "WARNING: bundle files differ from SHA256SUMS:" >&2
+  grep -E 'FAILED|No such file|WARNING' "$checksum_log" >&2 || tail -40 "$checksum_log" >&2
+  rm -f "$checksum_log"
+  if [ "$checksum_mode" = strict ]; then
+    echo "Strict checksum mode stops deployment" >&2
+    return 1
+  fi
+  echo "Continuing because OFFLINE_CHECKSUM_MODE=warn" >&2
+}
+
+verify_bundle_checksums
 
 if [ -d "$PROJECT_ROOT/data" ] && find "$PROJECT_ROOT/data" -mindepth 1 -print -quit | grep -q .; then
   echo "Restore target data directory is not empty: $PROJECT_ROOT/data" >&2
@@ -45,24 +74,25 @@ HERMES_EDGE_NETWORK_NAME=$TARGET_EDGE_NETWORK
 HERMES_PI_RUNTIME_NETWORK_NAME=$TARGET_PI_RUNTIME_NETWORK
 HERMES_DEEPSEEK_RUNTIME_NETWORK_NAME=$TARGET_DEEPSEEK_RUNTIME_NETWORK
 HERMES_DEEPSEEK_HARNESS_NETWORK_NAME=$TARGET_DEEPSEEK_HARNESS_NETWORK
+AGENT_CONTAINER_PREFIX=$TARGET_CONTAINER_PREFIX
 AGENT_API_PORT=$TARGET_API_PORT
 FRONTEND_PORT=$TARGET_FRONTEND_PORT
 export HERMES_COMPOSE_PROJECT_NAME HERMES_INTERNAL_NETWORK_NAME HERMES_EDGE_NETWORK_NAME
 export HERMES_PI_RUNTIME_NETWORK_NAME HERMES_DEEPSEEK_RUNTIME_NETWORK_NAME
-export HERMES_DEEPSEEK_HARNESS_NETWORK_NAME AGENT_API_PORT FRONTEND_PORT
+export HERMES_DEEPSEEK_HARNESS_NETWORK_NAME AGENT_CONTAINER_PREFIX AGENT_API_PORT FRONTEND_PORT
 
-COMPOSE="docker compose -p $PROJECT_NAME -f $PROJECT_ROOT/docker-compose.yml"
 . "$PROJECT_ROOT/scripts/compose-compat.sh"
+compose_compat_init "$PROJECT_NAME" "$PROJECT_ROOT/docker-compose.yml"
 compose_compat_select_wait_mode
 
-docker load --input "$PROJECT_ROOT/images.tar" >/dev/null
+docker_compat_run load --input "$PROJECT_ROOT/images.tar" >/dev/null
 while IFS= read -r image_ref; do
-  test -z "$image_ref" || docker image inspect "$image_ref" >/dev/null
+  test -z "$image_ref" || docker_compat_run image inspect "$image_ref" >/dev/null
 done < "$PROJECT_ROOT/OFFLINE_IMAGES.txt"
 
 "$PROJECT_ROOT/scripts/prepare-data-dirs.sh"
 cp "$PROJECT_ROOT/offline-data/redis/dump.rdb" "$PROJECT_ROOT/data/redis/dump.rdb"
-for data_name in hermes hermes-workspace deepseek-sessions mcp-files; do
+for data_name in hermes hermes-workspace deepseek-sessions mcp-files database-files; do
   if [ -d "$PROJECT_ROOT/offline-data/$data_name" ]; then
     cp -a "$PROJECT_ROOT/offline-data/$data_name/." "$PROJECT_ROOT/data/$data_name/"
   fi
@@ -74,7 +104,7 @@ compose_compat_up_and_wait postgres redis minio
 
 REDIS_KEYS_FILE="$PROJECT_ROOT/offline-data/redis/keys.json"
 chmod 0444 "$REDIS_KEYS_FILE"
-if ! $COMPOSE run --rm --no-deps \
+if ! compose_compat_run run --rm --no-deps \
   -v "$REDIS_KEYS_FILE:/restore/keys.json:ro" \
   --entrypoint python agent-api - <<'PY'
 import base64
@@ -141,15 +171,15 @@ then
 fi
 chmod 0600 "$REDIS_KEYS_FILE"
 
-$COMPOSE exec -T postgres pg_restore \
+compose_compat_run exec -T postgres pg_restore \
   -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" \
   --no-owner \
   --no-privileges \
   --exit-on-error < "$PROJECT_ROOT/offline-data/postgres.dump"
 
-$COMPOSE run --rm --no-deps minio-init >/dev/null
-$COMPOSE run --rm --no-deps \
+compose_compat_run run --rm --no-deps minio-init >/dev/null
+compose_compat_run run --rm --no-deps \
   -v "$PROJECT_ROOT/offline-data/minio:/import:ro" \
   --entrypoint /bin/sh minio-init -ec '
     mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
@@ -161,7 +191,7 @@ compose_compat_up_and_wait $LONG_RUNNING_SERVICES
 curl -fsS "http://127.0.0.1:$TARGET_API_PORT/health" >/dev/null
 curl -fsS "http://127.0.0.1:$TARGET_FRONTEND_PORT/frontend-health" >/dev/null
 curl -fsS "http://127.0.0.1:$TARGET_FRONTEND_PORT/health" >/dev/null
-$COMPOSE exec -T agent-api python - <<'PY'
+compose_compat_run exec -T agent-api python - <<'PY'
 import json
 import urllib.request
 

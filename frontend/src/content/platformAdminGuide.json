@@ -110,27 +110,30 @@
       "id": "database",
       "title": "数据库连接",
       "menuPath": "平台管理 > 数据库连接",
-      "purpose": "连接内网 PostgreSQL，发现数据库、Schema、Table、View 和字段，并为 Agent 创建最小只读 Resource Scope。",
-      "prerequisites": ["postgres-mcp 容器已加入目标 PostgreSQL 所在 Docker 网络。", "准备具有最小只读权限和 CONNECT 权限的数据库账号。", "确认维护库名称，通常为 postgres。"],
+      "purpose": "连接内网 PostgreSQL、MySQL、MariaDB、Doris、StarRocks、SQL Server、Oracle、达梦 DM、ClickHouse、Elasticsearch 或 SQLite，发现可访问资源，并为 Agent 创建最小只读数据范围。各类型的验证状态和驱动要求见 `docs/multi-database-connection.md`。",
+      "prerequisites": ["`agent-database-mcp` 容器已加入目标数据库所在 Docker 网络；SQLite 文件已放入 `data/database-files/`。", "准备具有最小只读权限的数据库账号。PostgreSQL 还需 CONNECT 权限；Elasticsearch 还需文档规定的只读发现权限。", "达梦环境已提供与目标 CPU 架构和 Python 3.12 匹配的官方 `dmPython` 驱动。"],
       "fields": [
-        { "name": "主机", "meaning": "PostgreSQL 在容器网络中的 DNS 名称。", "recommendation": "填写目标容器名，例如 business-postgres；不要填写 127.0.0.1。" },
-        { "name": "端口", "meaning": "PostgreSQL 容器监听端口。", "recommendation": "通常为 5432，不要求暴露宿主机端口。" },
-        { "name": "维护库", "meaning": "用于登录并枚举其他数据库的初始数据库。", "recommendation": "默认 postgres；账号必须有 CONNECT 权限。" },
+        { "name": "数据库类型", "meaning": "连接所使用的协议和 SQL 方言。", "recommendation": "创建后不可原地更换；需要更换时创建新连接。" },
+        { "name": "主机", "meaning": "目标数据库在容器网络中的 DNS 名称。", "recommendation": "填写目标容器名或内网主机名；不要填写 127.0.0.1。" },
+        { "name": "端口", "meaning": "目标数据库实际监听端口。", "recommendation": "使用类型默认端口或目标环境实际端口，不要求暴露宿主机端口。" },
+        { "name": "维护库", "meaning": "用于初始登录和资源发现的数据库。", "recommendation": "按数据库类型默认值填写；账号必须能访问。" },
         { "name": "SSL 模式", "meaning": "数据库连接的 TLS 策略。", "recommendation": "完全隔离内网可按部署策略使用 disable；跨受控网络按数据库要求配置。" },
-        { "name": "用户名 / 密码", "meaning": "PostgreSQL 登录凭据，加密托管。", "recommendation": "使用专用只读账号，不复用管理员账号。" },
+        { "name": "用户名 / 密码", "meaning": "数据库登录凭据，加密托管。", "recommendation": "使用专用只读账号，不复用管理员账号；SQLite 不需要凭据。" },
         { "name": "Schema / Table / View", "meaning": "数据库内可选择的数据资源层级。", "recommendation": "只勾选任务所需资源，优先授权 View。" },
         { "name": "Scope", "meaning": "固定一个数据库及允许资源与限制的不可变范围。", "recommendation": "按 Agent 或业务用途拆分 Scope。" },
         { "name": "最大行数 / 超时 / 配额", "meaning": "单次查询和每分钟调用的资源限制。", "recommendation": "预览 20-50 行，常规查询不超过 200 行；超时从 5-15 秒起。" }
       ],
-      "steps": ["部署人员将 postgres-mcp 容器加入目标数据库网络。", "打开创建向导，填写主机、端口、维护库、SSL、用户名和密码。", "执行临时测试，确认 DNS、TCP、认证、SELECT 1 和只读检查通过。", "读取数据库资源树，选择数据库及允许的 Schema、Table 或 View。", "为每个数据库分别设置最大行数、超时和每分钟配额并保存 Scope Revision。", "在 Agent Builder 中绑定所需 Scope 和工具子集，发布后执行真实只读查询。"],
+      "steps": ["部署人员将 `agent-database-mcp` 容器加入目标数据库网络，或将 SQLite 文件放入平台数据库文件目录。", "打开创建向导，先选择数据库类型，再填写主机、端口、维护库、SSL、用户名和密码。", "执行临时测试，确认 DNS、TCP、认证、SELECT 1 和只读检查通过。", "读取数据库资源树，选择数据库及允许的 Schema、Table 或 View。", "为每个数据库分别设置最大行数、超时和每分钟配额并保存 Scope Revision。", "在 Agent Builder 中绑定所需 Scope 和工具子集，发布后执行真实只读查询。"],
       "success": ["测试返回 READY，并展示数据库资源树。", "Agent A 只能查询其 Scope 内资源，不能复用 Agent B 的范围。", "写 SQL、跨 Scope SQL、超时和超大结果均被拒绝。"],
       "errors": [
-        { "symptom": "主机解析失败", "cause": "postgres-mcp 未加入目标网络，或填写了错误容器名。", "solution": "由部署人员连接 Docker 网络，并用 docker inspect 核对网络和容器名。" },
+        { "symptom": "主机解析失败", "cause": "`agent-database-mcp` 未加入目标网络，或填写了错误容器名。", "solution": "由部署人员连接 Docker 网络，并用 docker inspect 核对网络和容器名。" },
+        { "symptom": "Elasticsearch 权限不足", "cause": "账号缺少资源发现所需只读权限。", "solution": "增加 cluster monitor，以及目标索引的 read、view_index_metadata、monitor。" },
+        { "symptom": "达梦驱动未安装", "cause": "镜像中没有匹配目标平台的官方 dmPython。", "solution": "将厂商 wheel 和必需原生库放入 drivers/dm 后重新构建数据库 MCP 镜像。" },
         { "symptom": "未再次填写密码也能测试已保存连接", "cause": "平台使用之前加密保存的托管凭据。", "solution": "这是正常行为，并非无凭据访问；需要换密码时使用凭据轮换。" },
         { "symptom": "认证成功但看不到部分数据库", "cause": "账号没有目标数据库 CONNECT 或 Schema USAGE 权限。", "solution": "由数据库管理员补充最小只读权限，再重新发现。" },
         { "symptom": "查询被安全策略拒绝", "cause": "SQL 含写 CTE、锁、危险函数、多语句或跨 Scope 表。", "solution": "改为单条纯 SELECT，并限制在已授权表或视图中。" }
       ],
-      "security": ["模型看不到数据库地址、用户名、密码、Connection ID 或 Credential ID。", "数据库账号只读与 postgres-mcp SQL AST 拦截必须同时保留。", "连接停用或凭据轮换后应立即失效旧连接池。"]
+      "security": ["模型看不到数据库地址、用户名、密码、Connection ID 或 Credential ID。", "数据库账号只读与 `agent-database-mcp` SQL AST 拦截必须同时保留。", "连接停用或凭据轮换后应立即失效旧连接池。"]
     },
     {
       "id": "api",
@@ -202,6 +205,6 @@
   "scenarios": [
     { "title": "新建一个可聊天 Agent", "steps": ["先完成模型连接测试。", "确认目标 Runtime online。", "创建 Agent 并选择模型别名与 Runtime。", "Preflight、发布并在聊天页完成两轮上下文验证。"] },
     { "title": "让不同 Agent 使用不同接口", "steps": ["为每个接口建立 Connector Operation 和 Capability。", "为 Agent 分别绑定 Capability、Scope、Quota 和 Tool Alias。", "发布后用 Trace 核对实际调用的 Binding 和 Connector Revision。"] },
-    { "title": "接入一台 PostgreSQL 服务器", "steps": ["由部署人员连接 postgres-mcp 与数据库 Docker 网络。", "通过向导测试凭据并发现数据库树。", "按数据库分别创建最小 Scope。", "绑定 Agent 后验证允许查询和越权拒绝。"] }
+    { "title": "接入一台 PostgreSQL 服务器", "steps": ["由部署人员连接 agent-database-mcp 与数据库 Docker 网络。", "通过向导测试凭据并发现数据库树。", "按数据库分别创建最小 Scope。", "绑定 Agent 后验证允许查询和越权拒绝。"] }
   ]
 }

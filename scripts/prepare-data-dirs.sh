@@ -14,6 +14,7 @@ mkdir -p \
   "$PROJECT_ROOT/data/deepseek-sessions" \
   "$PROJECT_ROOT/data/artifacts" \
   "$PROJECT_ROOT/data/mcp-files" \
+  "$PROJECT_ROOT/data/database-files" \
   "$PROJECT_ROOT/skills"
 
 chmod 0750 "$PROJECT_ROOT/data"
@@ -23,6 +24,7 @@ chmod 0750 \
   "$PROJECT_ROOT/data/minio" \
   "$PROJECT_ROOT/data/hermes" \
   "$PROJECT_ROOT/data/mcp-files"
+chmod 0750 "$PROJECT_ROOT/data/database-files"
 
 chmod 0770 "$PROJECT_ROOT/skills"
 if [ "$(id -u)" = "0" ]; then
